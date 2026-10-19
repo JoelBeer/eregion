@@ -2,6 +2,9 @@ import type { Project, ProjectSummary, Repo, Service, Step, StepPhase, Variable 
 import type { AgentEvent } from './agent'
 import type { Environment } from './environment'
 import type { CrewMember, RunView } from './runs'
+import type { StageConfig } from './pipeline'
+import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
+import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
 
 export interface RepoInput {
@@ -86,6 +89,32 @@ export interface EregionApi {
   getEnvironment(key: string): Promise<Environment | null>
   finishSetup(projectId: number): Promise<Project>
 
+  listTickets(projectId: number): Promise<TicketCard[]>
+  getTicket(ticketId: number): Promise<TicketDetail>
+  getTicketOutputs(ticketId: number): Promise<TicketOutputs>
+  getTicketDiff(ticketId: number): Promise<RepoDiff[]>
+  createTicket(projectId: number, title: string, description: string): Promise<Ticket>
+  startTicket(ticketId: number): Promise<void>
+  approvePlan(ticketId: number): Promise<void>
+  approveReview(ticketId: number): Promise<void>
+  approveStage(ticketId: number): Promise<void>
+  sendBackToBuild(ticketId: number, note: string): Promise<void>
+  backToPlan(ticketId: number, note: string): Promise<void>
+  retryTicket(ticketId: number, note?: string): Promise<void>
+  allowOneMoreLoop(ticketId: number): Promise<void>
+  releaseSlot(ticketId: number): Promise<void>
+  stopTicketRun(ticketId: number): Promise<void>
+  discardTicket(ticketId: number): Promise<void>
+  startServices(ticketId: number): Promise<void>
+  stopServices(ticketId: number): Promise<void>
+  openInEditor(ticketId: number, repoName: string): Promise<void>
+
+  getPipeline(projectId: number): Promise<{ version: number; stages: StageConfig[]; olderVersions: { version: number; tickets: number }[] }>
+  savePipeline(projectId: number, stages: StageConfig[]): Promise<number>
+
+  getSetting<T>(key: string, fallback: T): Promise<T>
+  setSetting(key: string, value: unknown): Promise<void>
+
   listCrew(): Promise<CrewMember[]>
   getRun(runId: number): Promise<RunView>
   sendToRun(runId: number, text: string, delivery: 'now' | 'queue', dictated: boolean): Promise<'delivered' | 'queued'>
@@ -120,6 +149,29 @@ export const API_METHODS = [
   'tearDownTestRun',
   'getEnvironment',
   'finishSetup',
+  'listTickets',
+  'getTicket',
+  'getTicketOutputs',
+  'getTicketDiff',
+  'createTicket',
+  'startTicket',
+  'approvePlan',
+  'approveReview',
+  'approveStage',
+  'sendBackToBuild',
+  'backToPlan',
+  'retryTicket',
+  'allowOneMoreLoop',
+  'releaseSlot',
+  'stopTicketRun',
+  'discardTicket',
+  'startServices',
+  'stopServices',
+  'openInEditor',
+  'getPipeline',
+  'savePipeline',
+  'getSetting',
+  'setSetting',
   'listCrew',
   'getRun',
   'sendToRun',
@@ -132,6 +184,7 @@ export type EregionEvent = { type: 'projects-changed' } | { type: 'project-chang
   | { type: 'run-event'; runId: number; event: AgentEvent }
   | { type: 'run-state'; runId: number; state: RunView['state']; queued: number }
   | { type: 'crew-changed' }
+  | { type: 'ticket-changed'; ticketId: number; projectId: number }
 
 export interface EregionBridge extends EregionApi {
   onEvent(listener: (event: EregionEvent) => void): () => void

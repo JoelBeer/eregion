@@ -1,5 +1,6 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { userInfo } from 'node:os'
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
 import { createBackend, type Backend, type Host } from './api'
 import { openDatabase, type Db } from './db'
@@ -68,7 +69,11 @@ const host: Host = {
   },
   emit(event: EregionEvent) {
     mainWindow?.webContents.send('event', event)
-  }
+  },
+  notify(title, body) {
+    if (Notification.isSupported() && !mainWindow?.isFocused()) new Notification({ title, body }).show()
+  },
+  userName: userInfo().username
 }
 
 function registerIpc(api: EregionApi): void {

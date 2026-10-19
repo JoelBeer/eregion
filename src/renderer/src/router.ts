@@ -13,12 +13,16 @@ export const SETUP_STEP_LABELS: Record<SetupStep, string> = {
   test: 'Test run'
 }
 
+export const TICKET_TABS = ['conversation', 'outputs', 'diff', 'log'] as const
+export type TicketTab = (typeof TICKET_TABS)[number]
+
 export type Route =
   | { name: 'welcome' }
   | { name: 'projects' }
   | { name: 'new-project' }
   | { name: 'setup'; projectId: number; step: SetupStep }
   | { name: 'board'; projectId: number }
+  | { name: 'ticket'; projectId: number; ticketId: number; tab: TicketTab }
   | { name: 'settings'; tab: string }
 
 export function parseRoute(hash: string): Route {
@@ -32,6 +36,10 @@ export function parseRoute(hash: string): Route {
         return { name: 'setup', projectId: id, step }
       }
       if (Number.isInteger(id) && parts[2] === 'board') return { name: 'board', projectId: id }
+      if (Number.isInteger(id) && parts[2] === 'tickets' && Number.isInteger(Number(parts[3]))) {
+        const tab = TICKET_TABS.includes(parts[4] as TicketTab) ? (parts[4] as TicketTab) : 'conversation'
+        return { name: 'ticket', projectId: id, ticketId: Number(parts[3]), tab }
+      }
       return { name: 'projects' }
     case 'settings':
       return { name: 'settings', tab: parts[1] ?? 'agents' }
@@ -54,6 +62,8 @@ export function href(route: Route): string {
       return `#/projects/${route.projectId}/setup/${route.step}`
     case 'board':
       return `#/projects/${route.projectId}/board`
+    case 'ticket':
+      return `#/projects/${route.projectId}/tickets/${route.ticketId}/${route.tab}`
     case 'settings':
       return `#/settings/${route.tab}`
   }

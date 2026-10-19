@@ -21,6 +21,9 @@ const listeners = new Set<ServerResponse>()
 async function main(): Promise<void> {
   await mkdir(DATA, { recursive: true })
   const databasePath = join(DATA, 'eregion.db')
+  // With EREGION_FAKE_SCRIPT set, agents are the scripted stand-in and worktrees live under the data folder.
+  const fake = process.env.EREGION_FAKE_SCRIPT ? ['node', join(process.cwd(), 'src', 'main', 'testing', 'fake-claude.mjs')] : undefined
+  const options = fake ? { agentCommand: () => fake, workspaceRoot: join(DATA, 'workspaces') } : {}
   const { api, shutdown } = createBackend(openDatabase(databasePath), {
     appVersion: '0.1.0-web',
     databasePath,
@@ -31,7 +34,7 @@ async function main(): Promise<void> {
     emit: (event: EregionEvent) => {
       for (const listener of listeners) listener.write(`data: ${JSON.stringify(event)}\n\n`)
     }
-  })
+  }, options)
   process.on('SIGINT', () => void shutdown().finally(() => process.exit(0)))
   process.on('SIGTERM', () => void shutdown().finally(() => process.exit(0)))
   const allowed = new Set<string>(API_METHODS)

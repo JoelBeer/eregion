@@ -191,5 +191,12 @@ export const migrations: string[] = [
     message TEXT NOT NULL
   );
   CREATE INDEX ticket_log_ticket ON ticket_log(ticket_id, id);
+  `,
+  `
+  ALTER TABLE tickets ADD COLUMN review_failures INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tickets ADD COLUMN extra_loops INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tickets ADD COLUMN current_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL;
+  ALTER TABLE tickets ADD COLUMN plan_approved_at TEXT;
+  ALTER TABLE tickets ADD COLUMN waiting_for TEXT;
   `
 ]

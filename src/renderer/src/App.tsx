@@ -4,7 +4,9 @@ import { useQuery } from './hooks'
 import { navigate, useRoute, type Route } from './router'
 import { NewProject } from './screens/NewProject'
 import { Projects } from './screens/Projects'
+import { Board } from './screens/Board'
 import { ProjectSetup } from './screens/setup/ProjectSetup'
+import { TicketScreen } from './screens/ticket/TicketScreen'
 import { Welcome } from './screens/Welcome'
 
 const CURRENT_PROJECT_KEY = 'eregion.currentProject'
@@ -19,12 +21,13 @@ function readCurrentProject(): number | null {
 }
 
 function projectIdOf(route: Route): number | null {
-  return route.name === 'setup' || route.name === 'board' ? route.projectId : null
+  return route.name === 'setup' || route.name === 'board' || route.name === 'ticket' ? route.projectId : null
 }
 
 function activeNav(route: Route): NavId | null {
   switch (route.name) {
     case 'board':
+    case 'ticket':
       return 'board'
     case 'setup':
       return route.step === 'pipeline' ? 'pipeline' : 'projects'
@@ -77,12 +80,13 @@ export function App(): ReactElement {
         project && project.setupStep < 8 ? (
           <ProjectSetup projectId={route.projectId} step="repos" />
         ) : (
-          <main style={{ padding: 28 }} className="muted">
-            The board isn't built yet.
-          </main>
+          <Board projectId={route.projectId} />
         )
       break
     }
+    case 'ticket':
+      screen = <TicketScreen key={route.ticketId} projectId={route.projectId} ticketId={route.ticketId} tab={route.tab} />
+      break
     case 'new-project':
       screen = <NewProject />
       break

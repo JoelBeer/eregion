@@ -32,7 +32,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - [x] 2. Projects and recipes (steps 5 to 7 of setup arrive with phases 3, 5 and 6)
 - [x] 3. Ticket workspaces
 - [x] 4. Agents
-- [ ] 5. Pipeline and board
+- [x] 5. Pipeline and board
 - [ ] 6. Integrations
 - [ ] 7. Crew, Forge, Costs, Settings, voice
 - [ ] 8. Polish and run instructions

@@ -77,3 +77,39 @@ export async function removeWorktree(runner: Runner, mainPath: string, path: str
   }
   await gitIn(runner, mainPath, ['worktree', 'prune'])
 }
+
+/** Files changed in a worktree, as `git status --porcelain` lines. */
+export async function changedFiles(runner: Runner, path: string): Promise<string[]> {
+  const output = await gitIn(runner, path, ['status', '--porcelain'])
+  return output ? output.split('\n') : []
+}
+
+/** Throws away uncommitted changes in a worktree, including new files. */
+export async function discardChanges(runner: Runner, path: string): Promise<void> {
+  await gitIn(runner, path, ['reset', '--hard', '--quiet'])
+  await gitIn(runner, path, ['clean', '-fdq'])
+}
+
+/** Commits everything in a worktree. Returns the new commit's short sha, or null when there was nothing to commit. */
+export async function commitAll(runner: Runner, path: string, subject: string, body: string): Promise<string | null> {
+  await gitIn(runner, path, ['add', '-A'])
+  if ((await runner.exec(['git', 'diff', '--cached', '--quiet'], { cwd: path })).code === 0) return null
+  const args = ['commit', '--quiet', '-m', subject]
+  if (body.trim()) args.push('-m', body.trim())
+  await gitIn(runner, path, args)
+  return gitIn(runner, path, ['rev-parse', '--short', 'HEAD'])
+}
+
+export async function hasOrigin(runner: Runner, path: string): Promise<boolean> {
+  return gitOk(runner, path, ['remote', 'get-url', 'origin'])
+}
+
+/** Pushes the branch to origin, setting upstream. Never forces. */
+export async function pushBranch(runner: Runner, path: string, branch: string): Promise<void> {
+  await gitIn(runner, path, ['push', '--quiet', '-u', 'origin', branch], 180_000)
+}
+
+/** The diff of the ticket branch against its base, for the Diff tab. */
+export async function branchDiff(runner: Runner, path: string, base: string): Promise<string> {
+  return gitIn(runner, path, ['diff', '--no-color', '--find-renames', `${base}...HEAD`], 60_000)
+}

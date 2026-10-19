@@ -26,6 +26,24 @@ export type RunNotice = { type: 'run-event'; runId: number; event: AgentEvent } 
 /** Starts agent runs, saves everything they do, and passes it on to screens as it happens. */
 export class AgentManager {
   private readonly sessions = new Map<number, AgentSession>()
+  private readonly observers = new Map<number, Set<(notice: RunNotice) => void>>()
+
+  /** Listens to one run's events and state changes, for the pipeline engine. */
+  observe(runId: number, listener: (notice: RunNotice) => void): () => void {
+    if (!this.observers.has(runId)) this.observers.set(runId, new Set())
+    this.observers.get(runId)?.add(listener)
+    return () => this.observers.get(runId)?.delete(listener)
+  }
+
+  private tell(notice: RunNotice): void {
+    this.notify(notice)
+    for (const listener of this.observers.get(notice.runId) ?? []) listener(notice)
+  }
+
+  /** The live session's state, or null when the run isn't going any more. */
+  liveState(runId: number): RunView['state'] | null {
+    return this.sessions.get(runId)?.state ?? null
+  }
 
   constructor(
     private readonly runs: RunStore,
@@ -58,16 +76,17 @@ export class AgentManager {
         sessionSaved = true
       }
       if (event.kind === 'result' || event.kind === 'init') this.runs.markDelivered(run.id)
-      this.notify({ type: 'run-event', runId: run.id, event })
+      this.tell({ type: 'run-event', runId: run.id, event })
     })
     session.on('state', (state: RunView['state']) => {
       if (state === 'running' || state === 'waiting') this.runs.markDelivered(run.id)
-      this.notify({ type: 'run-state', runId: run.id, state, queued: this.runs.queuedCount(run.id) })
+      this.tell({ type: 'run-state', runId: run.id, state, queued: this.runs.queuedCount(run.id) })
     })
     const done = session.done.then((outcome) => {
       this.runs.finish(run.id, outcome)
       this.sessions.delete(run.id)
-      this.notify({ type: 'run-state', runId: run.id, state: outcome.state, queued: 0 })
+      this.tell({ type: 'run-state', runId: run.id, state: outcome.state, queued: 0 })
+      this.observers.delete(run.id)
       return outcome
     })
     return { runId: run.id, done }
@@ -94,7 +113,7 @@ export class AgentManager {
     if (!session) throw new Error('This run has ended')
     const handled = session.send(text, delivery, dictated)
     this.runs.addMessage(runId, text, delivery, dictated, handled)
-    this.notify({ type: 'run-state', runId, state: session.state, queued: this.runs.queuedCount(runId) })
+    this.tell({ type: 'run-state', runId, state: session.state, queued: this.runs.queuedCount(runId) })
     return handled
   }
 

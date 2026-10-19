@@ -15,6 +15,11 @@ import { CrewStore } from './agents/crew'
 import { AgentManager } from './agents/manager'
 import { RunStore } from './agents/runs'
 import type { CrewMember } from '@shared/runs'
+import type { Ticket } from '@shared/tickets'
+import { getSetting, setSetting } from './db'
+import { PipelineEngine } from './pipeline/engine'
+import { PipelineStore, TicketStore } from './pipeline/stores'
+import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -25,6 +30,10 @@ export interface Host {
   pickOpenFile(): Promise<string | null>
   openExternal(url: string): Promise<void>
   emit(event: EregionEvent): void
+  /** Shows a desktop notification, where the host supports them. */
+  notify?(title: string, body: string): void
+  /** The person's name from the operating system, until Linear provides one. */
+  userName?: string
 }
 
 export function sampleTicket(projectKey: string | null): VariablePreview['sample'] {
@@ -46,6 +55,8 @@ export interface Backend {
   crew: CrewStore
   runs: RunStore
   projects: ProjectStore
+  engine: PipelineEngine
+  tickets: TicketStore
   /** Stops every service Eregion started. Called when the app quits. */
   shutdown(): Promise<void>
 }
@@ -70,6 +81,29 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     host.emit({ type: 'project-changed', projectId })
     host.emit({ type: 'projects-changed' })
   }
+
+  const tickets = new TicketStore(db)
+  const pipelines = new PipelineStore(db)
+  const ticketChanged = (ticket: Ticket): void => {
+    host.emit({ type: 'ticket-changed', ticketId: ticket.id, projectId: ticket.projectId })
+    host.emit({ type: 'projects-changed' })
+  }
+  const engine = new PipelineEngine({
+    projects,
+    tickets,
+    pipelines,
+    crew,
+    agents,
+    workspaces,
+    settings: {
+      userName: () => getSetting(db, 'user.name', host.userName ?? 'you'),
+      houseRules: () => getSetting(db, 'rules.house', '')
+    },
+    integrations: { notify: (title, body) => host.notify?.(title, body) },
+    onTicketChanged: ticketChanged
+  })
+  engine.recover()
+  const ticketsApi = createTicketsApi({ db, projects, tickets, pipelines, crew, runs, agents, workspaces, engine, onBackgroundError: backgroundErrorHandler(tickets, ticketChanged, agents) })
 
   const usedSlots = (projectId: number): number[] => {
     const rows = db.prepare('SELECT slot FROM tickets WHERE project_id = ? AND slot IS NOT NULL').all(projectId) as { slot: number }[]
@@ -208,6 +242,10 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       return project
     },
 
+    ...ticketsApi,
+    getSetting: async (key, fallback) => getSetting(db, key, fallback),
+    setSetting: async (key, value) => setSetting(db, key, value),
+
     listCrew: async () => crew.list(),
     getRun: async (runId) => agents.view(runId),
     sendToRun: async (runId, text, delivery, dictated) => agents.send(runId, text, delivery, dictated),
@@ -223,6 +261,8 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     crew,
     runs,
     projects,
+    engine,
+    tickets,
     shutdown: async () => {
       await agents.stopAll()
       await services.stopAll()
