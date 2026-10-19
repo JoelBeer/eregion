@@ -1,3 +1,4 @@
+import type { PrStore } from './pipeline/prs'
 import type { EregionApi } from '@shared/api'
 import { ticketCard } from '@shared/cards'
 import { parseBuildNotes, parseFixes, parsePlan, parseReview, planApprovalBlockers } from '@shared/outputs'
@@ -48,6 +49,8 @@ export interface TicketsApiDeps {
   agents: AgentManager
   workspaces: Workspaces
   engine: PipelineEngine
+  /** The pull requests store, so cards can show Watch CI. */
+  prs?: PrStore
   /** Called after work that started in the background fails, so the error is not lost. */
   onBackgroundError(ticketId: number, error: Error): void
 }
@@ -96,7 +99,7 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     } catch {
       crewId = null
     }
-    return ticketCard({ ticket, stages, crewId, environment: workspaces.get(`ticket:${ticket.id}`), lastAgentText: lastAgentText(ticket), openQuestions: await openQuestions(ticket), prLinks: prLinks(ticket) })
+    return ticketCard({ ticket, stages, crewId, environment: workspaces.get(`ticket:${ticket.id}`), lastAgentText: lastAgentText(ticket), openQuestions: await openQuestions(ticket), prLinks: prLinks(ticket), prs: deps.prs?.forTicket(ticket.id) })
   }
 
   const readOutputs = async (ticket: Ticket): Promise<TicketOutputs> => {
@@ -125,7 +128,13 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
       answered = reviewText
     }
     const issueIds = idsIn(answered)
+    const prDescriptions: Record<string, string> = {}
+    for (const name of repoNames) {
+      const text = await read(`pr-${name}.md`)
+      if (text !== null) prDescriptions[name] = text
+    }
     return {
+      prDescriptions,
       dir,
       plan: plan && planText !== null ? { markdown: planText, parsed: plan, blockers: planApprovalBlockers(plan) } : null,
       buildNotes: notesText === null ? null : { markdown: notesText, parsed: parseBuildNotes(notesText) },

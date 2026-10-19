@@ -19,7 +19,7 @@ const NAV: NavItem[] = [
   { id: 'projects', label: 'Projects', icon: 'projects', route: () => ({ name: 'projects' }) }
 ]
 
-const SETTINGS: NavItem = { id: 'settings', label: 'Settings', icon: 'settings', route: () => ({ name: 'settings', tab: 'agents' }) }
+const SETTINGS: NavItem = { id: 'settings', label: 'Settings', icon: 'settings', route: () => ({ name: 'settings', tab: 'integrations' }) }
 
 function readCollapsed(): boolean {
   try {

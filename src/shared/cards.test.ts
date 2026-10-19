@@ -84,3 +84,29 @@ describe('ticketCard', () => {
     expect(card({ stage: 'done', status: 'done' })).toMatchObject({ mood: 'shipped', bubble: 'Merged. Environment torn down.' })
   })
 })
+
+describe('ticketCard in Watch CI and from Linear', () => {
+  const check = (bucket: 'pass' | 'fail' | 'pending') => ({ name: 'tests', workflow: 'CI', bucket, link: '' })
+  const ci = { stage: 'ci', status: 'idle' as const, currentRunId: null }
+
+  it('watches checks without a running agent', () => {
+    expect(card(ci, { prs: [{ state: 'open', checks: [check('pass'), check('pending')], autofix: true, autofixPausedReason: null }] })).toMatchObject({
+      pill: { status: 'waiting', label: 'Watching CI' },
+      bubble: '1 of 2 checks done.'
+    })
+    expect(card(ci, { prs: [{ state: 'open', checks: [check('pass')], autofix: true, autofixPausedReason: null }] }).bubble).toBe('All checks green. Waiting for the merge.')
+  })
+
+  it('shows failing checks and when autofix is off', () => {
+    expect(card(ci, { prs: [{ state: 'open', checks: [check('fail')], autofix: false, autofixPausedReason: null }] })).toMatchObject({
+      pill: { status: 'fixing', label: 'Checks failing' },
+      bubble: '1 check failing.',
+      tags: ['Autofix off']
+    })
+  })
+
+  it('tags new imports and issues reassigned in Linear', () => {
+    expect(card({ stage: 'backlog', status: 'idle', linear: { isNew: true } }).tags).toEqual(['New'])
+    expect(card({ linear: { reassigned: true } }).tags).toEqual(['Reassigned in Linear'])
+  })
+})

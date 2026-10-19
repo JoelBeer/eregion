@@ -1,4 +1,4 @@
-import type { Project, ProjectSummary, Repo, Service, Step, StepPhase, Variable } from './model'
+import type { GithubProjectConfig, LinearProjectConfig, Project, ProjectSummary, Repo, Service, Step, StepPhase, Variable } from './model'
 import type { AgentEvent } from './agent'
 import type { Environment } from './environment'
 import type { CrewMember, RunView } from './runs'
@@ -6,6 +6,7 @@ import type { StageConfig } from './pipeline'
 import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
 import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
+import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
   name: string
@@ -56,6 +57,8 @@ export interface ProjectPatch {
   liveSlots?: number
   setupStep?: number
   setupInParallel?: boolean
+  linear?: LinearProjectConfig
+  github?: GithubProjectConfig
 }
 
 /** Everything the renderer can ask the main process to do. Each method is one IPC round trip. */
@@ -121,6 +124,27 @@ export interface EregionApi {
   stopRun(runId: number): Promise<void>
 
   openExternal(url: string): Promise<void>
+
+  getLinearStatus(): Promise<LinearStatus>
+  setLinearClientId(clientId: string): Promise<LinearStatus>
+  /** Opens Linear's consent page and resolves once you've approved it in the browser. */
+  signInToLinear(clientSecret?: string): Promise<LinearViewer>
+  cancelLinearSignIn(): Promise<void>
+  useLinearApiKey(key: string): Promise<LinearViewer>
+  signOutOfLinear(): Promise<void>
+  listLinearTeams(): Promise<LinearTeam[]>
+  listLinearStates(teamId: string): Promise<LinearState[]>
+  listLinearUsers(): Promise<LinearUser[]>
+  setLinearImportAssignees(value: ImportAssignees): Promise<LinearStatus>
+  syncLinear(): Promise<LinearStatus>
+  importLinearIssue(projectId: number, key: string): Promise<Ticket>
+  pullTicketFromLinear(ticketId: number): Promise<Ticket>
+
+  getTicketPrs(ticketId: number): Promise<PullRequest[]>
+  markPrsReady(ticketId: number): Promise<void>
+  updatePrDescription(ticketId: number, repo: string, markdown: string): Promise<void>
+  setAutofix(ticketId: number, on: boolean): Promise<void>
+  checkCiNow(ticketId: number): Promise<void>
 }
 
 /** The method names, so the preload script can expose each one explicitly. */
@@ -176,7 +200,25 @@ export const API_METHODS = [
   'getRun',
   'sendToRun',
   'stopRun',
-  'openExternal'
+  'openExternal',
+  'getLinearStatus',
+  'setLinearClientId',
+  'signInToLinear',
+  'cancelLinearSignIn',
+  'useLinearApiKey',
+  'signOutOfLinear',
+  'listLinearTeams',
+  'listLinearStates',
+  'listLinearUsers',
+  'setLinearImportAssignees',
+  'syncLinear',
+  'importLinearIssue',
+  'pullTicketFromLinear',
+  'getTicketPrs',
+  'markPrsReady',
+  'updatePrDescription',
+  'setAutofix',
+  'checkCiNow'
 ] as const satisfies readonly (keyof EregionApi)[]
 
 /** Pushed from the main process when something changes that screens should refresh for. */
@@ -185,6 +227,7 @@ export type EregionEvent = { type: 'projects-changed' } | { type: 'project-chang
   | { type: 'run-state'; runId: number; state: RunView['state']; queued: number }
   | { type: 'crew-changed' }
   | { type: 'ticket-changed'; ticketId: number; projectId: number }
+  | { type: 'linear-changed' }
 
 export interface EregionBridge extends EregionApi {
   onEvent(listener: (event: EregionEvent) => void): () => void

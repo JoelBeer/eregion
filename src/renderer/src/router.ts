@@ -42,7 +42,7 @@ export function parseRoute(hash: string): Route {
       }
       return { name: 'projects' }
     case 'settings':
-      return { name: 'settings', tab: parts[1] ?? 'agents' }
+      return { name: 'settings', tab: parts[1] ?? 'integrations' }
     case 'welcome':
       return { name: 'welcome' }
     default:

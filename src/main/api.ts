@@ -20,6 +20,15 @@ import { getSetting, setSetting } from './db'
 import { PipelineEngine } from './pipeline/engine'
 import { PipelineStore, TicketStore } from './pipeline/stores'
 import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
+import { GhCli, type GitHub } from './integrations/github'
+import { linearIntegrations } from './integrations/hooks'
+import type { FetchLike } from './integrations/linear'
+import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
+import { LinearSync } from './integrations/linearSync'
+import { createIntegrationsApi } from './integrationsApi'
+import { CiWatcher } from './pipeline/ciWatch'
+import { PrStage } from './pipeline/prStage'
+import { PrStore } from './pipeline/prs'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -34,6 +43,8 @@ export interface Host {
   notify?(title: string, body: string): void
   /** The person's name from the operating system, until Linear provides one. */
   userName?: string
+  /** Encrypts secrets such as Linear tokens at rest. Without it they're stored as plain text. */
+  secrets?: SecretCodec
 }
 
 export function sampleTicket(projectKey: string | null): VariablePreview['sample'] {
@@ -46,6 +57,12 @@ export interface BackendOptions {
   workspaceRoot?: string
   /** Replaces the agent CLI for a crew member, for tests and the web preview. */
   agentCommand?: (crew: CrewMember) => string[] | undefined
+  /** Replaces gh, for tests. */
+  github?: GitHub
+  /** Replaces fetch for Linear's API, for tests. */
+  fetch?: FetchLike
+  /** Starts the Linear sync and Watch CI timers. The app does; tests don't. */
+  timers?: boolean
 }
 
 export interface Backend {
@@ -57,6 +74,10 @@ export interface Backend {
   projects: ProjectStore
   engine: PipelineEngine
   tickets: TicketStore
+  prs: PrStore
+  ci: CiWatcher
+  linearSync: LinearSync
+  linearAuth: LinearAuth
   /** Stops every service Eregion started. Called when the app quits. */
   shutdown(): Promise<void>
 }
@@ -84,6 +105,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
 
   const tickets = new TicketStore(db)
   const pipelines = new PipelineStore(db)
+  const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
   const ticketChanged = (ticket: Ticket): void => {
     host.emit({ type: 'ticket-changed', ticketId: ticket.id, projectId: ticket.projectId })
     host.emit({ type: 'projects-changed' })
@@ -99,11 +121,41 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       userName: () => getSetting(db, 'user.name', host.userName ?? 'you'),
       houseRules: () => getSetting(db, 'rules.house', '')
     },
-    integrations: { notify: (title, body) => host.notify?.(title, body) },
+    integrations: linearIntegrations(linearAuth, (title, body) => host.notify?.(title, body)),
     onTicketChanged: ticketChanged
   })
+  const prs = new PrStore(db)
+  const github = options.github ?? new GhCli()
+  const prStage = new PrStage(engine, prs, github)
+  const ci = new CiWatcher(engine, prs, github)
   engine.recover()
-  const ticketsApi = createTicketsApi({ db, projects, tickets, pipelines, crew, runs, agents, workspaces, engine, onBackgroundError: backgroundErrorHandler(tickets, ticketChanged, agents) })
+  const linearSync = new LinearSync(db, linearAuth, projects, tickets, {
+    ticketChanged,
+    ticketRemoved: (projectId) => {
+      host.emit({ type: 'project-changed', projectId })
+      host.emit({ type: 'projects-changed' })
+    },
+    notify: (title, body) => host.notify?.(title, body),
+    statusChanged: () => host.emit({ type: 'linear-changed' })
+  })
+  if (options.timers) {
+    ci.start()
+    linearSync.start()
+  }
+  const ticketsApi = createTicketsApi({ db, projects, tickets, pipelines, crew, runs, agents, workspaces, engine, prs, onBackgroundError: backgroundErrorHandler(tickets, ticketChanged, agents) })
+  const integrationsApi = createIntegrationsApi({
+    auth: linearAuth,
+    sync: linearSync,
+    projects,
+    tickets,
+    prs,
+    prStage,
+    ci,
+    openExternal: (url) => host.openExternal(url),
+    linearChanged: () => host.emit({ type: 'linear-changed' }),
+    ticketChanged,
+    createLocalTicket: ticketsApi.createTicket
+  })
 
   const usedSlots = (projectId: number): number[] => {
     const rows = db.prepare('SELECT slot FROM tickets WHERE project_id = ? AND slot IS NOT NULL').all(projectId) as { slot: number }[]
@@ -251,7 +303,10 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     sendToRun: async (runId, text, delivery, dictated) => agents.send(runId, text, delivery, dictated),
     stopRun: (runId) => agents.stop(runId),
 
-    openExternal: (url) => host.openExternal(url)
+    openExternal: (url) => host.openExternal(url),
+
+    // After the tickets API: in a project linked to Linear, createTicket makes a Linear issue.
+    ...integrationsApi
   }
 
   return {
@@ -263,7 +318,14 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     projects,
     engine,
     tickets,
+    prs,
+    ci,
+    linearSync,
+    linearAuth,
     shutdown: async () => {
+      ci.stop()
+      linearSync.stop()
+      linearAuth.cancelSignIn()
       await agents.stopAll()
       await services.stopAll()
     }

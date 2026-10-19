@@ -5,6 +5,7 @@ import { navigate, useRoute, type Route } from './router'
 import { NewProject } from './screens/NewProject'
 import { Projects } from './screens/Projects'
 import { Board } from './screens/Board'
+import { Settings } from './screens/settings/Settings'
 import { ProjectSetup } from './screens/setup/ProjectSetup'
 import { TicketScreen } from './screens/ticket/TicketScreen'
 import { Welcome } from './screens/Welcome'
@@ -89,6 +90,9 @@ export function App(): ReactElement {
       break
     case 'new-project':
       screen = <NewProject />
+      break
+    case 'settings':
+      screen = <Settings tab={route.tab} />
       break
     case 'welcome':
       return <Welcome onSetUpProject={() => navigate({ name: 'new-project' })} />

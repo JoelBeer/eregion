@@ -1,5 +1,6 @@
 import { firstSentence } from './agent'
 import type { Environment } from './environment'
+import type { PullRequest } from './integrations'
 import type { StageConfig } from './pipeline'
 import type { Mood } from './robot'
 import { STOP_LABELS, type Ticket, type TicketCard } from './tickets'
@@ -13,6 +14,21 @@ export interface CardInputs {
   lastAgentText: string | null
   openQuestions: number
   prLinks: { label: string; url: string }[]
+  /** The ticket's PRs with their last-seen checks, for Watch CI. */
+  prs?: Pick<PullRequest, 'state' | 'checks' | 'autofix' | 'autofixPausedReason'>[]
+}
+
+/** What Watch CI is waiting on, in a few words. */
+export function ciSummary(prs: NonNullable<CardInputs['prs']>): string {
+  const open = prs.filter((pr) => pr.state === 'open')
+  const checks = open.flatMap((pr) => pr.checks)
+  const failing = checks.filter((check) => check.bucket === 'fail').length
+  const pending = checks.filter((check) => check.bucket === 'pending').length
+  if (open.length === 0) return 'Every PR has merged.'
+  if (failing > 0) return `${failing} ${failing === 1 ? 'check' : 'checks'} failing.`
+  if (pending > 0) return `${checks.length - pending} of ${checks.length} checks done.`
+  if (checks.length === 0) return 'Waiting for checks to start.'
+  return `All checks green. Waiting for ${open.length === 1 ? 'the merge' : `${open.length} merges`}.`
 }
 
 /**
@@ -71,6 +87,11 @@ export function ticketCard(inputs: CardInputs): TicketCard {
   } else if (ticket.status === 'idle' && ticket.waitingFor === 'slot') {
     pill = { status: 'neutral', label: 'Waiting for a slot' }
     bubble = 'Waiting for a free slot.'
+  } else if (ticket.status === 'idle' && stage?.kind === 'ci') {
+    const failing = (inputs.prs ?? []).some((pr) => pr.checks.some((check) => check.bucket === 'fail'))
+    pill = failing ? { status: 'fixing', label: 'Checks failing' } : { status: 'waiting', label: 'Watching CI' }
+    mood = failing ? 'working' : 'idle'
+    bubble = ciSummary(inputs.prs ?? [])
   } else if (ticket.status === 'running') {
     mood = 'working'
     if (settingUp) {
@@ -85,6 +106,9 @@ export function ticketCard(inputs: CardInputs): TicketCard {
   const tags: string[] = []
   if (stage?.kind === 'build' && ticket.reviewFailures > 0 && !ticket.stopReason) tags.push(`Back from review · loop ${ticket.reviewFailures} of ${allowedLoops}`)
   else if (stage?.kind === 'build' && ticket.loop > 1 && !ticket.stopReason) tags.push(`${stage.name} · pass ${ticket.loop}`)
+  if (ticket.stage === 'backlog' && ticket.linear.isNew) tags.push('New')
+  if (ticket.linear.reassigned && ticket.stage !== 'done') tags.push('Reassigned in Linear')
+  if (stage?.kind === 'ci' && inputs.prs?.some((pr) => pr.state === 'open' && (!pr.autofix || pr.autofixPausedReason))) tags.push('Autofix off')
 
   const openService = environment?.services.find((service) => service.state === 'ready' && service.openUrl)
   return {

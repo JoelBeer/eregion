@@ -94,7 +94,7 @@ function toService(row: ServiceRow): Service {
 export type { ProjectPatch, RepoInput, ServiceInput, StepInput } from '@shared/api'
 import type { ProjectPatch as ApiProjectPatch, RepoInput, ServiceInput, StepInput } from '@shared/api'
 
-type ProjectPatch = ApiProjectPatch & { linear?: LinearProjectConfig; github?: GithubProjectConfig }
+type ProjectPatch = ApiProjectPatch
 
 /** Projects, repos and recipes. Every write is a single transaction. */
 export class ProjectStore {
@@ -271,7 +271,7 @@ export class ProjectStore {
         color: project.color,
         variables: project.variables,
         liveSlots: project.liveSlots,
-        linear: { ...project.linear, teamId: undefined, viewId: undefined, statusByStage: undefined },
+        linear: { ...project.linear, teamId: undefined, statusByStage: undefined },
         github: project.github,
         setupInParallel: project.setupInParallel
       },

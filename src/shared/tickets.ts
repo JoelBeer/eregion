@@ -14,6 +14,11 @@ export interface LinearData {
   labels?: string[]
   comments?: LinearComment[]
   assignee?: string | null
+  /** Imported by a sync and not started yet: the card shows "New". */
+  isNew?: boolean
+  /** Assigned to someone else in Linear after work started here. */
+  reassigned?: boolean
+  pulledAt?: string
 }
 
 export type TicketStatus = 'idle' | 'running' | 'needs_you' | 'stopped' | 'done'
@@ -62,7 +67,7 @@ export const STOP_LABELS: Record<StopReason, string> = {
 export interface TicketCard {
   ticket: Ticket
   crewId: number | null
-  pill: { status: 'running' | 'needsYou' | 'failed' | 'passed' | 'idle' | 'backlog' | 'neutral' | 'fixing'; label: string } | null
+  pill: { status: 'running' | 'needsYou' | 'failed' | 'passed' | 'idle' | 'backlog' | 'neutral' | 'fixing' | 'waiting'; label: string } | null
   mood: Mood
   bubble: string | null
   tags: string[]

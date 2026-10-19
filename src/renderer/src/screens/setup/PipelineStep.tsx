@@ -110,7 +110,6 @@ function CiEditor({ ci, onChange }: { ci: CiSettings; onChange: (ci: CiSettings)
       <Switch label="Re-run a failed check once before fixing it (catches flaky tests)" checked={ci.rerunFirst} onChange={(rerunFirst) => onChange({ ...ci, rerunFirst })} />
       <Switch label="Pause fixing when someone else pushes to the branch" checked={ci.pauseOnForeignPush} onChange={(pauseOnForeignPush) => onChange({ ...ci, pauseOnForeignPush })} />
       <Switch label="Count optional checks too" checked={ci.includeOptionalChecks} onChange={(includeOptionalChecks) => onChange({ ...ci, includeOptionalChecks })} />
-      <Switch label="Tell me about new review comments on the PR" checked={ci.notifyOnReviewComments} onChange={(notifyOnReviewComments) => onChange({ ...ci, notifyOnReviewComments })} />
       <span className="muted" style={{ fontSize: 13 }}>
         When the attempts run out:
       </span>
@@ -224,23 +223,20 @@ function StageEditor({ stage, stages, crew, onChange, onMove, onRemove }: { stag
           </>
         )}
 
-        <span className="muted">Linear status</span>
-        <input className="input" aria-label="Linear status" placeholder="Leave empty to not change it" value={stage.linearState ?? ''} onChange={(event) => onChange({ ...stage, linearState: event.target.value || null })} />
       </div>
 
-      {stage.kind !== 'pr' && stage.kind !== 'ci' && (
+      {stage.kind !== 'pr' && stage.kind !== 'ci' && stage.kind !== 'plan' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span className="muted" style={{ fontSize: 13 }}>
             Afterwards
           </span>
-          {stage.kind === 'plan' && <Switch label="Post the approved plan as a Linear comment" checked={hasAction(stage, 'linear-comment')} onChange={(on) => onChange(toggleAction(stage, { type: 'linear-comment', what: 'plan' }, on))} />}
           {stage.kind === 'build' && (
             <>
               <Switch label="Commit the changes" checked={hasAction(stage, 'commit')} onChange={(on) => onChange(toggleAction(stage, { type: 'commit' }, on))} />
               <Switch label="Push the branch" checked={hasAction(stage, 'push')} onChange={(on) => onChange(toggleAction(stage, { type: 'push' }, on))} />
             </>
           )}
-          {stage.kind !== 'plan' && <Switch label="Notify me" checked={hasAction(stage, 'notify')} onChange={(on) => onChange(toggleAction(stage, { type: 'notify' }, on))} />}
+          <Switch label="Notify me" checked={hasAction(stage, 'notify')} onChange={(on) => onChange(toggleAction(stage, { type: 'notify' }, on))} />
         </div>
       )}
 

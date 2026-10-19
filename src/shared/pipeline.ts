@@ -10,7 +10,6 @@ export type StageAction =
   | { type: 'push' }
   | { type: 'start-services' }
   | { type: 'stop-services' }
-  | { type: 'linear-comment'; what: 'plan' | 'review-summary' }
   | { type: 'notify' }
   | { type: 'run'; command: string }
 
@@ -78,7 +77,7 @@ export function defaultPipeline(): StageConfig[] {
       outputs: ['plan.md'],
       doneWhen: 'approval',
       before: [],
-      after: [{ type: 'linear-comment', what: 'plan' }],
+      after: [],
       linearState: null
     },
     {

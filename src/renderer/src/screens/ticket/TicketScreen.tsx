@@ -9,6 +9,7 @@ import { useAction } from '../../hooks'
 import { href, navigate, type TicketTab } from '../../router'
 import { useCrew } from '../Board'
 import { EnvironmentPanel, PlanPanel, ReviewDecision, Severity, StopBanner } from './panels'
+import { CiPanel, LinearDetails, PrPanel, usePrs } from './shipping'
 
 function crewForStage(stage: StageConfig | undefined, crew: CrewMember[]): CrewMember | undefined {
   if (!stage) return undefined
@@ -248,6 +249,7 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
   const ticket = detail?.card.ticket
   const runId = selectedRun ?? ticket?.currentRunId ?? detail?.runs.at(-1)?.id ?? null
   const view = useRun(runId)
+  const prs = usePrs(ticketId)
 
   useEffect(() => setSelectedRun(null), [ticket?.currentRunId])
 
@@ -319,6 +321,17 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
           {start.error && <span className="error-text">{start.error}</span>}
         </section>
       )}
+      {ticket.stage === 'backlog' && <LinearDetails ticket={ticket} />}
+      {ticket.stage === 'done' && prs.length > 0 && (
+        <section className="panel" aria-label="Shipped">
+          <h2 style={{ fontSize: 17 }}>Shipped</h2>
+          {prs.map((pr) => (
+            <button key={pr.id} type="button" className="er-btn er-btn-sm er-btn-ghost" style={{ alignSelf: 'flex-start' }} onClick={() => void window.eregion.openExternal(pr.url)}>
+              {pr.repo} #{pr.number} · {pr.state === 'merged' ? 'merged' : pr.state}
+            </button>
+          ))}
+        </section>
+      )}
 
       <StopBanner ticket={ticket} crew={crewForStage(stage, crew)} />
       {ticket.waitingFor === 'slot' && (
@@ -361,6 +374,8 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
                 placeholder={<span>Nothing has run yet.</span>}
               />
               {stage?.kind === 'plan' && <PlanPanel ticket={ticket} outputs={outputs} builder={builder} nextStage={nextStage} />}
+              {stage?.kind === 'pr' && <PrPanel ticket={ticket} prs={prs} descriptions={outputs?.prDescriptions ?? {}} nextStage={nextStage} />}
+              {stage?.kind === 'ci' && <CiPanel ticket={ticket} prs={prs} stage={stage} />}
               {ticket.waitingFor === 'manual-review' && <ReviewDecision ticket={ticket} outputs={outputs} nextStage={nextStage} />}
               {stage?.kind === 'custom' && ticket.waitingFor === 'approval' && (
                 <button type="button" className="er-btn er-btn-primary" onClick={() => void window.eregion.approveStage(ticketId).then(() => navigate({ name: 'ticket', projectId, ticketId, tab: 'conversation' }))}>

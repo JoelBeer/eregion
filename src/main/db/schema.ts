@@ -198,5 +198,17 @@ export const migrations: string[] = [
   ALTER TABLE tickets ADD COLUMN current_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL;
   ALTER TABLE tickets ADD COLUMN plan_approved_at TEXT;
   ALTER TABLE tickets ADD COLUMN waiting_for TEXT;
+  `,
+  `
+  ALTER TABLE pull_requests ADD COLUMN title TEXT NOT NULL DEFAULT '';
+  ALTER TABLE pull_requests ADD COLUMN base TEXT NOT NULL DEFAULT '';
+  ALTER TABLE pull_requests ADD COLUMN branch TEXT NOT NULL DEFAULT '';
+  ALTER TABLE pull_requests ADD COLUMN additions INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE pull_requests ADD COLUMN deletions INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE pull_requests ADD COLUMN changed_files INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE pull_requests ADD COLUMN checks TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE pull_requests ADD COLUMN rerun_sha TEXT;
+  ALTER TABLE pull_requests ADD COLUMN pushed_sha TEXT;
+  ALTER TABLE ci_attempts ADD COLUMN head_sha TEXT;
   `
 ]

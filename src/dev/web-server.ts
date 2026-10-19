@@ -10,6 +10,7 @@ import { extname, join, normalize } from 'node:path'
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
 import { createBackend } from '../main/api'
 import { openDatabase } from '../main/db'
+import { openUrl } from '../main/openUrl'
 
 const PORT = Number(process.env.EREGION_WEB_PORT ?? 5199)
 const RENDERER = join(process.cwd(), 'out', 'renderer')
@@ -23,14 +24,14 @@ async function main(): Promise<void> {
   const databasePath = join(DATA, 'eregion.db')
   // With EREGION_FAKE_SCRIPT set, agents are the scripted stand-in and worktrees live under the data folder.
   const fake = process.env.EREGION_FAKE_SCRIPT ? ['node', join(process.cwd(), 'src', 'main', 'testing', 'fake-claude.mjs')] : undefined
-  const options = fake ? { agentCommand: () => fake, workspaceRoot: join(DATA, 'workspaces') } : {}
+  const options = fake ? { agentCommand: () => fake, workspaceRoot: join(DATA, 'workspaces'), timers: true } : { timers: true }
   const { api, shutdown } = createBackend(openDatabase(databasePath), {
     appVersion: '0.1.0-web',
     databasePath,
     pickFolder: async () => null,
     pickSaveFile: async (name) => join(DATA, name),
     pickOpenFile: async () => join(DATA, 'import.eregion.json'),
-    openExternal: async () => undefined,
+    openExternal: (url) => openUrl(url, async () => undefined),
     emit: (event: EregionEvent) => {
       for (const listener of listeners) listener.write(`data: ${JSON.stringify(event)}\n\n`)
     }

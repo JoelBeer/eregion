@@ -1,4 +1,5 @@
 import type { Variable } from './variables'
+import type { LinearStateType } from './integrations'
 
 export type { Variable } from './variables'
 
@@ -8,19 +9,24 @@ export type RuntimeId = string
 export interface LinearProjectConfig {
   teamId?: string
   teamKey?: string
-  /** Which issues come in: assigned to the import person, a saved view, or only ones imported by key. */
-  pullFrom?: 'assigned' | 'view' | 'manual'
-  viewId?: string
-  /** Linear workflow state names that count as "ready to import". Empty means any open state. */
-  importStates?: string[]
-  pull?: { comments: boolean; labels: boolean; attachments: boolean }
-  push?: { planComment: boolean; planDescription: boolean; prLinks: boolean; costSummary: boolean }
-  /** Linear workflow state id to set when a ticket enters each stage. */
+  teamName?: string
+  /** Which issues come in: those assigned to the import person, or only ones imported by key. */
+  pullFrom?: 'assigned' | 'manual'
+  /** Linear state types that count as ready to import (backlog, unstarted). */
+  importStateTypes?: LinearStateType[]
+  /** Seconds between syncs while Eregion is open. */
+  pollSec?: number
+  push?: { planComment: boolean; planDescription: boolean; prLinks: boolean }
+  /** Linear workflow state id to set when a ticket enters each stage, by stage id; `done` when it finishes. */
   statusByStage?: Record<string, string>
 }
 
+export const DEFAULT_LINEAR_PUSH = { planComment: true, planDescription: false, prLinks: true }
+
 export interface GithubProjectConfig {
+  /** Open PRs as drafts, so the PR stage waits for you to mark them ready. */
   draft?: boolean
+  /** Add links between a ticket's PRs when it changes more than one repo. */
   linkPrs?: boolean
   teardownOnMerge?: boolean
 }

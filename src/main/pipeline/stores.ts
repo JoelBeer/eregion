@@ -157,6 +157,11 @@ export class TicketStore {
     return row ? toTicket(row) : null
   }
 
+  findByLinearId(projectId: number, linearId: string): Ticket | null {
+    const row = this.db.prepare('SELECT * FROM tickets WHERE project_id = ? AND linear_id = ?').get(projectId, linearId) as TicketRow | undefined
+    return row ? toTicket(row) : null
+  }
+
   list(projectId: number): Ticket[] {
     return (this.db.prepare('SELECT * FROM tickets WHERE project_id = ? ORDER BY updated_at DESC, id DESC').all(projectId) as TicketRow[]).map(toTicket)
   }

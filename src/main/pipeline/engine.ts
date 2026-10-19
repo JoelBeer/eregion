@@ -26,6 +26,7 @@ export interface EngineSettings {
 export interface Integrations {
   stageEntered?(ticket: Ticket, stage: StageConfig, project: Project): Promise<void>
   planApproved?(ticket: Ticket, planMarkdown: string, project: Project): Promise<void>
+  prsOpened?(ticket: Ticket, prs: { repo: string; number: number; url: string; title: string }[], project: Project): Promise<void>
   ticketDone?(ticket: Ticket, project: Project): Promise<void>
   notify?(title: string, body: string): void
 }
@@ -61,7 +62,7 @@ export class PipelineEngine {
   private readonly locks = new Map<number, Promise<unknown>>()
   private readonly runnerFor: (runtime: string) => Runner
 
-  constructor(private readonly deps: EngineDeps) {
+  constructor(readonly deps: EngineDeps) {
     this.runnerFor = deps.runnerFor ?? runnerForRuntimeId
     this.handlers.set('plan', (ticket, stage, note) => this.runPlan(ticket, stage, note))
     this.handlers.set('build', (ticket, stage, note) => this.runBuild(ticket, stage, note))
@@ -76,7 +77,7 @@ export class PipelineEngine {
 
   // ---------- Helpers ----------
 
-  private serial<T>(ticketId: number, task: () => Promise<T>): Promise<T> {
+  serial<T>(ticketId: number, task: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(ticketId) ?? Promise.resolve()
     const next = previous.then(task, task)
     this.locks.set(
@@ -125,7 +126,7 @@ export class PipelineEngine {
     return runner.readFile(runner.join(await this.outputsDir(ticket), name))
   }
 
-  private async keepHistory(ticket: Ticket, name: string, copyAs: string): Promise<void> {
+  async keepHistory(ticket: Ticket, name: string, copyAs: string): Promise<void> {
     const project = this.project(ticket)
     const runner = this.runner(project)
     const dir = await this.outputsDir(ticket)
@@ -133,7 +134,7 @@ export class PipelineEngine {
     if (content !== null) await runner.writeFile(runner.join(dir, 'history', copyAs), content)
   }
 
-  private async removeOutput(ticket: Ticket, name: string): Promise<void> {
+  async removeOutput(ticket: Ticket, name: string): Promise<void> {
     const project = this.project(ticket)
     const runner = this.runner(project)
     await runner.exec(['rm', '-f', runner.join(await this.outputsDir(ticket), name)])
@@ -143,37 +144,37 @@ export class PipelineEngine {
     return parsePlan(markdown, this.project(ticket).repos.map((repo) => repo.name))
   }
 
-  private update(ticketId: number, patch: TicketPatch, log?: string): Ticket {
+  update(ticketId: number, patch: TicketPatch, log?: string): Ticket {
     const ticket = this.deps.tickets.update(ticketId, patch)
     if (log) this.deps.tickets.log(ticketId, 'pipeline', log)
     this.deps.onTicketChanged(ticket)
     return ticket
   }
 
-  private stop(ticket: Ticket, reason: StopReason, detail: string): Ticket {
+  stop(ticket: Ticket, reason: StopReason, detail: string): Ticket {
     const stopped = this.update(ticket.id, { status: 'needs_you', stopReason: reason, stopDetail: detail, waitingFor: null, currentRunId: null }, `Stopped (${reason}): ${detail}`)
     this.deps.integrations?.notify?.(`${ticket.key} needs you`, detail)
     return stopped
   }
 
-  private needsYou(ticket: Ticket, waitingFor: WaitingFor, message: string): Ticket {
+  needsYou(ticket: Ticket, waitingFor: WaitingFor, message: string): Ticket {
     const updated = this.update(ticket.id, { status: 'needs_you', waitingFor, stopReason: null, stopDetail: null }, message)
     if (ticket.status !== 'needs_you' || ticket.waitingFor !== waitingFor) this.deps.integrations?.notify?.(`${ticket.key} needs you`, message)
     return updated
   }
 
-  private repoLines(project: Project, paths: Record<string, string>, access: (repo: Repo) => string): string {
+  repoLines(project: Project, paths: Record<string, string>, access: (repo: Repo) => string): string {
     return project.repos.map((repo) => `- ${repo.name}: ${paths[repo.name]} (${access(repo)})`).join('\n')
   }
 
-  private envSummary(environment: Environment | undefined): string {
+  envSummary(environment: Environment | undefined): string {
     if (!environment) return 'Not running.'
     const services = environment.services.map((service) => `- ${service.name} (${service.repoName}): ${service.state}${service.openUrl ? ` at ${service.openUrl}` : ''}`)
     const values = Object.entries(environment.values).map(([name, value]) => `- ${name} = ${value}`)
     return [...services, ...values].join('\n') || 'No services.'
   }
 
-  private async promptFor(ticket: Ticket, stage: StageConfig, crew: CrewMember, values: Record<string, string>): Promise<string> {
+  async promptFor(ticket: Ticket, stage: StageConfig, crew: CrewMember, values: Record<string, string>): Promise<string> {
     const project = this.project(ticket)
     const comments = (ticket.linear.comments ?? []).map((comment) => `${comment.author} (${comment.createdAt}): ${comment.body}`).join('\n\n')
     const labels = [ticket.linear.priority ? `Priority: ${ticket.linear.priority}` : null, ticket.linear.estimate ? `Estimate: ${ticket.linear.estimate}` : null, ...(ticket.linear.labels ?? [])]
@@ -201,7 +202,7 @@ export class PipelineEngine {
    * Starts a stage run and wires up what happens when a turn ends and when the run ends. Runs are
    * always conversational underneath so Eregion can ask for a fix in the same session.
    */
-  private async startRun(
+  async startRun(
     ticket: Ticket,
     stage: StageConfig,
     options: { cwd: string; prompt: string; profile: PermissionProfile; crew: CrewMember; note?: string },
@@ -258,7 +259,7 @@ export class PipelineEngine {
   }
 
   /** Ends the current run deliberately: the done handler sees currentRunId changed and does nothing. */
-  private endRun(ticket: Ticket): Ticket {
+  endRun(ticket: Ticket): Ticket {
     const runId = ticket.currentRunId
     const updated = this.deps.tickets.update(ticket.id, { currentRunId: null })
     if (runId !== null) this.deps.agents.end(runId)
@@ -266,7 +267,7 @@ export class PipelineEngine {
   }
 
   /** Asks for a fixed output file once; returns false when it already asked and the file is still wrong. */
-  private requestFix(runId: number, file: string, problems: string[]): boolean {
+  requestFix(runId: number, file: string, problems: string[]): boolean {
     if (this.fixRequested.has(runId)) return false
     this.fixRequested.add(runId)
     this.deps.agents.send(runId, formatFixMessage(file, problems), 'now')
@@ -281,7 +282,14 @@ export class PipelineEngine {
       const ticket = this.deps.tickets.get(ticketId)
       if (ticket.stage !== 'backlog') throw new Error(`${ticket.key} has already started`)
       const pipeline = this.deps.pipelines.latest(ticket.projectId)
-      const updated = this.update(ticketId, { pipelineVersion: pipeline.version, branch: ticket.branch ?? branchName(ticket.key, ticket.title), loop: 1, reviewFailures: 0, extraLoops: 0 })
+      const updated = this.update(ticketId, {
+        pipelineVersion: pipeline.version,
+        branch: ticket.branch ?? branchName(ticket.key, ticket.title),
+        loop: 1,
+        reviewFailures: 0,
+        extraLoops: 0,
+        linear: { ...ticket.linear, isNew: false }
+      })
       const first = nextStage(pipeline.stages, '')
       if (!first) throw new Error('The pipeline has no stages')
       await this.enter(updated, first)
@@ -325,7 +333,7 @@ export class PipelineEngine {
     }
   }
 
-  private async teardown(ticket: Ticket): Promise<void> {
+  async teardown(ticket: Ticket): Promise<void> {
     if (ticket.slot === null) return
     const project = this.project(ticket)
     const affectedRepoIds = project.repos.filter((repo) => ticket.affectedRepos.includes(repo.name)).map((repo) => repo.id)
@@ -380,7 +388,7 @@ export class PipelineEngine {
     return environment
   }
 
-  private worktreePaths(environment: Environment): Record<string, string> {
+  worktreePaths(environment: Environment): Record<string, string> {
     return Object.fromEntries(environment.repos.map((repo) => [repo.name, repo.path]))
   }
 
@@ -425,12 +433,11 @@ export class PipelineEngine {
         `Plan approved. Changes: ${plan.repos.filter((repo) => repo.changes).map((repo) => repo.name).join(', ')}`
       )
       await this.keepHistory(ticket, 'plan.md', `plan-approved-${ticket.loop}.md`)
-      if (stage.after.some((action) => action.type === 'linear-comment' && action.what === 'plan')) {
-        try {
-          await this.deps.integrations?.planApproved?.(ticket, markdown, this.project(ticket))
-        } catch (error) {
-          this.deps.tickets.log(ticketId, 'warning', `Couldn't post the plan to Linear: ${(error as Error).message}`)
-        }
+      // What goes back to Linear is the project's choice (setup step 6).
+      try {
+        await this.deps.integrations?.planApproved?.(ticket, markdown, this.project(ticket))
+      } catch (error) {
+        this.deps.tickets.log(ticketId, 'warning', `Couldn't post the plan to Linear: ${(error as Error).message}`)
       }
       await this.advance(ticket)
     })
@@ -525,7 +532,7 @@ export class PipelineEngine {
     await this.advance(this.deps.tickets.get(ticket.id))
   }
 
-  private async runActions(ticket: Ticket, actions: StageConfig['after']): Promise<void> {
+  async runActions(ticket: Ticket, actions: StageConfig['after']): Promise<void> {
     for (const action of actions) {
       if (action.type === 'notify') this.deps.integrations?.notify?.(`${ticket.key}: ${ticket.title}`, `${this.stage(ticket)?.name ?? 'Stage'} finished`)
       if (action.type === 'run') {

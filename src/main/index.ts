@@ -1,9 +1,10 @@
 import { join } from 'node:path'
 import { userInfo } from 'node:os'
-import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
 import { createBackend, type Backend, type Host } from './api'
 import { openDatabase, type Db } from './db'
+import { openUrl } from './openUrl'
 
 let db: Db
 let backend: Backend | null = null
@@ -34,9 +35,11 @@ function createWindow(): void {
     mainWindow = null
   })
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    void openUrl(url, (link) => shell.openExternal(link))
     return { action: 'deny' }
   })
+  // Linear issues assigned while you were away show up as soon as you come back.
+  mainWindow.on('focus', () => void backend?.linearSync.syncAll().catch(() => undefined))
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -65,7 +68,7 @@ const host: Host = {
     return result.canceled ? null : result.filePaths[0]
   },
   async openExternal(url) {
-    if (/^https?:\/\//.test(url)) await shell.openExternal(url)
+    await openUrl(url, (link) => shell.openExternal(link))
   },
   emit(event: EregionEvent) {
     mainWindow?.webContents.send('event', event)
@@ -73,7 +76,12 @@ const host: Host = {
   notify(title, body) {
     if (Notification.isSupported() && !mainWindow?.isFocused()) new Notification({ title, body }).show()
   },
-  userName: userInfo().username
+  userName: userInfo().username,
+  // Linear tokens are encrypted with the OS keychain where there is one (on Linux without a keyring, Electron falls back to a fixed key).
+  secrets: {
+    encrypt: (text) => (safeStorage.isEncryptionAvailable() ? `enc:${safeStorage.encryptString(text).toString('base64')}` : text),
+    decrypt: (text) => (text.startsWith('enc:') ? safeStorage.decryptString(Buffer.from(text.slice(4), 'base64')) : text)
+  }
 }
 
 function registerIpc(api: EregionApi): void {
@@ -87,7 +95,7 @@ function registerIpc(api: EregionApi): void {
 
 app.whenReady().then(() => {
   db = openDatabase(databasePath())
-  backend = createBackend(db, host)
+  backend = createBackend(db, host, { timers: true })
   registerIpc(backend.api)
   createWindow()
 

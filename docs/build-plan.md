@@ -13,6 +13,10 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - A web preview (`npm run preview:web`) serves the built UI and the real API over HTTP from plain Node, so screens can be checked in a browser without Electron.
 - Agent runs use the CLIs headless (`claude -p --input-format stream-json --output-format stream-json --verbose`), checked against Claude Code 2.1.303. Cost is the last result's running `total_cost_usd`; tokens are summed per turn. The Cursor adapter follows Cursor's documented stream-json format but is unverified until the Cursor CLI is installed.
 - Costs come from what Claude Code reports (`total_cost_usd`); Cursor runs record tokens only.
+- Linear is reached with plain GraphQL over fetch (no @linear/sdk): a dozen queries, easy to fake in tests. Sign-in is the user's own private OAuth app with PKCE and a loopback redirect on 127.0.0.1:47321 to 47323; a client secret is optional, for apps that insist. Tokens are encrypted with Electron's safeStorage.
+- GitHub goes through gh in each repo's runtime. PR bodies are updated through the REST API (`gh pr edit` breaks on classic projects in gh 2.63), drafts are marked ready through GraphQL, and failed job logs come from the REST job-logs endpoint (`gh run view --log-failed` prints nothing for some runs on gh 2.63).
+- Inside WSL, links open in the Windows browser through wslview or explorer.exe.
+- Watch CI polls every 15 seconds and checks each ticket at its stage's interval. A ticket watching CI is `idle` in the `ci` stage, so a restart doesn't stop it.
 - Native modules: better-sqlite3 only. Version 13 ships N-API prebuilds for every platform, so the same binary runs in Node (tests) and Electron, with no rebuild and no C++ build tools.
 
 ## Phases

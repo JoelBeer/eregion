@@ -6,6 +6,8 @@ import { BoardCard } from '../components/BoardCard'
 import { RobotAvatar } from '../components/RobotAvatar'
 import { useAction, useQuery } from '../hooks'
 import { navigate } from '../router'
+import type { Project } from '@shared/model'
+import { timeAgo, useLinearStatus } from './settings/IntegrationsSettings'
 
 export function useCrew(): CrewMember[] {
   return useQuery(() => window.eregion.listCrew(), [], (event) => event.type === 'crew-changed').data ?? []
@@ -41,7 +43,46 @@ function useBoard(projectId: number): { cards: TicketCard[] | undefined; reload:
   return { cards, reload: () => void load.current() }
 }
 
-function NewTicket({ projectId, onDone }: { projectId: number; onDone: () => void }): ReactElement {
+function LinearBar({ project }: { project: Project }): ReactElement | null {
+  const { status } = useLinearStatus()
+  const [key, setKey] = useState('')
+  const sync = useAction(() => window.eregion.syncLinear())
+  const importKey = useAction(async () => {
+    const ticket = await window.eregion.importLinearIssue(project.id, key)
+    setKey('')
+    navigate({ name: 'ticket', projectId: project.id, ticketId: ticket.id, tab: 'conversation' })
+  })
+  if (!project.linear.teamId || !status?.method) return null
+  const manual = project.linear.pullFrom === 'manual'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
+      <span className="muted">
+        Linear {project.linear.teamName ?? project.linear.teamKey}: {manual ? 'import issues by key' : `issues assigned to ${status.importAssignees.mode === 'me' ? 'you' : 'the people you chose'} come in by themselves`} · synced {timeAgo(status.lastSyncAt)}
+      </span>
+      {status.error && <span className="error-text">Sync failed: {status.error}</span>}
+      {!manual && (
+        <button type="button" className="er-btn er-btn-sm er-btn-ghost" disabled={sync.pending} onClick={() => void sync.run()}>
+          {sync.pending ? 'Syncing…' : 'Sync now'}
+        </button>
+      )}
+      <form
+        style={{ display: 'flex', gap: 6 }}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (key.trim()) void importKey.run()
+        }}
+      >
+        <input className="input mono" aria-label="Linear issue key" placeholder={`${project.linear.teamKey ?? 'WM'}-123`} value={key} onChange={(event) => setKey(event.target.value)} style={{ width: 120, padding: '4px 8px' }} />
+        <button type="submit" className="er-btn er-btn-sm" disabled={!key.trim() || importKey.pending}>
+          Import
+        </button>
+      </form>
+      {importKey.error && <span className="error-text">{importKey.error}</span>}
+    </div>
+  )
+}
+
+function NewTicket({ projectId, linked, onDone }: { projectId: number; linked: boolean; onDone: () => void }): ReactElement {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const create = useAction(async () => {
@@ -64,7 +105,7 @@ function NewTicket({ projectId, onDone }: { projectId: number; onDone: () => voi
         <textarea id="ticket-description" className="textarea" rows={4} value={description} onChange={(event) => setDescription(event.target.value)} />
       </div>
       <span className="muted" style={{ fontSize: 13 }}>
-        For work that isn't in Linear. It gets a key from the project's initials.
+        {linked ? 'Creates the issue in Linear, assigned to you, and adds it to the Backlog.' : "For work that isn't in Linear. It gets a key from the project's initials."}
       </span>
       {create.error && <span className="error-text">{create.error}</span>}
       <div style={{ display: 'flex', gap: 8 }}>
@@ -85,6 +126,7 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
   const crew = useCrew()
   const { cards, reload } = useBoard(projectId)
   const [adding, setAdding] = useState(false)
+  const { status: linearStatus } = useLinearStatus()
   const [search, setSearch] = useState('')
 
   if (!project.data || !pipeline.data || !cards) return <main style={{ padding: 28 }} className="muted">Loading…</main>
@@ -109,9 +151,11 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
           + New ticket
         </button>
       </header>
+      <LinearBar project={project.data} />
       {adding && (
         <NewTicket
           projectId={projectId}
+          linked={Boolean(project.data.linear.teamId && linearStatus?.method)}
           onDone={() => {
             setAdding(false)
             reload()
