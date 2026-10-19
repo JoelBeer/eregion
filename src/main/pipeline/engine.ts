@@ -485,6 +485,7 @@ export class PipelineEngine {
         return
       }
       const ended = this.endRun(current)
+      if (notes?.blockedNote) this.deps.tickets.log(ended.id, 'note', `${crew.name}: ${notes.blockedNote}`)
       await this.keepHistory(ended, 'build-notes.md', `build-notes-${ended.loop}.md`)
       if (previousReview) await this.keepHistory(ended, 'fixes.json', `fixes-${ended.loop}.json`)
       await this.afterBuild(ended, stage, notes?.summary ?? '', environment)

@@ -69,7 +69,19 @@ describe('parseBuildNotes', () => {
     `# Build notes · WM-12 · pass 1\n\n## Summary\nAdded hints.\n\n## Changes\n### word-magic\n- app/x.php: hint\n\n## Checks run\n- php artisan test: passed\n\n## Decisions\n- None\n\n## Deviations from the plan\n- None\n\n## Blocked\n${blocked}\n`
 
   it('reads the summary and treats None as not blocked', () => {
-    expect(parseBuildNotes(notes('None'))).toEqual({ summary: 'Added hints.', blocked: null, problems: [] })
+    expect(parseBuildNotes(notes('None'))).toEqual({ summary: 'Added hints.', blocked: null, blockedNote: null, problems: [] })
+  })
+
+  it('treats "None." followed by a note as not blocked, keeping the note', () => {
+    // What Rivet actually wrote on WM-1, which used to stop the ticket as Blocked.
+    const parsed = parseBuildNotes(notes('None. The builder has no browser, so joelb still needs to check by hand in Review that red opens with no blue flash.'))
+    expect(parsed.blocked).toBeNull()
+    expect(parsed.blockedNote).toBe('The builder has no browser, so joelb still needs to check by hand in Review that red opens with no blue flash.')
+    expect(parseBuildNotes(notes('- Nothing — all checks ran.')).blocked).toBeNull()
+  })
+
+  it('still treats a sentence that starts with "None of" as a blocker', () => {
+    expect(parseBuildNotes(notes('None of the tests can run: the database container will not start.')).blocked).toBe('None of the tests can run: the database container will not start.')
   })
 
   it('returns the Blocked text when the build stopped', () => {

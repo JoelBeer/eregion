@@ -211,7 +211,7 @@ Two or three sentences on what this pass did.
 - <what differs, and why>  (or: None)
 
 ## Blocked
-None  (or: what stopped you, and what's needed)`,
+None  (or: what stopped you, and what's needed. Only things that stop the work belong here; anything for the reviewer to check goes under Checks run or Decisions.)`,
   review: `{
   "loop": 1,
   "verdict": "fail",

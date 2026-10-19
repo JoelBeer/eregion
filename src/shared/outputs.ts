@@ -116,8 +116,13 @@ export function planApprovalBlockers(plan: ParsedPlan): string[] {
 export interface ParsedBuildNotes {
   summary: string
   blocked: string | null
+  /** What followed "None" under Blocked: a caveat for the reviewer, not a blocker. */
+  blockedNote: string | null
   problems: string[]
 }
+
+/** "None", "None.", "None. <a note>" or "Nothing — <a note>" mean not blocked; "None of the tests ran" does not. */
+const NOT_BLOCKED = /^(none|nothing|n\/a|not blocked)(?:\s*$|\s*[.:;,!—–-]+\s*)/i
 
 const BUILD_HEADINGS = ['Summary', 'Changes', 'Checks run', 'Decisions', 'Deviations from the plan', 'Blocked']
 
@@ -126,9 +131,11 @@ export function parseBuildNotes(markdown: string): ParsedBuildNotes {
   const problems = BUILD_HEADINGS.filter((heading) => !parts.has(heading)).map((heading) => `Missing the "## ${heading}" heading`)
   const summary = (parts.get('Summary') ?? []).join('\n').trim()
   const blockedText = (parts.get('Blocked') ?? []).join('\n').trim().replace(/^[-*]\s+/, '')
-  const blocked = !parts.has('Blocked') || /^none\.?$/i.test(blockedText) || blockedText === '' ? null : blockedText
+  const notBlocked = blockedText.match(NOT_BLOCKED)
+  const blocked = !parts.has('Blocked') || blockedText === '' || notBlocked ? null : blockedText
+  const blockedNote = notBlocked ? blockedText.slice(notBlocked[0].length).trim() || null : null
   if (parts.has('Summary') && !summary) problems.push('The Summary is empty')
-  return { summary, blocked, problems }
+  return { summary, blocked, blockedNote, problems }
 }
 
 export type Severity = 'high' | 'medium' | 'low'
