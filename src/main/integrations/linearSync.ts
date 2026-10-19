@@ -139,7 +139,7 @@ export class LinearSync {
     for (const ticket of missing) {
       const issue = current.find((item) => item.id === ticket.linearId)
       const assignedToUs = issue?.assignee ? (assigneeIds === 'me' ? issue.assignee.id === viewer?.id : assigneeIds.includes(issue.assignee.id)) : false
-      const closed = !issue || issue.state.type === 'completed' || issue.state.type === 'canceled'
+      const closed = !issue || issue.state.type === 'completed' || issue.state.type === 'canceled' || issue.state.type === 'duplicate'
       if (ticket.stage === 'backlog' && (!assignedToUs || closed)) {
         this.tickets.delete(ticket.id)
         result.removed.push(ticket.key)

@@ -87,7 +87,7 @@ export class LinearClient {
 
   async states(teamId: string): Promise<LinearState[]> {
     const data = await this.request<{ team: { states: { nodes: LinearState[] } } }>('query($id: String!) { team(id: $id) { states { nodes { id name type color position } } } }', { id: teamId })
-    const order: LinearStateType[] = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']
+    const order: LinearStateType[] = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled', 'duplicate']
     return data.team.states.nodes.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || a.position - b.position)
   }
 

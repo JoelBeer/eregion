@@ -30,7 +30,7 @@ export interface LinearTeam {
   name: string
 }
 
-export type LinearStateType = 'triage' | 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled'
+export type LinearStateType = 'triage' | 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled' | 'duplicate'
 
 export interface LinearState {
   id: string
