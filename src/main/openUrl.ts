@@ -17,14 +17,20 @@ function run(command: string, args: string[]): Promise<boolean> {
 }
 
 /**
- * Opens a web link in the person's browser. Inside WSL that's the Windows default browser, through
- * wslview when it's installed, or explorer.exe otherwise.
+ * The Windows command that opens a URL in the default browser. Windows' own URL handler takes the
+ * URL as one argument with no shell in between, so `&`, `?` and `=` survive. (explorer.exe doesn't
+ * read a long query-string URL as a link and opens Documents instead.)
  */
+export function windowsOpenCommand(url: string): [string, string[]] {
+  return ['rundll32.exe', ['url.dll,FileProtocolHandler', url]]
+}
+
+/** Opens a web link in the person's browser. Inside WSL that's the Windows default browser. */
 export async function openUrl(url: string, fallback: (url: string) => Promise<void>): Promise<void> {
   if (!/^https?:\/\//.test(url)) return
   if (insideWsl()) {
-    if (await run('wslview', [url])) return
-    if (await run('explorer.exe', [url])) return
+    const [command, args] = windowsOpenCommand(url)
+    if (await run(command, args)) return
   }
   await fallback(url)
 }
