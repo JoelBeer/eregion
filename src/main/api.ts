@@ -11,6 +11,10 @@ import { ticketBuiltins } from './recipe/context'
 import { ServiceManager } from './recipe/services'
 import { checkTools } from './tools'
 import { Workspaces, type WorkspaceTicket } from './workspace/workspaces'
+import { CrewStore } from './agents/crew'
+import { AgentManager } from './agents/manager'
+import { RunStore } from './agents/runs'
+import type { CrewMember } from '@shared/runs'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -31,11 +35,17 @@ export function sampleTicket(projectKey: string | null): VariablePreview['sample
 export interface BackendOptions {
   /** Overrides ~/.eregion for worktrees, for tests. */
   workspaceRoot?: string
+  /** Replaces the agent CLI for a crew member, for tests and the web preview. */
+  agentCommand?: (crew: CrewMember) => string[] | undefined
 }
 
 export interface Backend {
   api: EregionApi
   workspaces: Workspaces
+  agents: AgentManager
+  crew: CrewStore
+  runs: RunStore
+  projects: ProjectStore
   /** Stops every service Eregion started. Called when the app quits. */
   shutdown(): Promise<void>
 }
@@ -51,6 +61,10 @@ export function createApi(db: Db, host: Host, options: BackendOptions = {}): Ere
 export function createBackend(db: Db, host: Host, options: BackendOptions = {}): Backend {
   const projects = new ProjectStore(db)
   const services = new ServiceManager()
+  const runs = new RunStore(db)
+  runs.closeAbandoned()
+  const crew = new CrewStore(db)
+  const agents = new AgentManager(runs, (notice) => host.emit(notice), options.agentCommand)
   const workspaces = new Workspaces(projects, services, (environment) => host.emit({ type: 'environment', environment }), undefined, options.workspaceRoot)
   const changed = (projectId: number): void => {
     host.emit({ type: 'project-changed', projectId })
@@ -69,7 +83,18 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
 
   const api: EregionApi = {
     appInfo: async () => ({ version: host.appVersion, platform: process.platform, databasePath: host.databasePath }),
-    checkTools: () => checkTools(),
+    checkTools: async () => {
+      const checks = await checkTools()
+      // First run: create the default crew on whichever agent is installed (Claude Code if both are).
+      if (crew.list().length === 0) {
+        const found = (tool: string): boolean => checks.some((check) => check.tool === tool && check.found)
+        if (found('claude') || found('cursor-agent')) {
+          crew.ensureDefaults(found('claude') ? 'claude-code' : 'cursor')
+          host.emit({ type: 'crew-changed' })
+        }
+      }
+      return checks
+    },
 
     listProjects: async () => projects.list(),
     getProject: async (id) => projects.get(id),
@@ -183,12 +208,24 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       return project
     },
 
+    listCrew: async () => crew.list(),
+    getRun: async (runId) => agents.view(runId),
+    sendToRun: async (runId, text, delivery, dictated) => agents.send(runId, text, delivery, dictated),
+    stopRun: (runId) => agents.stop(runId),
+
     openExternal: (url) => host.openExternal(url)
   }
 
   return {
     api,
     workspaces,
-    shutdown: () => services.stopAll()
+    agents,
+    crew,
+    runs,
+    projects,
+    shutdown: async () => {
+      await agents.stopAll()
+      await services.stopAll()
+    }
   }
 }

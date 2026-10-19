@@ -1,5 +1,7 @@
 import type { Project, ProjectSummary, Repo, Service, Step, StepPhase, Variable } from './model'
+import type { AgentEvent } from './agent'
 import type { Environment } from './environment'
+import type { CrewMember, RunView } from './runs'
 import type { AppInfo, ToolCheck } from './types'
 
 export interface RepoInput {
@@ -84,6 +86,11 @@ export interface EregionApi {
   getEnvironment(key: string): Promise<Environment | null>
   finishSetup(projectId: number): Promise<Project>
 
+  listCrew(): Promise<CrewMember[]>
+  getRun(runId: number): Promise<RunView>
+  sendToRun(runId: number, text: string, delivery: 'now' | 'queue', dictated: boolean): Promise<'delivered' | 'queued'>
+  stopRun(runId: number): Promise<void>
+
   openExternal(url: string): Promise<void>
 }
 
@@ -113,11 +120,18 @@ export const API_METHODS = [
   'tearDownTestRun',
   'getEnvironment',
   'finishSetup',
+  'listCrew',
+  'getRun',
+  'sendToRun',
+  'stopRun',
   'openExternal'
 ] as const satisfies readonly (keyof EregionApi)[]
 
 /** Pushed from the main process when something changes that screens should refresh for. */
 export type EregionEvent = { type: 'projects-changed' } | { type: 'project-changed'; projectId: number } | { type: 'environment'; environment: Environment }
+  | { type: 'run-event'; runId: number; event: AgentEvent }
+  | { type: 'run-state'; runId: number; state: RunView['state']; queued: number }
+  | { type: 'crew-changed' }
 
 export interface EregionBridge extends EregionApi {
   onEvent(listener: (event: EregionEvent) => void): () => void

@@ -11,6 +11,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - Plan runs as a conversation in the session panel over Claude Code's stream-json, like every other stage. No embedded terminal, so no node-pty.
 - One local commit per working, tested phase on `main`. Nothing is pushed.
 - A web preview (`npm run preview:web`) serves the built UI and the real API over HTTP from plain Node, so screens can be checked in a browser without Electron.
+- Agent runs use the CLIs headless (`claude -p --input-format stream-json --output-format stream-json --verbose`), checked against Claude Code 2.1.303. Cost is the last result's running `total_cost_usd`; tokens are summed per turn. The Cursor adapter follows Cursor's documented stream-json format but is unverified until the Cursor CLI is installed.
 - Costs come from what Claude Code reports (`total_cost_usd`); Cursor runs record tokens only.
 - Native modules: better-sqlite3 only. Version 13 ships N-API prebuilds for every platform, so the same binary runs in Node (tests) and Electron, with no rebuild and no C++ build tools.
 
@@ -30,7 +31,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - [x] 1. Foundation
 - [x] 2. Projects and recipes (steps 5 to 7 of setup arrive with phases 3, 5 and 6)
 - [x] 3. Ticket workspaces
-- [ ] 4. Agents
+- [x] 4. Agents
 - [ ] 5. Pipeline and board
 - [ ] 6. Integrations
 - [ ] 7. Crew, Forge, Costs, Settings, voice
