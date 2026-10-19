@@ -7,7 +7,7 @@ import type { Ticket } from '@shared/tickets'
 import { ServiceRows, StepRows } from '../../components/EnvironmentView'
 import { Markdown } from '../../components/Markdown'
 import { Chip, StatusPill } from '../../components/ui'
-import { useAction } from '../../hooks'
+import { useAction, useQuery } from '../../hooks'
 
 const SEVERITY_STYLE: Record<string, { background: string; color: string; label: string }> = {
   high: { background: 'var(--red-100, #FDECEC)', color: 'var(--red-700, #B42318)', label: 'HIGH' },
@@ -221,8 +221,12 @@ export function EnvironmentPanel({ ticket, environment, repoNames }: { ticket: T
   const start = useAction(() => window.eregion.startServices(ticket.id))
   const stop = useAction(() => window.eregion.stopServices(ticket.id))
   const editor = useAction((repo: string) => window.eregion.openInEditor(ticket.id, repo))
+  const update = useAction(() => window.eregion.updateFromBase(ticket.id))
+  const project = useQuery(() => window.eregion.getProject(ticket.projectId), [ticket.projectId]).data
   if (ticket.slot === null) return null
   const running = environment?.services.some((service) => service.state === 'ready' || service.state === 'starting')
+  const bases = [...new Set((project?.repos ?? []).map((repo) => repo.defaultBranch))]
+  const agentWorking = ticket.status === 'running' && ticket.currentRunId !== null
   return (
     <section aria-label="Environment" className="panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -230,6 +234,15 @@ export function EnvironmentPanel({ ticket, environment, repoNames }: { ticket: T
         <StatusPill status="neutral">Slot {ticket.slot}</StatusPill>
         {environment?.phase === 'setting-up' && <StatusPill status="running">Setting up</StatusPill>}
         <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="er-btn er-btn-sm er-btn-ghost"
+          title="Merge the latest base branch into this ticket's branch, then run setup and start the services again"
+          onClick={() => void update.run()}
+          disabled={update.pending || agentWorking || environment?.phase === 'setting-up'}
+        >
+          {update.pending ? 'Updating…' : `Update from ${bases.length === 1 ? bases[0] : 'base branches'}`}
+        </button>
         {running ? (
           <button type="button" className="er-btn er-btn-sm" onClick={() => void stop.run()} disabled={stop.pending}>
             Stop services
@@ -264,7 +277,7 @@ export function EnvironmentPanel({ ticket, environment, repoNames }: { ticket: T
           </button>
         ))}
       </div>
-      {(start.error || stop.error || editor.error) && <span className="error-text">{start.error ?? stop.error ?? editor.error}</span>}
+      {(start.error || stop.error || editor.error || update.error) && <span className="error-text">{start.error ?? stop.error ?? editor.error ?? update.error}</span>}
     </section>
   )
 }

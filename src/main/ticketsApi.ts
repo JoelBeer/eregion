@@ -35,6 +35,7 @@ export type TicketsApi = Pick<
   | 'startServices'
   | 'stopServices'
   | 'openInEditor'
+  | 'updateFromBase'
   | 'getPipeline'
   | 'savePipeline'
 >
@@ -228,6 +229,7 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
       await workspaces.startServices(`ticket:${ticketId}`, project, { key: ticket.key, title: ticket.title, slot: ticket.slot, branch: ticket.branch ?? '' })
     },
     stopServices: (ticketId) => workspaces.stopServices(`ticket:${ticketId}`),
+    updateFromBase: (ticketId) => engine.updateFromBase(ticketId),
     openInEditor: async (ticketId, repoName) => {
       const ticket = tickets.get(ticketId)
       const project = projects.get(ticket.projectId)

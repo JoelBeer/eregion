@@ -109,6 +109,27 @@ export async function pushBranch(runner: Runner, path: string, branch: string): 
   await gitIn(runner, path, ['push', '--quiet', '-u', 'origin', branch], 180_000)
 }
 
+/**
+ * Brings a worktree up to date with its base: merges the base into the ticket branch (never a
+ * rebase, since the branch may already be pushed), or moves a read-only worktree to the base.
+ * Uncommitted work is left alone. A merge that conflicts is aborted, so the worktree is unchanged.
+ */
+export async function updateFromBase(runner: Runner, path: string, ref: string, onTicketBranch: boolean): Promise<string> {
+  const behind = Number(await gitIn(runner, path, ['rev-list', '--count', `HEAD..${ref}`]))
+  if (behind === 0) return `already up to date with ${ref}`
+  const commits = `${behind} ${behind === 1 ? 'commit' : 'commits'}`
+  if (!onTicketBranch) {
+    await gitIn(runner, path, ['checkout', '--quiet', '--detach', ref])
+    return `moved to ${ref} (${commits})`
+  }
+  const result = await runner.exec(['git', 'merge', '--no-edit', ref], { cwd: path, timeoutMs: 120_000 })
+  if (result.code !== 0) {
+    await runner.exec(['git', 'merge', '--abort'], { cwd: path })
+    throw new GitError(`${ref} doesn't merge cleanly into this ticket's branch, so nothing changed: ${(result.stdout || result.stderr).trim().split('\n').slice(-6).join(' ')}`)
+  }
+  return `merged ${commits} from ${ref}`
+}
+
 /** The diff of the ticket branch against its base, for the Diff tab. */
 export async function branchDiff(runner: Runner, path: string, base: string): Promise<string> {
   return gitIn(runner, path, ['diff', '--no-color', '--find-renames', `${base}...HEAD`], 60_000)

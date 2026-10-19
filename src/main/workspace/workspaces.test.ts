@@ -138,4 +138,53 @@ describe.skipIf(process.platform === 'win32')('Workspaces', () => {
     expect(await readFile(join(planApi, 'NEW.md'), 'utf8')).toBe('new on main')
     await expect(readFile(join(planApi, 'stray.txt'), 'utf8')).rejects.toThrow()
   }, 60_000)
+
+  it('merges a fix that landed on main into the ticket branch, keeps uncommitted work, and sets up again', async () => {
+    const { workspaces, project, apiRepo, api, port } = context
+    const ticket = { key: 'TP-11', title: 'Catch up', slot: 1, branch: 'tp-11-catch-up', affectedRepoIds: [apiRepo.id] }
+    const environment = await workspaces.create('ticket:5', project, ticket)
+    const worktree = environment.repos[0].path
+    await writeFile(join(worktree, 'WORK.md'), 'committed on the ticket branch')
+    git(worktree, 'add', 'WORK.md')
+    git(worktree, 'commit', '-m', 'Ticket work')
+    await writeFile(join(worktree, 'README.md'), 'uncommitted edit')
+
+    const seed = join(api.root, 'seed')
+    await writeFile(join(seed, 'FIX.md'), 'fixed on main')
+    git(seed, 'add', '-A')
+    git(seed, 'commit', '-m', 'Fix on main')
+    git(seed, 'push')
+
+    const logs: string[] = []
+    const updated = await workspaces.updateFromBase('ticket:5', project, ticket, { log: (_kind, message) => logs.push(message) })
+    expect(logs).toContain('api: merged 1 commit from origin/main')
+    expect(await readFile(join(worktree, 'FIX.md'), 'utf8')).toBe('fixed on main')
+    expect(await readFile(join(worktree, 'WORK.md'), 'utf8')).toBe('committed on the ticket branch')
+    expect(await readFile(join(worktree, 'README.md'), 'utf8')).toBe('uncommitted edit')
+    expect(git(worktree, 'branch', '--show-current')).toBe('tp-11-catch-up')
+    expect(updated.phase).toBe('ready')
+    expect(await portOpen(port)).toBe(true)
+    await workspaces.teardown('ticket:5', project, ticket)
+  }, 60_000)
+
+  it('leaves the worktree alone and restarts services when main conflicts with the ticket branch', async () => {
+    const { workspaces, project, apiRepo, api, port } = context
+    const ticket = { key: 'TP-12', title: 'Clash', slot: 1, branch: 'tp-12-clash', affectedRepoIds: [apiRepo.id] }
+    const environment = await workspaces.create('ticket:6', project, ticket)
+    const worktree = environment.repos[0].path
+    await writeFile(join(worktree, 'README.md'), 'ticket version')
+    git(worktree, 'commit', '-am', 'Ticket edit')
+    const before = git(worktree, 'rev-parse', 'HEAD')
+
+    const seed = join(api.root, 'seed')
+    await writeFile(join(seed, 'README.md'), 'main version')
+    git(seed, 'commit', '-am', 'Main edit')
+    git(seed, 'push')
+
+    await expect(workspaces.updateFromBase('ticket:6', project, ticket)).rejects.toThrow("doesn't merge cleanly")
+    expect(git(worktree, 'rev-parse', 'HEAD')).toBe(before)
+    expect(git(worktree, 'status', '--porcelain', '--untracked-files=no')).toBe('')
+    expect(await portOpen(port)).toBe(true)
+    await workspaces.teardown('ticket:6', project, ticket)
+  }, 60_000)
 })

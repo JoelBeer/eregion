@@ -8,7 +8,7 @@ import { recipeContext, type TicketValues } from '../recipe/context'
 import type { RunningService, ServiceManager } from '../recipe/services'
 import { runSteps, type StepResult } from '../recipe/steps'
 import type { Runner } from '../runner'
-import { baseRef, branchExists, ensureWorktree, gitIn, removeWorktree } from './git'
+import { baseRef, branchExists, ensureWorktree, gitIn, removeWorktree, updateFromBase as bringInBase } from './git'
 
 export interface WorkspaceTicket extends TicketValues {
   /** Repos the plan changes. They get the ticket branch; the rest stay detached at the base branch. */
@@ -270,6 +270,32 @@ export class Workspaces {
       this.serviceSnapshot(environment)
       this.update(environment)
     }
+  }
+
+  /**
+   * Brings a ticket's worktrees up to date with their base branches, then sets the environment up
+   * again: services stop, the base is merged in (or a read-only worktree moves to it), setup runs,
+   * services start. If a merge conflicts, nothing changes and the services come back as they were.
+   */
+  async updateFromBase(key: string, project: Project, ticket: WorkspaceTicket, options: WorkspaceOptions = {}): Promise<Environment> {
+    const hadServices = (this.environments.get(key)?.services ?? []).some((service) => service.state === 'ready' || service.state === 'starting')
+    await this.stopServices(key)
+    try {
+      for (const repo of project.repos) {
+        const runner = this.runnerFor(repo.runtime)
+        const path = await this.worktreePath(project, repo, ticket.key)
+        if (!(await runner.exists(path))) continue
+        const outcome = await this.withRepoLock(repo, async () => {
+          const { ref } = await baseRef(runner, repo.path, repo.defaultBranch)
+          return bringInBase(runner, path, ref, ticket.affectedRepoIds.includes(repo.id))
+        })
+        options.log?.('git', `${repo.name}: ${outcome}`)
+      }
+    } catch (error) {
+      if (hadServices && this.environments.has(key)) await this.startServices(key, project, ticket)
+      throw error
+    }
+    return this.create(key, project, ticket, options)
   }
 
   /** Stops services, runs teardown steps, and removes the worktrees. The ticket branch is kept unless asked. */

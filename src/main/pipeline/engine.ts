@@ -728,6 +728,34 @@ export class PipelineEngine {
     })
   }
 
+  /**
+   * Merges the latest base branch into the ticket's worktrees and sets the environment up again,
+   * for when a fix lands on main after the ticket's branch was cut.
+   */
+  updateFromBase(ticketId: number): Promise<void> {
+    return this.serial(ticketId, async () => {
+      const ticket = this.deps.tickets.get(ticketId)
+      if (ticket.slot === null) throw new Error(`${ticket.key} doesn't have an environment yet`)
+      if (ticket.currentRunId !== null && this.deps.agents.liveState(ticket.currentRunId)) throw new Error('An agent is working in the worktree. Stop the run first.')
+      const project = this.project(ticket)
+      const affectedRepoIds = project.repos.filter((repo) => ticket.affectedRepos.includes(repo.name)).map((repo) => repo.id)
+      const environment = await this.deps.workspaces.updateFromBase(
+        this.environmentKey(ticket),
+        project,
+        { key: ticket.key, title: ticket.title, description: ticket.description, slot: ticket.slot, branch: ticket.branch ?? branchName(ticket.key, ticket.title), affectedRepoIds },
+        { log: (kind, message) => this.deps.tickets.log(ticketId, kind, message) }
+      )
+      const current = this.deps.tickets.get(ticketId)
+      if (environment.phase !== 'ready') {
+        this.stop(current, 'setup_failed', environment.error ?? 'Setup failed')
+      } else if (current.stopReason === 'setup_failed') {
+        this.update(ticketId, { stopDetail: 'Updated from the base branch and set up again. Start again to carry on.' }, 'Environment ready after updating from the base branch')
+      } else {
+        this.update(ticketId, {}, 'Environment ready after updating from the base branch')
+      }
+    })
+  }
+
   stopRun(ticketId: number): Promise<void> {
     const ticket = this.deps.tickets.get(ticketId)
     if (ticket.currentRunId === null) return Promise.resolve()

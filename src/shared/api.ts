@@ -111,6 +111,8 @@ export interface EregionApi {
   startServices(ticketId: number): Promise<void>
   stopServices(ticketId: number): Promise<void>
   openInEditor(ticketId: number, repoName: string): Promise<void>
+  /** Merges the latest base branch into the ticket's worktrees and sets the environment up again. */
+  updateFromBase(ticketId: number): Promise<void>
 
   getPipeline(projectId: number): Promise<{ version: number; stages: StageConfig[]; olderVersions: { version: number; tickets: number }[] }>
   savePipeline(projectId: number, stages: StageConfig[]): Promise<number>
@@ -192,6 +194,7 @@ export const API_METHODS = [
   'startServices',
   'stopServices',
   'openInEditor',
+  'updateFromBase',
   'getPipeline',
   'savePipeline',
   'getSetting',
