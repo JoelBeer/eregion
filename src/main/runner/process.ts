@@ -5,6 +5,7 @@ export interface StartOptions {
   cwd?: string
   env?: NodeJS.ProcessEnv
   timeoutMs?: number
+  input?: string
 }
 
 export function start(file: string, args: string[], options: StartOptions = {}): ChildProcess {
@@ -29,5 +30,11 @@ export function collect(file: string, args: string[], options: StartOptions = {}
       clearTimeout(timer)
       resolve({ code: code ?? 1, stdout, stderr })
     })
+    if (options.input !== undefined) {
+      child.stdin?.on('error', () => undefined)
+      child.stdin?.end(options.input)
+    } else {
+      child.stdin?.end()
+    }
   })
 }

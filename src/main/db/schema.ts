@@ -178,5 +178,8 @@ export const migrations: string[] = [
   CREATE INDEX events_run ON events(run_id, id);
   CREATE INDEX messages_run ON messages(run_id, status);
   CREATE INDEX ci_attempts_pr ON ci_attempts(pull_request_id, check_name);
+  `,
+  `
+  ALTER TABLE projects ADD COLUMN setup_parallel INTEGER NOT NULL DEFAULT 0;
   `
 ]

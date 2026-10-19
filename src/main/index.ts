@@ -1,17 +1,18 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import type { AppInfo } from '@shared/types'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
+import { createApi, type Host } from './api'
 import { openDatabase, type Db } from './db'
-import { checkTools } from './tools'
 
 let db: Db
+let mainWindow: BrowserWindow | null = null
 
 function databasePath(): string {
   return join(app.getPath('userData'), 'eregion.db')
 }
 
 function createWindow(): void {
-  const window = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
@@ -26,31 +27,61 @@ function createWindow(): void {
     }
   })
 
-  window.once('ready-to-show', () => window.show())
-  window.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
     return { action: 'deny' }
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
+    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
-function registerIpc(): void {
-  ipcMain.handle('app:info', (): AppInfo => ({
-    version: app.getVersion(),
-    platform: process.platform,
-    databasePath: databasePath()
-  }))
-  ipcMain.handle('tools:check', () => checkTools())
+const host: Host = {
+  get appVersion() {
+    return app.getVersion()
+  },
+  get databasePath() {
+    return databasePath()
+  },
+  async pickFolder() {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'], title: 'Choose a repo folder' })
+    return result.canceled ? null : result.filePaths[0]
+  },
+  async pickSaveFile(defaultName) {
+    const result = await dialog.showSaveDialog({ defaultPath: defaultName, filters: [{ name: 'Eregion project', extensions: ['json'] }] })
+    return result.canceled || !result.filePath ? null : result.filePath
+  },
+  async pickOpenFile() {
+    const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Eregion project', extensions: ['json'] }] })
+    return result.canceled ? null : result.filePaths[0]
+  },
+  async openExternal(url) {
+    if (/^https?:\/\//.test(url)) await shell.openExternal(url)
+  },
+  emit(event: EregionEvent) {
+    mainWindow?.webContents.send('event', event)
+  }
+}
+
+function registerIpc(api: EregionApi): void {
+  const allowed = new Set<string>(API_METHODS)
+  ipcMain.handle('api', async (_event, method: string, args: unknown[]) => {
+    if (!allowed.has(method)) throw new Error(`Unknown API method: ${method}`)
+    const handler = api[method as keyof EregionApi] as (...params: unknown[]) => Promise<unknown>
+    return handler(...args)
+  })
 }
 
 app.whenReady().then(() => {
   db = openDatabase(databasePath())
-  registerIpc()
+  registerIpc(createApi(db, host))
   createWindow()
 
   app.on('activate', () => {

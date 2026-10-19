@@ -15,5 +15,5 @@
     "isolatedModules": true,
     "paths": { "@shared/*": ["./src/shared/*"] }
   },
-  "include": ["electron.vite.config.mts", "vitest.config.mts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+  "include": ["electron.vite.config.mts", "vitest.config.mts", "vite.web.config.mts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "src/dev/**/*"]
 }

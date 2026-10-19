@@ -4,6 +4,12 @@ import './tokens.css'
 import './ds.css'
 import './app.css'
 import { App } from './App'
+import { createHttpBridge } from './dev/httpBridge'
+
+// In Electron the preload script provides window.eregion. The web preview has no preload.
+if (!('eregion' in window)) {
+  ;(window as Window).eregion = createHttpBridge()
+}
 
 createRoot(document.getElementById('root') as HTMLElement).render(
   <StrictMode>

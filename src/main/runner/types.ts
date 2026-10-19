@@ -6,6 +6,8 @@ export interface ExecOptions {
   cwd?: string
   env?: Record<string, string>
   timeoutMs?: number
+  /** Written to the process's stdin, which is then closed. */
+  input?: string
 }
 
 export interface ExecResult {
@@ -17,6 +19,7 @@ export interface ExecResult {
 /**
  * Knows where and how to execute, and nothing about projects. Every process Eregion starts goes
  * through the runner of the repo it belongs to, so native and WSL repos behave the same.
+ * Paths are always paths inside the runtime.
  */
 export interface Runner {
   readonly runtime: Runtime
@@ -26,7 +29,23 @@ export interface Runner {
   spawn(argv: string[], options?: ExecOptions): ChildProcess
   /** Wraps a recipe's shell command line so it runs in a login shell, which loads the user's PATH. */
   shell(commandLine: string): string[]
+  readFile(path: string): Promise<string | null>
+  writeFile(path: string, content: string): Promise<void>
+  exists(path: string): Promise<boolean>
+  copyFile(from: string, to: string): Promise<void>
+  /** Stops a process and everything it started. `pid` is the process id inside the runtime. */
+  killTree(pid: number): Promise<void>
+  /** Joins path segments the way the runtime expects. */
+  join(...segments: string[]): string
   /** Converts a path inside the runtime to one the host can open, and back. */
   toHostPath(path: string): string
   fromHostPath(path: string): string
+}
+
+/**
+ * Shell snippet that stops a process tree on Linux and macOS: children first, then the parent.
+ * Used by both runners, because WSL processes can only be reached from inside WSL.
+ */
+export function posixKillTree(pid: number): string {
+  return `kt() { for c in $(pgrep -P "$1" 2>/dev/null); do kt "$c"; done; kill -TERM "$1" 2>/dev/null; }; kt ${pid}; true`
 }

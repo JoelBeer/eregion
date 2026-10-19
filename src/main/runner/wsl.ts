@@ -1,7 +1,8 @@
 import type { ChildProcess } from 'node:child_process'
+import { posix } from 'node:path'
 import type { Runtime } from '@shared/types'
 import { collect, start } from './process'
-import type { ExecOptions, ExecResult, Runner } from './types'
+import { posixKillTree, type ExecOptions, type ExecResult, type Runner } from './types'
 
 /**
  * Builds the wsl.exe arguments for one command. Windows environment variables don't cross into WSL,
@@ -53,7 +54,7 @@ export class WslRunner implements Runner {
   }
 
   exec(argv: string[], options: ExecOptions = {}): Promise<ExecResult> {
-    return collect('wsl.exe', wslArgs(this.distro, argv, options), { timeoutMs: options.timeoutMs })
+    return collect('wsl.exe', wslArgs(this.distro, argv, options), { timeoutMs: options.timeoutMs, input: options.input })
   }
 
   spawn(argv: string[], options: ExecOptions = {}): ChildProcess {
@@ -62,6 +63,34 @@ export class WslRunner implements Runner {
 
   shell(commandLine: string): string[] {
     return ['bash', '-lc', commandLine]
+  }
+
+  // File access goes through WSL itself rather than \\wsl.localhost, which is slow and unreliable from Windows.
+  async readFile(path: string): Promise<string | null> {
+    const result = await this.exec(['cat', '--', path])
+    return result.code === 0 ? result.stdout : null
+  }
+
+  async writeFile(path: string, content: string): Promise<void> {
+    const result = await this.exec(['sh', '-c', 'mkdir -p "$(dirname "$1")" && cat > "$1"', 'sh', path], { input: content })
+    if (result.code !== 0) throw new Error(`Couldn't write ${path}: ${result.stderr.trim()}`)
+  }
+
+  async exists(path: string): Promise<boolean> {
+    return (await this.exec(['test', '-e', path])).code === 0
+  }
+
+  async copyFile(from: string, to: string): Promise<void> {
+    const result = await this.exec(['sh', '-c', 'mkdir -p "$(dirname "$2")" && cp -- "$1" "$2"', 'sh', from, to])
+    if (result.code !== 0) throw new Error(`Couldn't copy ${from}: ${result.stderr.trim()}`)
+  }
+
+  async killTree(pid: number): Promise<void> {
+    await this.exec(['bash', '-c', posixKillTree(pid)])
+  }
+
+  join(...segments: string[]): string {
+    return posix.join(...segments)
   }
 
   toHostPath(path: string): string {

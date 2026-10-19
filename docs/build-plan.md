@@ -10,6 +10,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - Development and first use run inside WSL Ubuntu, with the window shown on Windows through WSLg. All tools (git, gh, Claude Code, PHP) live in WSL. A native Windows build reaching WSL through `wsl.exe` stays supported in code (`WslRunner`).
 - Plan runs as a conversation in the session panel over Claude Code's stream-json, like every other stage. No embedded terminal, so no node-pty.
 - One local commit per working, tested phase on `main`. Nothing is pushed.
+- A web preview (`npm run preview:web`) serves the built UI and the real API over HTTP from plain Node, so screens can be checked in a browser without Electron.
 - Costs come from what Claude Code reports (`total_cost_usd`); Cursor runs record tokens only.
 - Native modules: better-sqlite3 only. Version 13 ships N-API prebuilds for every platform, so the same binary runs in Node (tests) and Electron, with no rebuild and no C++ build tools.
 
@@ -27,7 +28,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 ## Progress
 
 - [x] 1. Foundation
-- [ ] 2. Projects and recipes
+- [x] 2. Projects and recipes (steps 5 to 7 of setup arrive with phases 3, 5 and 6)
 - [ ] 3. Ticket workspaces
 - [ ] 4. Agents
 - [ ] 5. Pipeline and board

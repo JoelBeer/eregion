@@ -3,6 +3,7 @@ import { toolsReady } from '@shared/tools'
 import type { ToolCheck } from '@shared/types'
 import { RobotAvatar } from '../components/RobotAvatar'
 import { Button } from '../components/ui'
+import { useAction } from '../hooks'
 
 const TOOL_NAMES: Record<ToolCheck['tool'], string> = {
   git: 'git',
@@ -11,18 +12,20 @@ const TOOL_NAMES: Record<ToolCheck['tool'], string> = {
   'cursor-agent': 'Cursor CLI'
 }
 
-function ToolsSection(): ReactElement {
+function ToolsSection({ onReady }: { onReady: (ready: boolean) => void }): ReactElement {
   const [checks, setChecks] = useState<ToolCheck[] | null>(null)
   const [checking, setChecking] = useState(false)
 
   const run = useCallback(async () => {
     setChecking(true)
     try {
-      setChecks(await window.eregion.checkTools())
+      const result = await window.eregion.checkTools()
+      setChecks(result)
+      onReady(toolsReady(result))
     } finally {
       setChecking(false)
     }
-  }, [])
+  }, [onReady])
 
   useEffect(() => {
     void run()
@@ -70,7 +73,9 @@ function ToolsSection(): ReactElement {
   )
 }
 
-export function Welcome(): ReactElement {
+export function Welcome({ onSetUpProject }: { onSetUpProject: () => void }): ReactElement {
+  const [ready, setReady] = useState(false)
+  const importer = useAction(() => window.eregion.importProject())
   return (
     <div style={{ minHeight: '100%', display: 'flex', justifyContent: 'center', padding: '40px 16px' }}>
       <main style={{ width: '100%', maxWidth: 860, display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -83,7 +88,25 @@ export function Welcome(): ReactElement {
             </span>
           </div>
         </header>
-        <ToolsSection />
+        <ToolsSection onReady={setReady} />
+        <section aria-label="Your first project" className="panel">
+          <h2 style={{ fontSize: 18 }}>Your first project</h2>
+          <span>A project is one or more repos that run together, like an API and a web app. Setup takes seven short steps and ends with a test run.</span>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <Button variant="primary" onClick={onSetUpProject} disabled={!ready}>
+              Set up a project
+            </Button>
+            <Button onClick={() => void importer.run()} disabled={!ready || importer.pending}>
+              Import a project file
+            </Button>
+          </div>
+          {!ready && (
+            <span className="muted" style={{ fontSize: 13 }}>
+              Available once the tools above are found.
+            </span>
+          )}
+          {importer.error && <span className="error-text">{importer.error}</span>}
+        </section>
       </main>
     </div>
   )

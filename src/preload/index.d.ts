@@ -1,8 +1,8 @@
-import type { EregionApi } from '@shared/types'
+import type { EregionBridge } from '@shared/api'
 
 declare global {
   interface Window {
-    eregion: EregionApi
+    eregion: EregionBridge
   }
 }
 

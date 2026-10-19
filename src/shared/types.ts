@@ -17,8 +17,3 @@ export interface AppInfo {
   databasePath: string
 }
 
-/** The API the preload script exposes to the renderer as `window.eregion`. */
-export interface EregionApi {
-  appInfo(): Promise<AppInfo>
-  checkTools(): Promise<ToolCheck[]>
-}

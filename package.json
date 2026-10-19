@@ -10,7 +10,8 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "preview:web": "electron-vite build && vite build --config vite.web.config.mts && node out/web/server.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
