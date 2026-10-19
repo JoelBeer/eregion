@@ -29,7 +29,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 
 - [x] 1. Foundation
 - [x] 2. Projects and recipes (steps 5 to 7 of setup arrive with phases 3, 5 and 6)
-- [ ] 3. Ticket workspaces
+- [x] 3. Ticket workspaces
 - [ ] 4. Agents
 - [ ] 5. Pipeline and board
 - [ ] 6. Integrations

@@ -181,5 +181,15 @@ export const migrations: string[] = [
   `,
   `
   ALTER TABLE projects ADD COLUMN setup_parallel INTEGER NOT NULL DEFAULT 0;
+  `,
+  `
+  CREATE TABLE ticket_log (
+    id INTEGER PRIMARY KEY,
+    ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    kind TEXT NOT NULL,
+    message TEXT NOT NULL
+  );
+  CREATE INDEX ticket_log_ticket ON ticket_log(ticket_id, id);
   `
 ]

@@ -1,12 +1,16 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import type { EregionApi, EregionEvent, VariablePreview } from '@shared/api'
+import type { Environment } from '@shared/environment'
 import { branchName, type ProjectFile, type Variable } from '@shared/model'
+import { nextFreeSlot } from '@shared/slots'
 import { resolveVariables } from '@shared/variables'
 import type { Db } from './db'
 import { detectRepo, detectRepoAt } from './projects/detect'
 import { ProjectStore } from './projects/store'
 import { ticketBuiltins } from './recipe/context'
+import { ServiceManager } from './recipe/services'
 import { checkTools } from './tools'
+import { Workspaces, type WorkspaceTicket } from './workspace/workspaces'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -24,14 +28,46 @@ export function sampleTicket(projectKey: string | null): VariablePreview['sample
   return { key, title: 'Sample ticket', slot: 1, branch: branchName(key, 'Sample ticket') }
 }
 
-export function createApi(db: Db, host: Host): EregionApi {
+export interface BackendOptions {
+  /** Overrides ~/.eregion for worktrees, for tests. */
+  workspaceRoot?: string
+}
+
+export interface Backend {
+  api: EregionApi
+  workspaces: Workspaces
+  /** Stops every service Eregion started. Called when the app quits. */
+  shutdown(): Promise<void>
+}
+
+export function testRunKey(projectId: number): string {
+  return `test:${projectId}`
+}
+
+export function createApi(db: Db, host: Host, options: BackendOptions = {}): EregionApi {
+  return createBackend(db, host, options).api
+}
+
+export function createBackend(db: Db, host: Host, options: BackendOptions = {}): Backend {
   const projects = new ProjectStore(db)
+  const services = new ServiceManager()
+  const workspaces = new Workspaces(projects, services, (environment) => host.emit({ type: 'environment', environment }), undefined, options.workspaceRoot)
   const changed = (projectId: number): void => {
     host.emit({ type: 'project-changed', projectId })
     host.emit({ type: 'projects-changed' })
   }
 
-  return {
+  const usedSlots = (projectId: number): number[] => {
+    const rows = db.prepare('SELECT slot FROM tickets WHERE project_id = ? AND slot IS NOT NULL').all(projectId) as { slot: number }[]
+    return [...rows.map((row) => row.slot), ...workspaces.liveSlots(projectId)]
+  }
+
+  const testTicket = (projectId: number, slot: number): WorkspaceTicket => {
+    const project = projects.get(projectId)
+    return { key: 'TEST-1', title: 'Test run', slot, branch: 'eregion/test-run', affectedRepoIds: project.repos.map((repo) => repo.id) }
+  }
+
+  const api: EregionApi = {
     appInfo: async () => ({ version: host.appVersion, platform: process.platform, databasePath: host.databasePath }),
     checkTools: () => checkTools(),
 
@@ -117,6 +153,42 @@ export function createApi(db: Db, host: Host): EregionApi {
       return { sample, ...resolved }
     },
 
+    startTestRun: async (projectId) => {
+      const key = testRunKey(projectId)
+      const existing = workspaces.get(key)
+      if (existing && existing.phase !== 'torn-down') {
+        throw new Error('A test run is already going. Tear it down first.')
+      }
+      const project = projects.get(projectId)
+      if (project.repos.length === 0) throw new Error('Add a repo first')
+      const slot = nextFreeSlot(usedSlots(projectId), project.liveSlots)
+      if (slot === null) throw new Error(`All ${project.liveSlots} live slots are in use. Free one, or raise the cap in Variables.`)
+      // Runs in the background; progress arrives as environment events.
+      void workspaces.create(key, project, testTicket(projectId, slot)).catch((error: Error) => {
+        host.emit({ type: 'environment', environment: { ...(workspaces.get(key) as Environment), phase: 'failed', error: error.message } })
+      })
+      await new Promise((resolve) => setImmediate(resolve))
+      return workspaces.get(key) as Environment
+    },
+    tearDownTestRun: async (projectId) => {
+      const key = testRunKey(projectId)
+      const environment = workspaces.get(key)
+      if (!environment) return null
+      return workspaces.teardown(key, projects.get(projectId), testTicket(projectId, environment.slot), { deleteBranch: true })
+    },
+    getEnvironment: async (key) => workspaces.get(key) ?? null,
+    finishSetup: async (projectId) => {
+      const project = projects.update(projectId, { setupStep: 8 })
+      changed(projectId)
+      return project
+    },
+
     openExternal: (url) => host.openExternal(url)
+  }
+
+  return {
+    api,
+    workspaces,
+    shutdown: () => services.stopAll()
   }
 }

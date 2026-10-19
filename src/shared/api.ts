@@ -1,4 +1,5 @@
 import type { Project, ProjectSummary, Repo, Service, Step, StepPhase, Variable } from './model'
+import type { Environment } from './environment'
 import type { AppInfo, ToolCheck } from './types'
 
 export interface RepoInput {
@@ -78,6 +79,11 @@ export interface EregionApi {
   saveServices(repoId: number, services: ServiceInput[]): Promise<Service[]>
   previewVariables(projectId: number, variables?: Variable[]): Promise<VariablePreview>
 
+  startTestRun(projectId: number): Promise<Environment>
+  tearDownTestRun(projectId: number): Promise<Environment | null>
+  getEnvironment(key: string): Promise<Environment | null>
+  finishSetup(projectId: number): Promise<Project>
+
   openExternal(url: string): Promise<void>
 }
 
@@ -103,11 +109,15 @@ export const API_METHODS = [
   'saveSteps',
   'saveServices',
   'previewVariables',
+  'startTestRun',
+  'tearDownTestRun',
+  'getEnvironment',
+  'finishSetup',
   'openExternal'
 ] as const satisfies readonly (keyof EregionApi)[]
 
 /** Pushed from the main process when something changes that screens should refresh for. */
-export type EregionEvent = { type: 'projects-changed' } | { type: 'project-changed'; projectId: number }
+export type EregionEvent = { type: 'projects-changed' } | { type: 'project-changed'; projectId: number } | { type: 'environment'; environment: Environment }
 
 export interface EregionBridge extends EregionApi {
   onEvent(listener: (event: EregionEvent) => void): () => void

@@ -1,10 +1,11 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
-import { createApi, type Host } from './api'
+import { createBackend, type Backend, type Host } from './api'
 import { openDatabase, type Db } from './db'
 
 let db: Db
+let backend: Backend | null = null
 let mainWindow: BrowserWindow | null = null
 
 function databasePath(): string {
@@ -81,7 +82,8 @@ function registerIpc(api: EregionApi): void {
 
 app.whenReady().then(() => {
   db = openDatabase(databasePath())
-  registerIpc(createApi(db, host))
+  backend = createBackend(db, host)
+  registerIpc(backend.api)
   createWindow()
 
   app.on('activate', () => {
@@ -95,6 +97,15 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+let quitting = false
+app.on('before-quit', (event) => {
+  if (quitting || !backend) return
+  // Stop the services Eregion started (dev servers and the like) before the app goes.
+  event.preventDefault()
+  quitting = true
+  void backend.shutdown().finally(() => app.quit())
 })
 
 app.on('will-quit', () => {

@@ -8,7 +8,7 @@ import { createServer, type ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { extname, join, normalize } from 'node:path'
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
-import { createApi } from '../main/api'
+import { createBackend } from '../main/api'
 import { openDatabase } from '../main/db'
 
 const PORT = Number(process.env.EREGION_WEB_PORT ?? 5199)
@@ -21,7 +21,7 @@ const listeners = new Set<ServerResponse>()
 async function main(): Promise<void> {
   await mkdir(DATA, { recursive: true })
   const databasePath = join(DATA, 'eregion.db')
-  const api = createApi(openDatabase(databasePath), {
+  const { api, shutdown } = createBackend(openDatabase(databasePath), {
     appVersion: '0.1.0-web',
     databasePath,
     pickFolder: async () => null,
@@ -32,6 +32,8 @@ async function main(): Promise<void> {
       for (const listener of listeners) listener.write(`data: ${JSON.stringify(event)}\n\n`)
     }
   })
+  process.on('SIGINT', () => void shutdown().finally(() => process.exit(0)))
+  process.on('SIGTERM', () => void shutdown().finally(() => process.exit(0)))
   const allowed = new Set<string>(API_METHODS)
 
   createServer(async (request, response) => {
