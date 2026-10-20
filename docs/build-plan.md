@@ -38,7 +38,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - [x] 4. Agents
 - [x] 5. Pipeline and board
 - [x] 6. Integrations (proven end to end on Word Magic: WM-1 went from Linear through PR #2 to merged and Done)
-- [ ] 7. Crew, Forge, Costs, Settings, voice
+- [x] 7. Crew, Forge, Costs, Settings, voice (left for later: per-stage skill modes such as "always run" and "ask me first", allowing single tools of an MCP server, and MCP choices for Cursor runs)
 - [ ] 8. Polish and run instructions
 
 ## Polish list (phase 8)
@@ -47,3 +47,4 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - App icon: the anvil mark from the design system, for the window, the taskbar and the WSLg launcher, instead of the default Electron / Linux penguin icon.
 - Pipeline versions: restore an older pipeline version (saved as a new version), or pull a single stage's settings from an older version, with a diff of what changes.
 - README (including the Linear app steps), licence, run instructions; then make JoelBeer/eregion public.
+- Packaging: leave onnxruntime-node (about 550 MB, pulled in by transformers.js) out of installers; dictation uses the WebAssembly runtime bundled in the renderer.
