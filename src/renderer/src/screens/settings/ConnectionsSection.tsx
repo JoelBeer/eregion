@@ -4,11 +4,12 @@ import { StatusPill } from '../../components/ui'
 import { useAction, useQuery } from '../../hooks'
 import { timeAgo } from './IntegrationsSettings'
 
-const KIND_NAMES: Record<Connection['kind'], string> = { jira: 'Jira', gitlab: 'GitLab' }
+const KIND_NAMES: Record<Connection['kind'], string> = { jira: 'Jira', gitlab: 'GitLab', linear: 'Linear workspace' }
 
 const TOKEN_HELP: Record<Connection['kind'], string> = {
   jira: 'An API token from id.atlassian.com › Security › API tokens. Jira signs in with it and your email.',
-  gitlab: 'A personal access token from GitLab › Preferences › Access tokens, with the api scope (issues, merge requests and pipelines).'
+  gitlab: 'A personal access token from GitLab › Preferences › Access tokens, with the api scope (issues, merge requests and pipelines).',
+  linear: 'A personal API key from that workspace: Linear › Settings › Security & access › Personal API keys. For a workspace other than the one signed in under Linear above.'
 }
 
 function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDone: () => void }): ReactElement {
@@ -34,11 +35,16 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
         <select id="connection-kind" className="select" value={kind} disabled={Boolean(editing)} onChange={(event) => setKind(event.target.value as Connection['kind'])}>
           <option value="jira">Jira Cloud</option>
           <option value="gitlab">GitLab</option>
+          <option value="linear">Another Linear workspace</option>
         </select>
         <label htmlFor="connection-name">Name</label>
         <input id="connection-name" className="input" placeholder={kind === 'jira' ? 'Work Jira' : 'GitLab'} value={name} onChange={(event) => setName(event.target.value)} />
-        <label htmlFor="connection-url">Address</label>
-        <input id="connection-url" className="input mono" placeholder={kind === 'jira' ? 'https://your-site.atlassian.net' : 'https://gitlab.com'} value={url} onChange={(event) => setUrl(event.target.value)} />
+        {kind !== 'linear' && (
+          <>
+            <label htmlFor="connection-url">Address</label>
+            <input id="connection-url" className="input mono" placeholder={kind === 'jira' ? 'https://your-site.atlassian.net' : 'https://gitlab.com'} value={url} onChange={(event) => setUrl(event.target.value)} />
+          </>
+        )}
         {kind === 'jira' && (
           <>
             <label htmlFor="connection-email">Email</label>
@@ -55,7 +61,7 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
       {problems.length > 0 && <span className="error-text">{problems.join('. ')}.</span>}
       {save.error && <span className="error-text">{save.error}</span>}
       <div style={{ display: 'flex', gap: 8 }}>
-        <button type="submit" className="er-btn er-btn-primary" disabled={problems.length > 0 || !name || !url || save.pending}>
+        <button type="submit" className="er-btn er-btn-primary" disabled={problems.length > 0 || !name || (kind !== 'linear' && !url) || save.pending}>
           {save.pending ? 'Checking…' : editing ? 'Save and test' : 'Add and test'}
         </button>
         <button type="button" className="er-btn" onClick={onDone}>
@@ -84,9 +90,9 @@ export function ConnectionsSection(): ReactElement {
     void connections.reload()
   }
   return (
-    <section className="panel" aria-label="Jira and GitLab">
+    <section className="panel" aria-label="Connections">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <h2 style={{ fontSize: 18 }}>Jira and GitLab</h2>
+        <h2 style={{ fontSize: 18 }}>Jira, GitLab and other Linear workspaces</h2>
         <div style={{ flex: 1 }} />
         <button type="button" className="er-btn er-btn-sm" onClick={() => setEditing('new')} disabled={editing !== null}>
           + Add a connection

@@ -42,7 +42,7 @@ function fakeJira() {
 async function setup() {
   const db = openDatabase(':memory:')
   const jira = fakeJira()
-  const connections = new Connections(db, PLAIN_CODEC, { jira: async () => 'Joel', gitlab: async () => 'joel' })
+  const connections = new Connections(db, PLAIN_CODEC, { jira: async () => 'Joel', gitlab: async () => 'joel', linear: async () => 'x' })
   const connection = await connections.save({ kind: 'jira', name: 'Shop', url: 'https://shop.atlassian.net/', email: 'joel@example.com', token: 'tok' })
   const project = {
     id: 1,

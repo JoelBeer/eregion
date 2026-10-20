@@ -25,7 +25,7 @@ function fakeGitLab(answers: (method: string, path: string) => unknown) {
 async function connected(answers: (method: string, path: string) => unknown) {
   const db = openDatabase(':memory:')
   const gitlab = fakeGitLab(answers)
-  const connections = new Connections(db, PLAIN_CODEC, { jira: async () => 'x', gitlab: async () => 'Joel (@joel)' })
+  const connections = new Connections(db, PLAIN_CODEC, { jira: async () => 'x', gitlab: async () => 'Joel (@joel)', linear: async () => 'x' })
   const connection = await connections.save({ kind: 'gitlab', name: 'Work GitLab', url: 'https://gitlab.example.com', token: 'glpat-1' })
   return { connections, connection, ...gitlab }
 }

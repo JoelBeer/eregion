@@ -1,25 +1,62 @@
-import { DEFAULT_IMPORT_STATE_TYPES, type LinearIssue } from '@shared/integrations'
+import { DEFAULT_IMPORT_STATE_TYPES, type ImportAssignees, type LinearIssue } from '@shared/integrations'
 import { DEFAULT_LINEAR_PUSH, type Project } from '@shared/model'
 import { importRules, labelsMatch, sourceOf } from '@shared/sources'
+import type { Connections } from './connections'
 import { descriptionWithPlan } from './hooks'
+import { LinearClient, type FetchLike } from './linear'
 import type { LinearAuth } from './linearAuth'
 import type { SourceIssue, TicketSource } from './sources'
 
 const CLOSED = new Set(['completed', 'canceled', 'duplicate'])
 
 /**
- * Linear as a ticket source: issues in the project's team, assigned to whoever Settings › Integrations says
- * (you, chosen people, or everyone), in the importable states, with the project's labels.
+ * Linear as a ticket source: issues in the project's team, assigned to whoever it imports for, in the
+ * importable states, with the project's labels. A project uses the account signed in under Linear in
+ * Settings › Integrations (whose people are chosen there), or another workspace's connection (a personal
+ * API key, whose people are chosen in the project).
  */
 export class LinearSource implements TicketSource {
   readonly kind = 'linear' as const
+  private readonly viewers = new Map<string, Promise<string>>()
 
-  constructor(private readonly auth: LinearAuth) {}
+  constructor(
+    private readonly auth: LinearAuth,
+    private readonly connections?: Connections,
+    private readonly fetchImpl: FetchLike = fetch as unknown as FetchLike
+  ) {}
 
-  private client() {
+  /** The connection a project uses instead of the main account, if any. */
+  private connectionId(project: Project): string | null {
+    return sourceOf(project).connectionId ?? null
+  }
+
+  client(project: Project): LinearClient {
+    const id = this.connectionId(project)
+    if (id && this.connections) return new LinearClient({ kind: 'api-key', key: this.connections.token(id) }, this.fetchImpl)
     const client = this.auth.client()
     if (!client) throw new Error('Connect Linear first, in Settings › Integrations')
     return client
+  }
+
+  /** The signed-in account's id: the main one, or the connection's (asked once). */
+  private viewerId(project: Project): Promise<string | null> {
+    const id = this.connectionId(project)
+    if (!id) return Promise.resolve(this.auth.viewer()?.id ?? null)
+    if (!this.viewers.has(id)) {
+      const viewer = this.client(project)
+        .viewer()
+        .then((me) => me.id)
+      viewer.catch(() => this.viewers.delete(id))
+      this.viewers.set(id, viewer)
+    }
+    return this.viewers.get(id) as Promise<string>
+  }
+
+  /** Whose issues come in: the main account's choice in Settings, or the project's own rules with a connection. */
+  private assignees(project: Project): ImportAssignees {
+    if (!this.connectionId(project)) return this.auth.importAssignees()
+    const rules = importRules(sourceOf(project))
+    return rules.who === 'people' ? { mode: 'people', people: rules.people } : { mode: rules.who }
   }
 
   location(project: Project): string | null {
@@ -27,12 +64,14 @@ export class LinearSource implements TicketSource {
   }
 
   notReady(project: Project): string | null {
-    if (!this.auth.client()) return 'Connect Linear first, in Settings › Integrations'
+    const id = this.connectionId(project)
+    if (id && !this.connections?.list().some((connection) => connection.id === id)) return `Choose ${project.name}'s Linear account in its Tickets and code step`
+    if (!id && !this.auth.client()) return 'Connect Linear first, in Settings › Integrations'
     if (!project.linear.teamId) return `Choose ${project.name}'s Linear team in its Tickets and code step`
     return null
   }
 
-  toIssue(issue: LinearIssue): SourceIssue {
+  toIssue(issue: LinearIssue, viewerId: string | null): SourceIssue {
     return {
       id: issue.id,
       key: issue.identifier,
@@ -41,37 +80,40 @@ export class LinearSource implements TicketSource {
       url: issue.url,
       data: { state: issue.state.name, priority: issue.priorityLabel, estimate: issue.estimate, labels: issue.labels, comments: issue.comments, assignee: issue.assignee?.name ?? null, assigneeId: issue.assignee?.id ?? null },
       closed: CLOSED.has(issue.state.type),
-      mine: Boolean(issue.assignee && issue.assignee.id === this.auth.viewer()?.id)
+      mine: Boolean(issue.assignee && issue.assignee.id === viewerId)
     }
   }
 
   async candidates(project: Project): Promise<SourceIssue[]> {
-    const assignees = this.auth.importAssignees()
+    const assignees = this.assignees(project)
     const assigneeIds = assignees.mode === 'people' ? assignees.people.map((person) => person.id) : assignees.mode
     const stateTypes = project.linear.importStateTypes?.length ? project.linear.importStateTypes : DEFAULT_IMPORT_STATE_TYPES
-    const issues = await this.client().assignedIssues({ teamId: project.linear.teamId as string, assigneeIds, stateTypes })
+    const issues = await this.client(project).assignedIssues({ teamId: project.linear.teamId as string, assigneeIds, stateTypes })
     const rules = importRules(sourceOf(project))
-    return issues.filter((issue) => labelsMatch(issue.labels, rules)).map((issue) => this.toIssue(issue))
+    const viewerId = await this.viewerId(project)
+    return issues.filter((issue) => labelsMatch(issue.labels, rules)).map((issue) => this.toIssue(issue, viewerId))
   }
 
-  async byIds(_project: Project, ids: string[]): Promise<SourceIssue[]> {
-    return (await this.client().issuesById(ids)).map((issue) => this.toIssue(issue))
+  async byIds(project: Project, ids: string[]): Promise<SourceIssue[]> {
+    const viewerId = await this.viewerId(project)
+    return (await this.client(project).issuesById(ids)).map((issue) => this.toIssue(issue, viewerId))
   }
 
-  async byKey(_project: Project, key: string): Promise<SourceIssue> {
-    return this.toIssue(await this.client().issue(key.toUpperCase()))
+  async byKey(project: Project, key: string): Promise<SourceIssue> {
+    return this.toIssue(await this.client(project).issue(key.toUpperCase()), await this.viewerId(project))
   }
 
-  wanted(_project: Project, issue: SourceIssue): boolean {
-    const assignees = this.auth.importAssignees()
+  wanted(project: Project, issue: SourceIssue): boolean {
+    const assignees = this.assignees(project)
     if (assignees.mode === 'everyone') return true
     if (assignees.mode === 'me') return issue.mine
     return assignees.people.some((person) => person.id === issue.data.assigneeId)
   }
 
   async create(project: Project, input: { title: string; description: string }): Promise<SourceIssue> {
-    const issue = await this.client().createIssue({ teamId: project.linear.teamId as string, title: input.title, description: input.description, assigneeId: this.auth.viewer()?.id })
-    return this.toIssue(issue)
+    const viewerId = await this.viewerId(project)
+    const issue = await this.client(project).createIssue({ teamId: project.linear.teamId as string, title: input.title, description: input.description, assigneeId: viewerId ?? undefined })
+    return this.toIssue(issue, viewerId)
   }
 
   readonly hooks: TicketSource['hooks'] = {
@@ -79,17 +121,17 @@ export class LinearSource implements TicketSource {
     ticketDone: (ticket, project) => this.setState(ticket.linearId as string, project, 'done'),
     planApproved: async (ticket, markdown, project) => {
       const push = { ...DEFAULT_LINEAR_PUSH, ...project.linear.push }
-      if (push.planComment) await this.client().comment(ticket.linearId as string, `**Plan approved in Eregion**\n\n${markdown.trim()}`)
-      if (push.planDescription) await this.client().updateIssue(ticket.linearId as string, { description: descriptionWithPlan(ticket.description, markdown) })
+      if (push.planComment) await this.client(project).comment(ticket.linearId as string, `**Plan approved in Eregion**\n\n${markdown.trim()}`)
+      if (push.planDescription) await this.client(project).updateIssue(ticket.linearId as string, { description: descriptionWithPlan(ticket.description, markdown) })
     },
     prsOpened: async (ticket, prs, project) => {
       if (!{ ...DEFAULT_LINEAR_PUSH, ...project.linear.push }.prLinks) return
-      for (const pr of prs) await this.client().attachLink(ticket.linearId as string, pr.url, `${pr.repo} #${pr.number}: ${pr.title}`)
+      for (const pr of prs) await this.client(project).attachLink(ticket.linearId as string, pr.url, `${pr.repo} #${pr.number}: ${pr.title}`)
     }
   }
 
   private async setState(issueId: string, project: Project, key: string): Promise<void> {
     const stateId = project.linear.statusByStage?.[key]
-    if (stateId) await this.client().updateIssue(issueId, { stateId })
+    if (stateId) await this.client(project).updateIssue(issueId, { stateId })
   }
 }

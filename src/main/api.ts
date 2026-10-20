@@ -21,7 +21,7 @@ import { PipelineEngine } from './pipeline/engine'
 import { PipelineStore, TicketStore } from './pipeline/stores'
 import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
 import { GhCli, type GitHub } from './integrations/github'
-import type { FetchLike } from './integrations/linear'
+import { LinearClient, type FetchLike } from './integrations/linear'
 import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
 import { Connections } from './integrations/connections'
 import { GitHubIssuesSource } from './integrations/githubIssues'
@@ -126,9 +126,14 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   // Jira and GitLab accounts (Settings › Integrations); a test says who each signs in as.
   const connections = new Connections(db, host.secrets ?? PLAIN_CODEC, {
     jira: async (connection, token) => (await new JiraClient(connection, token, fetchImpl).myself()).displayName,
-    gitlab: (connection, token) => gitlabWhoAmI(connection, token, fetchImpl)
+    gitlab: (connection, token) => gitlabWhoAmI(connection, token, fetchImpl),
+    linear: async (_connection, token) => {
+      const viewer = await new LinearClient({ kind: 'api-key', key: token }, fetchImpl).viewer()
+      return `${viewer.name} (${viewer.organization})`
+    }
   })
-  const ticketSources = [new LinearSource(linearAuth), new GitHubIssuesSource(runnerForRuntimeId), new JiraSource(connections, fetchImpl), new GitLabIssuesSource(connections, fetchImpl)]
+  const linearSource = new LinearSource(linearAuth, connections, fetchImpl)
+  const ticketSources = [linearSource, new GitHubIssuesSource(runnerForRuntimeId), new JiraSource(connections, fetchImpl), new GitLabIssuesSource(connections, fetchImpl)]
   const issueSync = new IssueSync(db, ticketSources, projects, tickets, {
     ticketChanged: (ticket) => ticketChanged(ticket),
     ticketRemoved: (projectId) => {
@@ -195,6 +200,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     openExternal: (url) => host.openExternal(url),
     linearChanged: () => host.emit({ type: 'linear-changed' }),
     ticketChanged,
+    linearConnection: (connectionId) => new LinearClient({ kind: 'api-key', key: connections.token(connectionId) }, fetchImpl),
     createLocalTicket: ticketsApi.createTicket
   })
 

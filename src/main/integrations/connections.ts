@@ -56,7 +56,7 @@ export class Connections {
       id,
       kind: input.kind,
       name: input.name.trim(),
-      url: input.url.trim().replace(/\/+$/, ''),
+      url: input.kind === 'linear' ? 'https://linear.app' : input.url.trim().replace(/\/+$/, ''),
       ...(input.kind === 'jira' ? { email: input.email?.trim() } : {}),
       account: existing?.account ?? null,
       testedAt: existing?.testedAt ?? null,

@@ -82,12 +82,15 @@ export interface SourceStatus {
 export const STAGE_LABEL_PREFIX = 'eregion:'
 export const stageLabel = (stageId: string): string => `${STAGE_LABEL_PREFIX}${stageId}`
 
-/** A Jira or GitLab account Eregion reads issues from (and, for GitLab, opens merge requests in). */
+/**
+ * A Jira or GitLab account Eregion reads issues from (and, for GitLab, opens merge requests in), or another
+ * Linear workspace beside the one signed in under Linear, with a personal API key.
+ */
 export interface Connection {
   id: string
-  kind: 'jira' | 'gitlab'
+  kind: 'jira' | 'gitlab' | 'linear'
   name: string
-  /** Jira: https://your-site.atlassian.net. GitLab: https://gitlab.com, or your own. */
+  /** Jira: https://your-site.atlassian.net. GitLab: https://gitlab.com, or your own. Linear: https://linear.app. */
   url: string
   /** Jira signs in with your email and an API token. */
   email?: string
@@ -108,8 +111,9 @@ export interface ConnectionInput extends Pick<Connection, 'kind' | 'name' | 'url
 export function connectionProblems(input: ConnectionInput, editing: boolean): string[] {
   const problems: string[] = []
   if (!input.name.trim()) problems.push('Give it a name')
-  if (!/^https:\/\/[^\s/]+/.test(input.url.trim())) problems.push('The address starts with https://')
+  if (input.kind !== 'linear' && !/^https:\/\/[^\s/]+/.test(input.url.trim())) problems.push('The address starts with https://')
   if (input.kind === 'jira' && !/^\S+@\S+$/.test(input.email?.trim() ?? '')) problems.push('Jira needs the email you sign in with')
-  if (!editing && !input.token.trim()) problems.push(input.kind === 'jira' ? 'Paste a Jira API token' : 'Paste a GitLab personal access token')
+  if (!editing && !input.token.trim()) problems.push(input.kind === 'jira' ? 'Paste a Jira API token' : input.kind === 'gitlab' ? 'Paste a GitLab personal access token' : 'Paste a Linear personal API key')
+  if (input.kind === 'linear' && input.token.trim() && !input.token.trim().startsWith('lin_api_')) problems.push('A Linear personal API key starts with lin_api_')
   return problems
 }

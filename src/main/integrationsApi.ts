@@ -2,6 +2,7 @@ import type { EregionApi } from '@shared/api'
 import { callbackUrl, OAUTH_PORTS, type LinearStatus } from '@shared/integrations'
 import { importRules, sourceOf, SOURCE_NAMES } from '@shared/sources'
 import type { Ticket } from '@shared/tickets'
+import type { LinearClient } from './integrations/linear'
 import type { LinearAuth } from './integrations/linearAuth'
 import type { IssueSync } from './integrations/sources'
 import type { CiWatcher } from './pipeline/ciWatch'
@@ -46,6 +47,8 @@ export interface IntegrationsApiDeps {
   openExternal(url: string): Promise<void>
   linearChanged(): void
   ticketChanged(ticket: Ticket): void
+  /** A client for a Linear connection's workspace (a personal API key), beside the main account. */
+  linearConnection(connectionId: string): LinearClient
   /** Creating a ticket in a project that isn't linked to Linear. */
   createLocalTicket: EregionApi['createTicket']
 }
@@ -64,7 +67,8 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
       callbackUrls: OAUTH_PORTS.map(callbackUrl)
     }
   }
-  const client = () => {
+  const client = (connectionId?: string | null): LinearClient => {
+    if (connectionId) return deps.linearConnection(connectionId)
     const linear = auth.client()
     if (!linear) throw new Error('Connect Linear first, in Settings › Integrations')
     return linear
@@ -90,9 +94,9 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
       auth.signOut()
       deps.linearChanged()
     },
-    listLinearTeams: () => client().teams(),
-    listLinearStates: (teamId) => client().states(teamId),
-    listLinearUsers: () => client().users(),
+    listLinearTeams: (connectionId) => client(connectionId).teams(),
+    listLinearStates: (teamId, connectionId) => client(connectionId).states(teamId),
+    listLinearUsers: (connectionId) => client(connectionId).users(),
     setLinearImportAssignees: async (value) => {
       auth.setImportAssignees(value)
       deps.linearChanged()

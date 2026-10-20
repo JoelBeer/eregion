@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { DEFAULT_IMPORT_STATE_TYPES, type LinearState, type LinearStateType, type LinearTeam } from '@shared/integrations'
+import { DEFAULT_IMPORT_STATE_TYPES, type ImportAssignees, type LinearState, type LinearStateType, type LinearTeam } from '@shared/integrations'
 import { DEFAULT_LINEAR_PUSH, type GithubProjectConfig, type LinearProjectConfig } from '@shared/model'
 import { DEFAULT_SOURCE_PUSH, importRules, sourceOf, SOURCE_NAMES, type ImportRules, type TicketSourceConfig, type TicketSourceKind } from '@shared/sources'
 import { Switch } from '../../components/ui'
@@ -14,41 +14,82 @@ const IMPORTABLE: { type: LinearStateType; label: string }[] = [
   { type: 'unstarted', label: 'Todo and other unstarted states' }
 ]
 
-function LinearSection({ project, save }: { project: StepProps['project']; save: (linear: LinearProjectConfig) => void }): ReactElement {
+/** Which Linear account a project uses: the one signed in under Linear in Settings, or another workspace's connection. */
+function LinearAccount({ source, saveSource }: { source: TicketSourceConfig; saveSource: (source: TicketSourceConfig) => void }): ReactElement | null {
+  const connections = useQuery(() => window.eregion.listConnections(), []).data?.filter((connection) => connection.kind === 'linear')
+  if (!connections || (connections.length === 0 && !source.connectionId)) return null
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
+      <label className="muted" htmlFor="linear-account">
+        Account
+      </label>
+      <select id="linear-account" className="select" value={source.connectionId ?? ''} onChange={(event) => saveSource({ ...source, connectionId: event.target.value || null })}>
+        <option value="">The one signed in under Linear in Settings</option>
+        {connections.map((connection) => (
+          <option key={connection.id} value={connection.id}>
+            {connection.name}
+            {connection.account ? ` · ${connection.account}` : ''}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function LinearSection({ project, save, source, saveSource }: { project: StepProps['project']; save: (linear: LinearProjectConfig) => void; source: TicketSourceConfig; saveSource: (source: TicketSourceConfig) => void }): ReactElement {
   const { status } = useLinearStatus()
   const linear = project.linear
   const [teams, setTeams] = useState<LinearTeam[]>()
   const [states, setStates] = useState<LinearState[]>()
   const [error, setError] = useState<string | null>(null)
   const pipeline = useQuery(() => window.eregion.getPipeline(project.id), [project.id])
-  const connected = Boolean(status?.method)
+  const connectionId = source.connectionId ?? null
+  const connected = Boolean(connectionId || status?.method)
 
   useEffect(() => {
     if (!connected) return
-    window.eregion.listLinearTeams().then(setTeams, (caught: unknown) => setError(errorMessage(caught)))
-  }, [connected])
+    setTeams(undefined)
+    window.eregion.listLinearTeams(connectionId).then(setTeams, (caught: unknown) => setError(errorMessage(caught)))
+  }, [connected, connectionId])
   useEffect(() => {
     if (!connected || !linear.teamId) return
-    window.eregion.listLinearStates(linear.teamId).then(setStates, (caught: unknown) => setError(errorMessage(caught)))
-  }, [connected, linear.teamId])
+    window.eregion.listLinearStates(linear.teamId, connectionId).then(setStates, (caught: unknown) => setError(errorMessage(caught)))
+  }, [connected, linear.teamId, connectionId])
 
   if (!status) return <span className="muted">Loading…</span>
   if (!connected) {
     return (
-      <span>
-        Linear isn't connected yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Connect it in Settings › Integrations</a>, then come back. Or carry on without it: tickets can be added by hand.
-      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <LinearAccount source={source} saveSource={saveSource} />
+        <span>
+          Linear isn't connected yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Connect it in Settings › Integrations</a>, then come back. Or carry on without it: tickets can be added by hand.
+        </span>
+      </div>
     )
   }
 
   const types = linear.importStateTypes?.length ? linear.importStateTypes : DEFAULT_IMPORT_STATE_TYPES
   const push = { ...DEFAULT_LINEAR_PUSH, ...linear.push }
   const stages = (pipeline.data?.stages ?? []).filter((stage) => stage.enabled)
-  const assignees = status.importAssignees
-  const person = assignees.mode === 'me' ? 'assigned to you' : assignees.mode === 'everyone' ? 'in the team, assigned to anyone' : `assigned to ${assignees.people.map((item) => item.name).join(', ')}`
+  // With a connection, whose issues come in is the project's own choice; with the main account, Settings' choice.
+  const rules = importRules(source)
+  const assignees: ImportAssignees = connectionId ? (rules.who === 'people' ? { mode: 'people', people: rules.people } : rules.who === 'everyone' ? { mode: 'everyone' } : { mode: 'me' }) : status.importAssignees
+  const person = assignees.mode === 'me' ? 'assigned to you' : assignees.mode === 'everyone' ? 'in the team, assigned to anyone' : `assigned to ${assignees.people.map((item) => item.name).join(', ') || 'the people you choose'}`
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <LinearAccount source={source} saveSource={saveSource} />
+      {connectionId && (
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="muted">Whose issues</span>
+          {(['me', 'everyone'] as const).map((who) => (
+            <label key={who} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <input type="radio" name="linear-who" checked={rules.who === who} onChange={() => saveSource({ ...source, rules: { ...rules, who } })} />
+              {who === 'me' ? 'Assigned to me' : 'Everyone in the team'}
+            </label>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
         <label className="muted" htmlFor="linear-team">
           Team
@@ -363,7 +404,7 @@ export function IntegrationsStep({ project, next }: StepProps): ReactElement {
       {source.kind === 'linear' && (
         <section className="panel" aria-label="Linear">
           <h2 style={{ fontSize: 18 }}>Linear</h2>
-          <LinearSection project={project} save={(linear) => void saveLinear.run(linear)} />
+          <LinearSection project={project} save={(linear) => void saveLinear.run(linear)} source={source} saveSource={(next) => void saveSource.run(next)} />
           {saveLinear.error && <span className="error-text">{saveLinear.error}</span>}
         </section>
       )}

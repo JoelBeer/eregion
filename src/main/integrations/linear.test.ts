@@ -10,6 +10,7 @@ import { LinearAuthError, LinearClient, type FetchLike } from './linear'
 import { authorizeUrl, LinearAuth, pkcePair, PLAIN_CODEC } from './linearAuth'
 import { LinearSource } from './linearSource'
 import { IssueSync } from './sources'
+import { Connections } from './connections'
 
 interface Call {
   url: string
@@ -174,6 +175,23 @@ describe('Linear through IssueSync', () => {
     expect(query.variables.filter).not.toHaveProperty('assignee')
     expect(notices).toEqual(['WM-7 assigned to Sam'])
     expect(tickets.findByKey(project.id, 'WM-7')?.linear).toMatchObject({ assignee: 'Sam', assigneeId: 'u-sam' })
+  })
+
+  it("reads another workspace through its connection's API key, with the project's own choice of whose issues", async () => {
+    const db = openDatabase(':memory:')
+    const linear = fakeLinear({ assigned: () => [issue('OPS-3', { assignee: { id: 'u-ana', name: 'Ana' } })] })
+    const auth = new LinearAuth(db, PLAIN_CODEC, linear.fetchImpl)
+    const connections = new Connections(db, PLAIN_CODEC, { jira: async () => '', gitlab: async () => '', linear: async () => 'Joel (Ops)' })
+    const connection = await connections.save({ kind: 'linear', name: 'Ops workspace', url: '', token: 'lin_api_ops' })
+    const projects = new ProjectStore(db)
+    const tickets = new TicketStore(db)
+    const project = projects.update(projects.create('Ops').id, { linear: { teamId: 'team-ops', teamKey: 'OPS' }, source: { kind: 'linear', connectionId: connection.id, rules: { who: 'everyone', people: [], labels: [], excludeLabels: [] } } })
+    const sync = new IssueSync(db, [new LinearSource(auth, connections, linear.fetchImpl)], projects, tickets, { ticketChanged: () => undefined, ticketRemoved: () => undefined, notify: () => undefined, statusChanged: () => undefined })
+    expect((await sync.syncProject(project)).imported).toEqual(['OPS-3'])
+    const search = linear.calls.find((call) => call.body.includes('issues(filter: $filter'))
+    expect(search?.headers.authorization).toBe('lin_api_ops')
+    expect((JSON.parse(search?.body ?? '{}') as { variables: { filter: Record<string, unknown> } }).variables.filter).not.toHaveProperty('assignee')
+    expect(connection.url).toBe('https://linear.app')
   })
 
   it("won't import over a ticket made in Eregion with the same key", async () => {

@@ -155,9 +155,10 @@ export interface EregionApi {
   cancelLinearSignIn(): Promise<void>
   useLinearApiKey(key: string): Promise<LinearViewer>
   signOutOfLinear(): Promise<void>
-  listLinearTeams(): Promise<LinearTeam[]>
-  listLinearStates(teamId: string): Promise<LinearState[]>
-  listLinearUsers(): Promise<LinearUser[]>
+  /** The teams in the main Linear account, or in a Linear connection's workspace. */
+  listLinearTeams(connectionId?: string | null): Promise<LinearTeam[]>
+  listLinearStates(teamId: string, connectionId?: string | null): Promise<LinearState[]>
+  listLinearUsers(connectionId?: string | null): Promise<LinearUser[]>
   setLinearImportAssignees(value: ImportAssignees): Promise<LinearStatus>
   syncLinear(): Promise<LinearStatus>
   /** Where the project's tickets come from, and how its sync is doing. */
