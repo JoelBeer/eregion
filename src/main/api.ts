@@ -30,6 +30,7 @@ import { CiWatcher } from './pipeline/ciWatch'
 import { PrStage } from './pipeline/prStage'
 import { PrStore } from './pipeline/prs'
 import { costReport } from './costs'
+import { AgentsInfo } from './agentsInfo'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -126,6 +127,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     onTicketChanged: ticketChanged
   })
   const prs = new PrStore(db)
+  const agentsInfo = new AgentsInfo(db, projects)
   const github = options.github ?? new GhCli()
   const prStage = new PrStage(engine, prs, github)
   const ci = new CiWatcher(engine, prs, github)
@@ -306,6 +308,11 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
 
     openExternal: (url) => host.openExternal(url),
     getCosts: async (projectId, period) => costReport(db, projectId, period),
+    listAgents: () => agentsInfo.list(),
+    testAgent: (adapter) => agentsInfo.test(adapter),
+    listModels: async (adapter) => agentsInfo.models(adapter),
+    addModel: async (adapter, id) => agentsInfo.addModel(adapter, id),
+    removeModel: async (adapter, id) => agentsInfo.removeModel(adapter, id),
 
     // After the tickets API: in a project linked to Linear, createTicket makes a Linear issue.
     ...integrationsApi

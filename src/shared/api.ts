@@ -7,6 +7,8 @@ import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
 import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
 import type { CostPeriod, CostReport } from './costs'
+import type { AgentInfo, AgentTest, ModelOption } from './agents'
+import type { AdapterId } from './agent'
 import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
@@ -145,6 +147,13 @@ export interface EregionApi {
 
   getCosts(projectId: number, period: CostPeriod): Promise<CostReport>
 
+  listAgents(): Promise<AgentInfo[]>
+  /** Sends a tiny prompt with the cheapest model in every runtime where the CLI is installed. */
+  testAgent(adapter: AdapterId): Promise<AgentTest[]>
+  listModels(adapter: AdapterId): Promise<ModelOption[]>
+  addModel(adapter: AdapterId, id: string): Promise<void>
+  removeModel(adapter: AdapterId, id: string): Promise<void>
+
   getTicketPrs(ticketId: number): Promise<PullRequest[]>
   markPrsReady(ticketId: number): Promise<void>
   updatePrDescription(ticketId: number, repo: string, markdown: string): Promise<void>
@@ -221,6 +230,11 @@ export const API_METHODS = [
   'importLinearIssue',
   'pullTicketFromLinear',
   'getCosts',
+  'listAgents',
+  'testAgent',
+  'listModels',
+  'addModel',
+  'removeModel',
   'getTicketPrs',
   'markPrsReady',
   'updatePrDescription',

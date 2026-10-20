@@ -1,10 +1,14 @@
 import type { ReactElement } from 'react'
 import { href } from '../../router'
+import { AgentsSettings } from './AgentsSettings'
 import { IntegrationsSettings } from './IntegrationsSettings'
 
-const TABS = [{ id: 'integrations', label: 'Integrations' }] as const
+const TABS = [
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'agents', label: 'Agents' }
+] as const
 
-/** Settings shared across projects. More tabs (skills, MCP servers, rules, agents, voice) arrive in phase 7. */
+/** Settings shared across projects. Skills, MCP servers, AI rules and Voice join these in phase 7. */
 export function Settings({ tab }: { tab: string }): ReactElement {
   const current = TABS.find((item) => item.id === tab) ?? TABS[0]
   return (
@@ -17,6 +21,7 @@ export function Settings({ tab }: { tab: string }): ReactElement {
           </a>
         ))}
       </div>
+      {current.id === 'agents' && <AgentsSettings />}
       {current.id === 'integrations' && <IntegrationsSettings />}
     </main>
   )
