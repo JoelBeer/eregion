@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
+import { formatTokens, formatUsd, type UsageTotals } from '@shared/costs'
 import type { ProjectSummary } from '@shared/model'
+import { useQuery } from '../hooks'
 import { href, type Route } from '../router'
 import { Logo, NavIcon, type IconName } from './icons'
 import { hasTitleBar } from './TitleBar'
@@ -24,6 +26,30 @@ const NAV: NavItem[] = [
 ]
 
 const SETTINGS: NavItem = { id: 'settings', label: 'Settings', icon: 'settings', route: () => ({ name: 'settings', tab: 'integrations' }) }
+
+/** Today's and this month's spend and tokens for the project; opens Costs. */
+function Usage({ projectId }: { projectId: number }): ReactElement | null {
+  const usage = useQuery(() => window.eregion.getUsage(projectId), [projectId], (event) => event.type === 'run-state')
+  if (!usage.data) return null
+  const line = (label: string, totals: UsageTotals): ReactElement => (
+    <span className="er-usage-line">
+      <span>{label}</span>
+      <span>
+        {formatUsd(totals.costUsd)} · {formatTokens(totals.tokens)}
+      </span>
+    </span>
+  )
+  return (
+    <a className="er-live er-usage" href={href({ name: 'costs', projectId })} title="Spend and tokens. Open Costs for the detail.">
+      <span className="er-usage-line er-usage-head">
+        <strong>Usage</strong>
+        <span>spend · tokens</span>
+      </span>
+      {line('Today', usage.data.today)}
+      {line('This month', usage.data.month)}
+    </a>
+  )
+}
 
 function readCollapsed(): boolean {
   try {
@@ -126,6 +152,7 @@ export function Sidebar({ projects, currentProjectId, active }: { projects: Proj
           </span>
         </div>
       )}
+      {current && !collapsed && current.setupStep >= 8 && <Usage projectId={current.id} />}
 
       {link(SETTINGS, { marginTop: current && !collapsed && current.setupStep >= 8 ? 8 : 'auto' })}
       <button

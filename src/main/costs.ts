@@ -1,4 +1,4 @@
-import { COST_PAGE, runTokens, type CostListing, type CostPeriod, type CostReport, type CostRun, type TicketCost } from '@shared/costs'
+import { COST_PAGE, runTokens, type CostListing, type CostPeriod, type CostReport, type CostRun, type TicketCost, type UsageSummary, type UsageTotals } from '@shared/costs'
 import type { Db } from './db'
 
 interface Row {
@@ -84,4 +84,34 @@ export function costReport(db: Db, projectId: number, period: CostPeriod, listin
     matching: matching.length,
     forge
   }
+}
+
+/**
+ * Spend and tokens today and this month (local time) across a project's tickets and Forge chats, for the
+ * sidebar. Runs are stamped in UTC, so they're converted before comparing.
+ */
+export function usageSummary(db: Db, projectId: number, now: Date = new Date()): UsageSummary {
+  const rows = db
+    .prepare(
+      `SELECT r.started_at, r.tokens_in, r.tokens_out, r.tokens_cached, r.cost_usd
+       FROM runs r
+       LEFT JOIN tickets t ON t.id = r.ticket_id
+       LEFT JOIN chats c ON c.id = r.chat_id
+       WHERE (t.project_id = @projectId OR c.project_id = @projectId)
+         AND r.started_at >= datetime(@since)`
+    )
+    .all({ projectId, since: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().replace('T', ' ').slice(0, 19) }) as Pick<Row, 'started_at' | 'tokens_in' | 'tokens_out' | 'tokens_cached' | 'cost_usd'>[]
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const empty = (): UsageTotals => ({ costUsd: 0, tokens: 0, runs: 0 })
+  const summary: UsageSummary = { today: empty(), month: empty() }
+  for (const row of rows) {
+    const tokens = runTokens({ tokensIn: row.tokens_in, tokensOut: row.tokens_out, tokensCached: row.tokens_cached })
+    const started = new Date(`${row.started_at.replace(' ', 'T')}Z`).getTime()
+    for (const totals of started >= startOfDay ? [summary.today, summary.month] : [summary.month]) {
+      totals.costUsd += row.cost_usd ?? 0
+      totals.tokens += tokens
+      totals.runs += 1
+    }
+  }
+  return summary
 }

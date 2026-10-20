@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { costReport } from './costs'
+import { formatTokens, formatUsd } from '@shared/costs'
+import { costReport, usageSummary } from './costs'
 import { openDatabase } from './db'
 import { RunStore } from './agents/runs'
 import { CrewStore } from './agents/crew'
@@ -60,3 +61,37 @@ describe('costReport', () => {
     expect(found.totals).toEqual(all.totals)
   })
 })
+
+describe('usageSummary', () => {
+  it("adds up today's and this month's runs in local time, Cursor's tokens with no spend", () => {
+    const db = openDatabase(':memory:')
+    const projects = new ProjectStore(db)
+    const tickets = new TicketStore(db)
+    const crew = new CrewStore(db)
+    crew.ensureDefaults('claude-code')
+    const runs = new RunStore(db)
+    const project = projects.create('Word Magic')
+    const other = projects.create('Perch Peak')
+    const ticket = tickets.create({ projectId: project.id, key: 'WM-1', title: 'Hints' })
+    const elsewhere = tickets.create({ projectId: other.id, key: 'PP-1', title: 'Other' })
+    const [member] = crew.list()
+    const now = new Date(2026, 9, 20, 15, 0)
+    const at = (date: Date): string => date.toISOString().replace('T', ' ').slice(0, 19)
+    const run = (ticketId: number, started: Date, cost: number | null, tokens: number, adapter = 'claude-code') => {
+      const created = runs.create({ ticketId, chatId: null, stage: 'build', crewId: member.id, adapter: adapter as 'claude-code', model: 'm' })
+      db.prepare('UPDATE runs SET started_at = ?, cost_usd = ?, tokens_in = ?, tokens_out = 0, tokens_cached = 0 WHERE id = ?').run(at(started), cost, tokens, created.id)
+    }
+    run(ticket.id, new Date(2026, 9, 20, 9, 0), 0.5, 1000)
+    run(ticket.id, new Date(2026, 9, 20, 0, 5), null, 300, 'cursor')
+    run(ticket.id, new Date(2026, 9, 19, 23, 55), 0.25, 200)
+    run(ticket.id, new Date(2026, 8, 30, 12, 0), 9, 9000)
+    run(elsewhere.id, new Date(2026, 9, 20, 10, 0), 4, 4000)
+
+    const usage = usageSummary(db, project.id, now)
+    expect(usage.today).toEqual({ costUsd: 0.5, tokens: 1300, runs: 2 })
+    expect(usage.month.costUsd).toBeCloseTo(0.75)
+    expect(usage.month).toMatchObject({ tokens: 1500, runs: 3 })
+    expect([formatUsd(usage.today.costUsd), formatUsd(123.4), formatTokens(950), formatTokens(usage.today.tokens), formatTokens(2_278_762)]).toEqual(['$0.50', '$123', '950', '1k', '2.3M'])
+  })
+})
+

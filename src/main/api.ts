@@ -29,7 +29,7 @@ import { createIntegrationsApi } from './integrationsApi'
 import { CiWatcher } from './pipeline/ciWatch'
 import { PrStage } from './pipeline/prStage'
 import { PrStore } from './pipeline/prs'
-import { costReport } from './costs'
+import { costReport, usageSummary } from './costs'
 import { combineRules } from '@shared/rules'
 import { AgentsInfo } from './agentsInfo'
 import { RulesStore } from './rules'
@@ -350,6 +350,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
 
     openExternal: (url) => host.openExternal(url),
     getCosts: async (projectId, period, listing) => costReport(db, projectId, period, listing),
+    getUsage: async (projectId) => usageSummary(db, projectId),
     listAgents: () => agentsInfo.list(),
     testAgent: (adapter) => agentsInfo.test(adapter),
     listModels: async (adapter) => agentsInfo.models(adapter),

@@ -1,12 +1,10 @@
 import { Fragment, useEffect, useRef, useState, type ReactElement } from 'react'
-import { COST_PAGE, COST_PERIODS, type CostPeriod, type TicketCost } from '@shared/costs'
+import { COST_PAGE, COST_PERIODS, formatTokens, formatUsd, type CostPeriod, type TicketCost } from '@shared/costs'
 import { CrewAvatar } from '../components/RobotAvatar'
 import { useQuery } from '../hooks'
 import { href } from '../router'
 import { useCrew } from './Board'
 
-const money = (usd: number): string => (usd >= 100 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`)
-const tokens = (count: number): string => (count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : count >= 1000 ? `${Math.round(count / 1000)}k` : String(count))
 
 function Total({ label, value, note }: { label: string; value: string; note?: string }): ReactElement {
   return (
@@ -68,10 +66,10 @@ function Runs({ projectId, ticket }: { projectId: number; ticket: TicketCost }):
                 <td>{new Date(`${run.startedAt.replace(' ', 'T')}Z`).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td>
                 <td>{run.result}</td>
                 <td className="mono" style={{ textAlign: 'right' }}>
-                  {run.tokens > 0 ? tokens(run.tokens) : '—'}
+                  {run.tokens > 0 ? formatTokens(run.tokens) : '—'}
                 </td>
                 <td className="mono" style={{ textAlign: 'right' }}>
-                  {run.costUsd !== null ? money(run.costUsd) : run.adapter === 'cursor' ? 'Cursor plan' : 'not reported'}
+                  {run.costUsd !== null ? formatUsd(run.costUsd) : run.adapter === 'cursor' ? 'Cursor plan' : 'not reported'}
                 </td>
               </tr>
             )
@@ -142,10 +140,10 @@ export function Costs({ projectId }: { projectId: number }): ReactElement {
       {data && (
         <>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-            <Total label="Spend" value={money(data.totals.costUsd)} note="As Claude Code reports it" />
-            <Total label="Tokens" value={tokens(data.totals.tokens)} note={`${data.totals.runs} ${data.totals.runs === 1 ? 'run' : 'runs'}`} />
+            <Total label="Spend" value={formatUsd(data.totals.costUsd)} note="As Claude Code reports it" />
+            <Total label="Tokens" value={formatTokens(data.totals.tokens)} note={`${data.totals.runs} ${data.totals.runs === 1 ? 'run' : 'runs'}`} />
             <Total label="Tickets" value={String(data.totals.tickets)} />
-            <Total label="Forge chats" value={String(data.forge.chats)} note={data.forge.chats > 0 ? money(data.forge.costUsd) : undefined} />
+            <Total label="Forge chats" value={String(data.forge.chats)} note={data.forge.chats > 0 ? formatUsd(data.forge.costUsd) : undefined} />
           </div>
           {data.totals.tickets === 0 ? (
             <span className="muted">No runs in this period.</span>
@@ -183,10 +181,10 @@ export function Costs({ projectId }: { projectId: number }): ReactElement {
                         </td>
                         <td>{item.runs.length}</td>
                         <td className="mono" style={{ textAlign: 'right' }}>
-                          {tokens(item.tokens)}
+                          {formatTokens(item.tokens)}
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
-                          {money(item.costUsd)}
+                          {formatUsd(item.costUsd)}
                         </td>
                         <td style={{ paddingLeft: 12 }}>
                           <div style={{ height: 8, borderRadius: 4, background: 'var(--divider-100)' }}>

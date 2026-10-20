@@ -7,7 +7,7 @@ import type { PipelineVersionSummary } from './pipelineDiff'
 import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
 import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
-import type { CostListing, CostPeriod, CostReport } from './costs'
+import type { CostListing, CostPeriod, CostReport, UsageSummary } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
 import type { RuleFile } from './rules'
@@ -161,6 +161,8 @@ export interface EregionApi {
   pullTicketFromLinear(ticketId: number): Promise<Ticket>
 
   getCosts(projectId: number, period: CostPeriod, listing?: CostListing): Promise<CostReport>
+  /** Today's and this month's spend and tokens, for the sidebar. */
+  getUsage(projectId: number): Promise<UsageSummary>
 
   listAgents(): Promise<AgentInfo[]>
   /** Sends a tiny prompt with the cheapest model in every runtime where the CLI is installed. */
@@ -276,6 +278,7 @@ export const API_METHODS = [
   'importLinearIssue',
   'pullTicketFromLinear',
   'getCosts',
+  'getUsage',
   'listAgents',
   'testAgent',
   'listModels',

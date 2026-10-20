@@ -53,6 +53,29 @@ export interface CostReport {
   forge: { chats: number; costUsd: number; tokens: number }
 }
 
+/** Spend and tokens over a stretch of time; Cursor runs add tokens but no spend (they're on the Cursor plan). */
+export interface UsageTotals {
+  costUsd: number
+  tokens: number
+  runs: number
+}
+
+/** What the sidebar shows: today and this month, in local time, for one project's tickets and Forge chats. */
+export interface UsageSummary {
+  today: UsageTotals
+  month: UsageTotals
+}
+
+/** $0.42, or $123 once it's in the hundreds. */
+export function formatUsd(usd: number): string {
+  return usd >= 100 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`
+}
+
+/** 950, 406k, 2.3M. */
+export function formatTokens(count: number): string {
+  return count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : count >= 1000 ? `${Math.round(count / 1000)}k` : String(count)
+}
+
 /** Every run's tokens, counting the cached input it read. */
 export function runTokens(run: { tokensIn: number | null; tokensOut: number | null; tokensCached: number | null }): number {
   return (run.tokensIn ?? 0) + (run.tokensOut ?? 0) + (run.tokensCached ?? 0)
