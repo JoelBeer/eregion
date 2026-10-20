@@ -16,7 +16,7 @@ const TITLES: Record<SetupStep, string> = {
   setup: 'How is a ticket environment set up?',
   services: 'What runs, and how do we clean up?',
   pipeline: 'Which stages does a ticket go through?',
-  integrations: 'Connect Linear and GitHub',
+  integrations: 'Where tickets come from, and where code goes',
   test: 'Try the whole setup once'
 }
 

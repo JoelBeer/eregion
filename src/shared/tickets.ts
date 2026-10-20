@@ -6,7 +6,7 @@ export interface LinearComment {
   createdAt: string
 }
 
-/** What came in from Linear, refreshed on each poll. */
+/** What came in from the ticket's tracker (Linear, GitHub, Jira or GitLab), refreshed on each poll. */
 export interface LinearData {
   state?: string
   priority?: string
@@ -14,6 +14,8 @@ export interface LinearData {
   labels?: string[]
   comments?: LinearComment[]
   assignee?: string | null
+  /** The assignee's id in the tracker, for telling whether it's still assigned to whoever this project imports for. */
+  assigneeId?: string | null
   /** Imported by a sync and not started yet: the card shows "New". */
   isNew?: boolean
   /** Assigned to someone else in Linear after work started here. */

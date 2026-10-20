@@ -2,7 +2,7 @@ import type { EregionApi } from '@shared/api'
 import { callbackUrl, OAUTH_PORTS, type LinearStatus } from '@shared/integrations'
 import type { Ticket } from '@shared/tickets'
 import type { LinearAuth } from './integrations/linearAuth'
-import type { LinearSync } from './integrations/linearSync'
+import type { IssueSync } from './integrations/sources'
 import type { CiWatcher } from './pipeline/ciWatch'
 import type { PrStage } from './pipeline/prStage'
 import type { PrStore } from './pipeline/prs'
@@ -34,7 +34,7 @@ export type IntegrationsApi = Pick<
 
 export interface IntegrationsApiDeps {
   auth: LinearAuth
-  sync: LinearSync
+  sync: IssueSync
   projects: ProjectStore
   tickets: TicketStore
   prs: PrStore
@@ -50,7 +50,7 @@ export interface IntegrationsApiDeps {
 export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsApi {
   const { auth, sync, projects, tickets, prs } = deps
   const status = (): LinearStatus => {
-    const last = sync.lastSync()
+    const last = sync.lastSync('linear')
     return {
       clientId: auth.clientId(),
       method: auth.method(),
@@ -112,14 +112,7 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
     },
     checkCiNow: (ticketId) => deps.ci.check(ticketId),
 
-    /** In a project linked to a Linear team, a new ticket is a new Linear issue assigned to you. */
-    createTicket: async (projectId, title, description) => {
-      const project = projects.get(projectId)
-      const linear = auth.client()
-      if (!project.linear.teamId || !linear) return deps.createLocalTicket(projectId, title, description)
-      if (!title.trim()) throw new Error('Give the ticket a title')
-      const issue = await linear.createIssue({ teamId: project.linear.teamId, title: title.trim(), description, assigneeId: auth.viewer()?.id })
-      return sync.importByKey(project, issue.identifier)
-    }
+    /** In a project linked to a tracker, a new ticket is a new issue there, assigned to you. */
+    createTicket: async (projectId, title, description) => (await sync.create(projects.get(projectId), title, description)) ?? deps.createLocalTicket(projectId, title, description)
   }
 }

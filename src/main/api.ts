@@ -21,10 +21,10 @@ import { PipelineEngine } from './pipeline/engine'
 import { PipelineStore, TicketStore } from './pipeline/stores'
 import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
 import { GhCli, type GitHub } from './integrations/github'
-import { linearIntegrations } from './integrations/hooks'
 import type { FetchLike } from './integrations/linear'
 import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
-import { LinearSync } from './integrations/linearSync'
+import { LinearSource } from './integrations/linearSource'
+import { IssueSync, sourceIntegrations } from './integrations/sources'
 import { createIntegrationsApi } from './integrationsApi'
 import { CiWatcher } from './pipeline/ciWatch'
 import { PrStage } from './pipeline/prStage'
@@ -82,7 +82,8 @@ export interface Backend {
   tickets: TicketStore
   prs: PrStore
   ci: CiWatcher
-  linearSync: LinearSync
+  /** Brings issues in from each project's tracker. */
+  issueSync: IssueSync
   linearAuth: LinearAuth
   /** Stops every service Eregion started. Called when the app quits. */
   shutdown(): Promise<void>
@@ -117,6 +118,15 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     host.emit({ type: 'notice', title, body })
   }
   const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
+  const issueSync = new IssueSync(db, [new LinearSource(linearAuth)], projects, tickets, {
+    ticketChanged: (ticket) => ticketChanged(ticket),
+    ticketRemoved: (projectId) => {
+      host.emit({ type: 'project-changed', projectId })
+      host.emit({ type: 'projects-changed' })
+    },
+    notify,
+    statusChanged: () => host.emit({ type: 'linear-changed' })
+  })
   const tooling = new Tooling(db, projects)
   const ticketChanged = (ticket: Ticket): void => {
     host.emit({ type: 'ticket-changed', ticketId: ticket.id, projectId: ticket.projectId })
@@ -133,7 +143,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       userName: () => getSetting(db, 'user.name', host.userName ?? 'you'),
       houseRules: (project) => combineRules(getSetting(db, 'rules.house', ''), getSetting(db, `rules.project.${project.id}`, ''), project.name)
     },
-    integrations: linearIntegrations(linearAuth, notify),
+    integrations: sourceIntegrations(issueSync, notify),
     onTicketChanged: ticketChanged,
     tooling: (project, repoPaths, values) => tooling.forRun(project, repoPaths, values)
   })
@@ -157,23 +167,14 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   const prStage = new PrStage(engine, prs, github)
   const ci = new CiWatcher(engine, prs, github)
   engine.recover()
-  const linearSync = new LinearSync(db, linearAuth, projects, tickets, {
-    ticketChanged,
-    ticketRemoved: (projectId) => {
-      host.emit({ type: 'project-changed', projectId })
-      host.emit({ type: 'projects-changed' })
-    },
-    notify,
-    statusChanged: () => host.emit({ type: 'linear-changed' })
-  })
   if (options.timers) {
     ci.start()
-    linearSync.start()
+    issueSync.start()
   }
   const ticketsApi = createTicketsApi({ db, projects, tickets, pipelines, crew, runs, agents, workspaces, engine, prs, onBackgroundError: backgroundErrorHandler(tickets, ticketChanged, agents) })
   const integrationsApi = createIntegrationsApi({
     auth: linearAuth,
-    sync: linearSync,
+    sync: issueSync,
     projects,
     tickets,
     prs,
@@ -391,11 +392,11 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     tickets,
     prs,
     ci,
-    linearSync,
+    issueSync,
     linearAuth,
     shutdown: async () => {
       ci.stop()
-      linearSync.stop()
+      issueSync.stop()
       linearAuth.cancelSignIn()
       await agents.stopAll()
       await services.stopAll()

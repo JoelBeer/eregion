@@ -144,6 +144,15 @@ function ImportPeople({ status }: { status: LinearStatus }): ReactElement {
         <input type="radio" name="assignees" checked={status.importAssignees.mode === 'people'} onChange={() => void load.run()} />
         Specific people{chosen.length ? `: ${chosen.map((person) => person.name).join(', ')}` : ''}
       </label>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input type="radio" name="assignees" checked={status.importAssignees.mode === 'everyone'} onChange={() => void save.run({ mode: 'everyone' })} />
+        Everyone in the team, assigned or not
+      </label>
+      {status.importAssignees.mode === 'everyone' && (
+        <span className="muted" style={{ fontSize: 13, paddingLeft: 24 }}>
+          That can be a lot of tickets: narrow it with labels in each project's Tickets and code step, and with the states it imports from.
+        </span>
+      )}
       {(users || status.importAssignees.mode === 'people') && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 24, maxHeight: 220, overflowY: 'auto' }}>
           {!users && (

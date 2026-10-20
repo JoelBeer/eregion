@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { DEFAULT_IMPORT_STATE_TYPES, type LinearState, type LinearStateType, type LinearTeam } from '@shared/integrations'
 import { DEFAULT_LINEAR_PUSH, type GithubProjectConfig, type LinearProjectConfig } from '@shared/model'
+import { importRules, sourceOf, SOURCE_NAMES, type ImportRules, type TicketSourceConfig, type TicketSourceKind } from '@shared/sources'
 import { Switch } from '../../components/ui'
 import { errorMessage, useAction, useQuery } from '../../hooks'
 import { href } from '../../router'
@@ -43,7 +44,8 @@ function LinearSection({ project, save }: { project: StepProps['project']; save:
   const types = linear.importStateTypes?.length ? linear.importStateTypes : DEFAULT_IMPORT_STATE_TYPES
   const push = { ...DEFAULT_LINEAR_PUSH, ...linear.push }
   const stages = (pipeline.data?.stages ?? []).filter((stage) => stage.enabled)
-  const person = status.importAssignees.mode === 'me' ? 'you' : status.importAssignees.people.map((item) => item.name).join(', ')
+  const assignees = status.importAssignees
+  const person = assignees.mode === 'me' ? 'assigned to you' : assignees.mode === 'everyone' ? 'in the team, assigned to anyone' : `assigned to ${assignees.people.map((item) => item.name).join(', ')}`
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -71,7 +73,7 @@ function LinearSection({ project, save }: { project: StepProps['project']; save:
           <>
             <span className="muted">Pull tickets</span>
             <select className="select" aria-label="Pull tickets" value={linear.pullFrom ?? 'assigned'} onChange={(event) => save({ ...linear, pullFrom: event.target.value as LinearProjectConfig['pullFrom'] })}>
-              <option value="assigned">Issues assigned to {person}, automatically</option>
+              <option value="assigned">Issues {person}, automatically</option>
               <option value="manual">Only issues I import by key</option>
             </select>
           </>
@@ -149,20 +151,84 @@ function LinearSection({ project, save }: { project: StepProps['project']; save:
   )
 }
 
+/** The ticket sources this version of Eregion can read, in the order they're offered. */
+const SOURCE_CHOICES: { kind: TicketSourceKind; detail: string }[] = [
+  { kind: 'linear', detail: 'Issues from a Linear team. Connect Linear in Settings › Integrations.' },
+  { kind: 'manual', detail: "No tracker: add tickets with New ticket on the Board. Their keys use the project's initials." }
+]
+
+/** Comma-separated labels, as typed. */
+const labelList = (text: string): string[] =>
+  text
+    .split(',')
+    .map((label) => label.trim())
+    .filter(Boolean)
+
+/** Which labels an issue needs to come in, and which keep it out. */
+function LabelRules({ rules, save }: { rules: ImportRules; save: (rules: ImportRules) => void }): ReactElement {
+  const [labels, setLabels] = useState(rules.labels.join(', '))
+  const [excluded, setExcluded] = useState(rules.excludeLabels.join(', '))
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
+      <label className="muted" htmlFor="labels-in">
+        Only with labels
+      </label>
+      <input id="labels-in" className="input" placeholder="Any labels" value={labels} onChange={(event) => setLabels(event.target.value)} onBlur={() => save({ ...rules, labels: labelList(labels) })} />
+      <label className="muted" htmlFor="labels-out">
+        Never with labels
+      </label>
+      <input id="labels-out" className="input" placeholder="None" value={excluded} onChange={(event) => setExcluded(event.target.value)} onBlur={() => save({ ...rules, excludeLabels: labelList(excluded) })} />
+      <span />
+      <span className="muted" style={{ fontSize: 13 }}>
+        Comma-separated, any case. An issue needs every label in the first list and none in the second.
+      </span>
+    </div>
+  )
+}
+
 export function IntegrationsStep({ project, next }: StepProps): ReactElement {
   const saveLinear = useAction((linear: LinearProjectConfig) => window.eregion.updateProject(project.id, { linear }))
   const saveGithub = useAction((github: GithubProjectConfig) => window.eregion.updateProject(project.id, { github }))
+  const saveSource = useAction((source: TicketSourceConfig) => window.eregion.updateProject(project.id, { source }))
   const github = project.github
+  const source = sourceOf(project)
   return (
     <>
-      <section className="panel" aria-label="Linear">
-        <h2 style={{ fontSize: 18 }}>Linear</h2>
-        <LinearSection project={project} save={(linear) => void saveLinear.run(linear)} />
-        {saveLinear.error && <span className="error-text">{saveLinear.error}</span>}
+      <section className="panel" aria-label="Where tickets come from">
+        <h2 style={{ fontSize: 18 }}>Tickets come from</h2>
+        <div role="radiogroup" aria-label="Ticket source" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {SOURCE_CHOICES.map((choice) => (
+            <label key={choice.kind} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <input type="radio" name="ticket-source" checked={source.kind === choice.kind} onChange={() => void saveSource.run({ ...source, kind: choice.kind })} style={{ marginTop: 4 }} />
+              <span>
+                <strong>{SOURCE_NAMES[choice.kind]}</strong>
+                <span className="muted" style={{ display: 'block', fontSize: 13 }}>
+                  {choice.detail}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {saveSource.error && <span className="error-text">{saveSource.error}</span>}
       </section>
 
-      <section className="panel" aria-label="GitHub">
-        <h2 style={{ fontSize: 18 }}>GitHub</h2>
+      {source.kind === 'linear' && (
+        <section className="panel" aria-label="Linear">
+          <h2 style={{ fontSize: 18 }}>Linear</h2>
+          <LinearSection project={project} save={(linear) => void saveLinear.run(linear)} />
+          {saveLinear.error && <span className="error-text">{saveLinear.error}</span>}
+        </section>
+      )}
+
+      {source.kind !== 'manual' && (
+        <section className="panel" aria-label="Labels">
+          <h2 style={{ fontSize: 18 }}>Labels</h2>
+          <LabelRules key={project.id} rules={importRules(source)} save={(rules) => void saveSource.run({ ...source, rules })} />
+        </section>
+      )}
+
+      <section className="panel" aria-label="Code">
+        <h2 style={{ fontSize: 18 }}>Code: GitHub</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '8px 12px' }}>
           {project.repos.map((repo) => (
             <div key={repo.id} style={{ display: 'contents' }}>

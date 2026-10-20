@@ -61,7 +61,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
   // Linear issues assigned while you were away show up as soon as you come back.
-  mainWindow.on('focus', () => void backend?.linearSync.syncAll().catch(() => undefined))
+  mainWindow.on('focus', () => void backend?.issueSync.syncAll().catch(() => undefined))
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}?${new URLSearchParams(query)}`)

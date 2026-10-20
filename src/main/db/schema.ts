@@ -250,5 +250,9 @@ export const migrations: string[] = [
     SELECT id, name, role, adapter, model, seed, created_at, parts FROM crew;
   DROP TABLE crew;
   ALTER TABLE crew_new RENAME TO crew;
+  `,
+  // Ticket sources: where a project's tickets come from (Linear, GitHub Issues, Jira, GitLab, or nowhere).
+  `
+  ALTER TABLE projects ADD COLUMN source TEXT NOT NULL DEFAULT '{}';
   `
 ]

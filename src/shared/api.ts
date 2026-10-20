@@ -11,6 +11,7 @@ import type { CostListing, CostPeriod, CostReport, UsageSummary } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
 import type { AgentConnector, CustomAgent } from './connectors'
+import type { TicketSourceConfig } from './sources'
 import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
@@ -68,6 +69,7 @@ export interface ProjectPatch {
   setupInParallel?: boolean
   linear?: LinearProjectConfig
   github?: GithubProjectConfig
+  source?: TicketSourceConfig
 }
 
 /** Everything the renderer can ask the main process to do. Each method is one IPC round trip. */

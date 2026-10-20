@@ -8,6 +8,7 @@ import { useAction, useQuery } from '../hooks'
 import { navigate } from '../router'
 import { useQuiet } from '../quiet'
 import type { Project } from '@shared/model'
+import { sourceOf } from '@shared/sources'
 import { timeAgo, useLinearStatus } from './settings/IntegrationsSettings'
 
 export function useCrew(): CrewMember[] {
@@ -53,12 +54,14 @@ function LinearBar({ project }: { project: Project }): ReactElement | null {
     setKey('')
     navigate({ name: 'ticket', projectId: project.id, ticketId: ticket.id, tab: 'conversation' })
   })
-  if (!project.linear.teamId || !status?.method) return null
+  if (sourceOf(project).kind !== 'linear' || !project.linear.teamId || !status?.method) return null
   const manual = project.linear.pullFrom === 'manual'
+  const assignees = status.importAssignees
+  const whose = assignees.mode === 'me' ? 'assigned to you' : assignees.mode === 'everyone' ? 'in the team' : 'assigned to the people you chose'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
       <span className="muted">
-        Linear {project.linear.teamName ?? project.linear.teamKey}: {manual ? 'import issues by key' : `issues assigned to ${status.importAssignees.mode === 'me' ? 'you' : 'the people you chose'} come in by themselves`} · synced {timeAgo(status.lastSyncAt)}
+        Linear {project.linear.teamName ?? project.linear.teamKey}: {manual ? 'import issues by key' : `issues ${whose} come in by themselves`} · synced {timeAgo(status.lastSyncAt)}
       </span>
       {status.error && <span className="error-text">Sync failed: {status.error}</span>}
       {!manual && (
@@ -157,7 +160,7 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
       {adding && (
         <NewTicket
           projectId={projectId}
-          linked={Boolean(project.data.linear.teamId && linearStatus?.method)}
+          linked={Boolean(sourceOf(project.data).kind === 'linear' && project.data.linear.teamId && linearStatus?.method)}
           onDone={() => {
             setAdding(false)
             reload()

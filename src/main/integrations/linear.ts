@@ -97,9 +97,10 @@ export class LinearClient {
   }
 
   /** Issues in a team assigned to the viewer (or to the given people), in the given state types. */
-  async assignedIssues(options: { teamId: string; assigneeIds: string[] | 'me'; stateTypes: LinearStateType[] }): Promise<LinearIssue[]> {
-    const assignee = options.assigneeIds === 'me' ? { isMe: { eq: true } } : { id: { in: options.assigneeIds } }
-    const filter = { team: { id: { eq: options.teamId } }, assignee, state: { type: { in: options.stateTypes } } }
+  /** Issues in the team and states, assigned to you, to these people, or to anyone (and no one) for 'everyone'. */
+  async assignedIssues(options: { teamId: string; assigneeIds: string[] | 'me' | 'everyone'; stateTypes: LinearStateType[] }): Promise<LinearIssue[]> {
+    const assignee = options.assigneeIds === 'me' ? { isMe: { eq: true } } : options.assigneeIds === 'everyone' ? undefined : { id: { in: options.assigneeIds } }
+    const filter = { team: { id: { eq: options.teamId } }, ...(assignee ? { assignee } : {}), state: { type: { in: options.stateTypes } } }
     const issues: LinearIssue[] = []
     let after: string | null = null
     for (let page = 0; page < 10; page++) {

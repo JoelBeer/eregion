@@ -1,3 +1,4 @@
+import type { TicketSourceConfig } from './sources'
 import type { Variable } from './variables'
 import type { LinearStateType } from './integrations'
 
@@ -52,6 +53,8 @@ export interface Project {
   liveSlots: number
   linear: LinearProjectConfig
   github: GithubProjectConfig
+  /** Where tickets come from (see sources.ts). Missing on projects from before: sourceOf() works it out. */
+  source?: TicketSourceConfig
   /** 1 to 7 while setting up; 8 once the test run has passed. */
   setupStep: number
   /** Run each repo's setup at the same time instead of in order. */

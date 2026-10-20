@@ -9,7 +9,7 @@ export const SETUP_STEP_LABELS: Record<SetupStep, string> = {
   setup: 'Setup',
   services: 'Services and teardown',
   pipeline: 'Pipeline',
-  integrations: 'Linear and GitHub',
+  integrations: 'Tickets and code',
   test: 'Test run'
 }
 

@@ -22,7 +22,8 @@ export interface LinearStatus {
   callbackUrls: string[]
 }
 
-export type ImportAssignees = { mode: 'me' } | { mode: 'people'; people: { id: string; name: string }[] }
+/** Whose Linear issues come in by themselves: yours, chosen people's, or everyone's in the team. */
+export type ImportAssignees = { mode: 'me' } | { mode: 'people'; people: { id: string; name: string }[] } | { mode: 'everyone' }
 
 export interface LinearTeam {
   id: string

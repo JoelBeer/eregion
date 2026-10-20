@@ -5,10 +5,11 @@ import type { Ticket } from '@shared/tickets'
 import { openDatabase } from '../db'
 import { TicketStore } from '../pipeline/stores'
 import { ProjectStore } from '../projects/store'
-import { descriptionWithPlan, linearIntegrations, PLAN_MARKER } from './hooks'
+import { descriptionWithPlan, PLAN_MARKER } from './hooks'
 import { LinearAuthError, LinearClient, type FetchLike } from './linear'
 import { authorizeUrl, LinearAuth, pkcePair, PLAIN_CODEC } from './linearAuth'
-import { LinearSync } from './linearSync'
+import { LinearSource } from './linearSource'
+import { IssueSync } from './sources'
 
 interface Call {
   url: string
@@ -123,7 +124,7 @@ describe('LinearAuth', () => {
   })
 })
 
-describe('LinearSync', () => {
+describe('Linear through IssueSync', () => {
   async function setup(handlers: Parameters<typeof fakeLinear>[0]) {
     const db = openDatabase(':memory:')
     const linear = fakeLinear(handlers)
@@ -134,8 +135,8 @@ describe('LinearSync', () => {
     const project = projects.update(projects.create('Word Magic').id, { linear: { teamId: 'team-wm', teamKey: 'WM' } })
     const notices: string[] = []
     const changed: Ticket[] = []
-    const sync = new LinearSync(db, auth, projects, tickets, { ticketChanged: (ticket) => changed.push(ticket), ticketRemoved: () => undefined, notify: (title) => notices.push(title), statusChanged: () => undefined })
-    return { sync, tickets, project, notices, changed, linear }
+    const sync = new IssueSync(db, [new LinearSource(auth)], projects, tickets, { ticketChanged: (ticket) => changed.push(ticket), ticketRemoved: () => undefined, notify: (title) => notices.push(title), statusChanged: () => undefined })
+    return { sync, tickets, projects, project, notices, changed, linear, auth }
   }
 
   it('imports issues assigned to me as new Backlog tickets, once', async () => {
@@ -162,6 +163,19 @@ describe('LinearSync', () => {
     expect(tickets.get(started.id).linear).toMatchObject({ reassigned: true, assignee: 'Sam' })
   })
 
+  it("imports everyone's issues when asked, without an assignee filter, keeping only those with the project's labels", async () => {
+    const { sync, tickets, projects, project, linear, auth, notices } = await setup({
+      assigned: () => [issue('WM-7', { assignee: { id: 'u-sam', name: 'Sam' } }), { ...issue('WM-8', { assignee: null }), labels: { nodes: [{ name: 'Bug' }, { name: 'Wontfix' }] } }]
+    })
+    auth.setImportAssignees({ mode: 'everyone' })
+    const labelled = projects.update(project.id, { source: { kind: 'linear', rules: { who: 'everyone', people: [], labels: ['bug'], excludeLabels: ['wontfix'] } } })
+    expect((await sync.syncProject(labelled)).imported).toEqual(['WM-7'])
+    const query = JSON.parse(linear.calls.at(-1)?.body ?? '{}') as { variables: { filter: Record<string, unknown> } }
+    expect(query.variables.filter).not.toHaveProperty('assignee')
+    expect(notices).toEqual(['WM-7 assigned to Sam'])
+    expect(tickets.findByKey(project.id, 'WM-7')?.linear).toMatchObject({ assignee: 'Sam', assigneeId: 'u-sam' })
+  })
+
   it("won't import over a ticket made in Eregion with the same key", async () => {
     const { sync, tickets, project } = await setup({ assigned: () => [issue('WM-1')] })
     tickets.create({ projectId: project.id, key: 'WM-1', title: 'Local' })
@@ -186,7 +200,7 @@ describe('Linear hooks', () => {
     const project = projects.update(projects.create('Word Magic').id, { linear: { teamId: 't', statusByStage: { build: 'state-in-progress' }, push: { planComment: true, planDescription: true, prLinks: true } } })
     const tickets = new TicketStore(db)
     const ticket = tickets.create({ projectId: project.id, key: 'WM-5', title: 'Hints', description: 'Stuck.', linearId: 'id-WM-5' })
-    const hooks = linearIntegrations(auth, () => undefined)
+    const { hooks } = new LinearSource(auth)
     const before = linear.calls.length
     await hooks.planApproved?.(ticket, '# Plan', project)
     await hooks.stageEntered?.(ticket, { id: 'build' } as never, project)

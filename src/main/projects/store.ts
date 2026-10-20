@@ -1,3 +1,4 @@
+import type { TicketSourceConfig } from '@shared/sources'
 import type { Db } from '../db'
 import {
   initialsFor,
@@ -22,6 +23,7 @@ interface ProjectRow {
   live_slots: number
   linear: string
   github: string
+  source: string
   setup_step: number
   setup_parallel: number
 }
@@ -143,6 +145,7 @@ export class ProjectStore {
       liveSlots: row.live_slots,
       linear: JSON.parse(row.linear),
       github: JSON.parse(row.github),
+      ...(row.source && row.source !== '{}' ? { source: JSON.parse(row.source) as TicketSourceConfig } : {}),
       setupStep: row.setup_step,
       setupInParallel: row.setup_parallel === 1,
       repos: this.repos(row.id)
@@ -167,6 +170,7 @@ export class ProjectStore {
       liveSlots: ['live_slots', (value: number) => Math.max(1, Math.floor(value))],
       linear: ['linear', (value: LinearProjectConfig) => JSON.stringify(value)],
       github: ['github', (value: GithubProjectConfig) => JSON.stringify(value)],
+      source: ['source', (value: TicketSourceConfig) => JSON.stringify(value)],
       setupStep: ['setup_step', (value: number) => value],
       setupInParallel: ['setup_parallel', (value: boolean) => (value ? 1 : 0)]
     }
@@ -273,6 +277,8 @@ export class ProjectStore {
         liveSlots: project.liveSlots,
         linear: { ...project.linear, teamId: undefined, statusByStage: undefined },
         github: project.github,
+        // The connection belongs to this machine's Settings, like the Linear team.
+        ...(project.source ? { source: { ...project.source, connectionId: null } } : {}),
         setupInParallel: project.setupInParallel
       },
       repos: project.repos.map((repo) => ({
@@ -315,6 +321,7 @@ export class ProjectStore {
         liveSlots: file.project.liveSlots,
         linear: file.project.linear,
         github: file.project.github,
+        source: file.project.source,
         setupInParallel: file.project.setupInParallel
       })
       for (const repoFile of file.repos) {
