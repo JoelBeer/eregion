@@ -104,28 +104,41 @@ export interface SessionPanelProps {
   path?: string
   placeholder?: ReactNode
   minHeight?: number
+  /** Events from earlier runs of the same conversation (a Forge chat that was resumed). */
+  history?: AgentEvent[]
+  /** Takes over sending, so the composer stays open between runs (the Forge starts one on demand). */
+  onSend?: (text: string) => Promise<void>
+  /** Skills you've allowed, offered by the / button. */
+  skills?: string[]
 }
 
-export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHeight = 420 }: SessionPanelProps): ReactElement {
+export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHeight = 420, history, onSend, skills }: SessionPanelProps): ReactElement {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+  const [picking, setPicking] = useState(false)
   const body = useRef<HTMLDivElement>(null)
   const live = view?.state === 'running' || view?.state === 'waiting'
   const name = crew?.name ?? 'Agent'
+  const events = [...(history ?? []), ...(view?.events ?? [])]
 
   useEffect(() => {
     body.current?.scrollTo({ top: body.current.scrollHeight })
-  }, [view?.events.length])
+  }, [events.length])
 
   const send = async (delivery: 'now' | 'queue'): Promise<void> => {
     const text = draft.trim()
-    if (!text || !view) return
+    if (!text || (!view && !onSend)) return
+    setSending(true)
     try {
-      await window.eregion.sendToRun(view.run.id, text, delivery, false)
+      if (onSend) await onSend(text)
+      else if (view) await window.eregion.sendToRun(view.run.id, text, delivery, false)
       setDraft('')
       setError(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(caught))
+    } finally {
+      setSending(false)
     }
   }
 
@@ -137,15 +150,20 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
   }
 
   const waiting = view?.state === 'waiting'
-  const hint = !view
-    ? `Nothing running for ${name} yet`
-    : !live
-      ? 'This run has ended'
-      : waiting
-        ? `${name} is waiting for you. Enter sends.`
-        : view.takesMessagesMidRun
-          ? 'Enter sends now · Shift+Enter queues for after this step'
-          : `Messages wait until ${name}'s current run ends`
+  const canType = onSend ? !sending : live
+  const hint = onSend
+    ? view?.state === 'running'
+      ? `${name} is answering. Enter sends a follow-up.`
+      : `Ask ${name} anything. Enter sends.`
+    : !view
+      ? `Nothing running for ${name} yet`
+      : !live
+        ? 'This run has ended'
+        : waiting
+          ? `${name} is waiting for you. Enter sends.`
+          : view.takesMessagesMidRun
+            ? 'Enter sends now · Shift+Enter queues for after this step'
+            : `Messages wait until ${name}'s current run ends`
 
   return (
     <section className="er-session" aria-label={`${name}'s session`} style={{ width: '100%' }}>
@@ -157,7 +175,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
         {path && <span className="er-session-path">{path}</span>}
       </div>
       <div ref={body} className="er-session-body" style={{ minHeight, maxHeight: 640, overflowY: 'auto' }}>
-        {view ? renderEvents(view.events) : placeholder}
+        {events.length > 0 ? renderEvents(events) : placeholder}
         {view?.state === 'running' && (
           <div className="er-line-prompt">
             <span className="er-cursor" aria-hidden />
@@ -168,22 +186,48 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
         <button type="button" className="er-mic" aria-label="Dictate" disabled title="Voice dictation is set up in Settings › Voice">
           <NavIcon name="mic" />
         </button>
+        {skills && skills.length > 0 && (
+          <span style={{ position: 'relative' }}>
+            <button type="button" className="er-btn er-btn-onforge er-btn-sm" aria-label="Use a skill" aria-expanded={picking} onClick={() => setPicking(!picking)} disabled={!canType}>
+              /
+            </button>
+            {picking && (
+              <span role="menu" style={{ position: 'absolute', bottom: '120%', left: 0, zIndex: 5, display: 'flex', flexDirection: 'column', minWidth: 220, maxHeight: 260, overflowY: 'auto', background: 'var(--forge-900)', border: '1px solid var(--forge-600)', borderRadius: 8, padding: 4 }}>
+                {skills.map((skill) => (
+                  <button
+                    key={skill}
+                    type="button"
+                    role="menuitem"
+                    className="mono"
+                    style={{ textAlign: 'left', background: 'none', border: 'none', color: 'var(--term-text, #D6ECEF)', padding: '6px 8px', cursor: 'pointer', fontSize: 13 }}
+                    onClick={() => {
+                      setDraft(`/${skill} ${draft.replace(/^\/\S+\s*/, '')}`)
+                      setPicking(false)
+                    }}
+                  >
+                    /{skill}
+                  </button>
+                ))}
+              </span>
+            )}
+          </span>
+        )}
         <textarea
           aria-label={`Message ${name}`}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKey}
-          disabled={!live}
+          disabled={!canType}
           rows={1}
           placeholder={hint}
           style={{ flex: 1, minWidth: 200, resize: 'none', font: 'inherit', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--forge-600)', background: 'var(--forge-900)', color: 'var(--term-text, #D6ECEF)' }}
         />
-        {live && view?.takesMessagesMidRun && !waiting && (
+        {!onSend && live && view?.takesMessagesMidRun && !waiting && (
           <button type="button" className="er-btn er-btn-onforge er-btn-sm" onClick={() => void send('queue')} disabled={!draft.trim()}>
             Queue
           </button>
         )}
-        <button type="button" className="er-btn er-btn-onforge er-btn-sm" onClick={() => void send(waiting || view?.takesMessagesMidRun ? 'now' : 'queue')} disabled={!live || !draft.trim()}>
+        <button type="button" className="er-btn er-btn-onforge er-btn-sm" onClick={() => void send(waiting || view?.takesMessagesMidRun ? 'now' : 'queue')} disabled={!canType || !draft.trim()}>
           Send
         </button>
         <span>

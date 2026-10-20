@@ -25,6 +25,7 @@ export type Route =
   | { name: 'ticket'; projectId: number; ticketId: number; tab: TicketTab }
   | { name: 'settings'; tab: string }
   | { name: 'costs'; projectId: number }
+  | { name: 'forge'; projectId: number; chatId: number | null }
 
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean)
@@ -38,6 +39,7 @@ export function parseRoute(hash: string): Route {
       }
       if (Number.isInteger(id) && parts[2] === 'board') return { name: 'board', projectId: id }
       if (Number.isInteger(id) && parts[2] === 'costs') return { name: 'costs', projectId: id }
+      if (Number.isInteger(id) && parts[2] === 'forge') return { name: 'forge', projectId: id, chatId: Number.isInteger(Number(parts[3])) && parts[3] ? Number(parts[3]) : null }
       if (Number.isInteger(id) && parts[2] === 'tickets' && Number.isInteger(Number(parts[3]))) {
         const tab = TICKET_TABS.includes(parts[4] as TicketTab) ? (parts[4] as TicketTab) : 'conversation'
         return { name: 'ticket', projectId: id, ticketId: Number(parts[3]), tab }
@@ -70,6 +72,8 @@ export function href(route: Route): string {
       return `#/settings/${route.tab}`
     case 'costs':
       return `#/projects/${route.projectId}/costs`
+    case 'forge':
+      return `#/projects/${route.projectId}/forge${route.chatId ? `/${route.chatId}` : ''}`
   }
 }
 

@@ -215,5 +215,10 @@ export const migrations: string[] = [
   ALTER TABLE pull_requests ADD COLUMN checks_scope TEXT;
   ALTER TABLE pull_requests ADD COLUMN checked_at TEXT;
   ALTER TABLE pull_requests ADD COLUMN merged_at TEXT;
+  `,
+  `
+  ALTER TABLE chats ADD COLUMN adapter TEXT NOT NULL DEFAULT 'claude-code';
+  ALTER TABLE chats ADD COLUMN repo_ids TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE chats ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));
   `
 ]

@@ -102,6 +102,16 @@ export class Workspaces {
     return runner.join(await this.root(runner, repo.runtime), this.projectFolder(project), 'plan')
   }
 
+  /** Where Forge chats run: an empty folder, so a chat reads only the repos you attach. */
+  async forgeFolder(project: Project): Promise<string> {
+    const repo = project.repos[0]
+    if (!repo) throw new Error('This project has no repos')
+    const runner = this.runnerFor(repo.runtime)
+    const folder = runner.join(await this.root(runner, repo.runtime), this.projectFolder(project), 'forge')
+    await runner.exec(['mkdir', '-p', folder])
+    return folder
+  }
+
   /** One git operation per repo at a time: worktree commands take a lock on the repo. */
   private withRepoLock<T>(repo: Repo, task: () => Promise<T>): Promise<T> {
     const previous = this.repoLocks.get(repo.path) ?? Promise.resolve()

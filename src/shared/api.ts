@@ -11,6 +11,7 @@ import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
 import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
+import type { Chat, NewChat } from './forge'
 import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
@@ -172,6 +173,13 @@ export interface EregionApi {
   addMcpServer(name: string, spec: McpServerSpec): Promise<void>
   removeMcpServer(name: string): Promise<void>
 
+  listChats(projectId: number): Promise<Chat[]>
+  createChat(projectId: number, chat: NewChat): Promise<Chat>
+  updateChat(chatId: number, patch: { title?: string; repoIds?: number[] }): Promise<Chat>
+  deleteChat(chatId: number): Promise<void>
+  /** Sends to the chat's live session, or starts (or resumes) one. */
+  sendToChat(chatId: number, text: string, dictated: boolean): Promise<{ runId: number }>
+
   getTicketPrs(ticketId: number): Promise<PullRequest[]>
   markPrsReady(ticketId: number): Promise<void>
   updatePrDescription(ticketId: number, repo: string, markdown: string): Promise<void>
@@ -264,6 +272,11 @@ export const API_METHODS = [
   'setMcpServerAllowed',
   'addMcpServer',
   'removeMcpServer',
+  'listChats',
+  'createChat',
+  'updateChat',
+  'deleteChat',
+  'sendToChat',
   'getTicketPrs',
   'markPrsReady',
   'updatePrDescription',
@@ -278,6 +291,7 @@ export type EregionEvent = { type: 'projects-changed' } | { type: 'project-chang
   | { type: 'crew-changed' }
   | { type: 'ticket-changed'; ticketId: number; projectId: number }
   | { type: 'linear-changed' }
+  | { type: 'forge-changed'; projectId: number }
 
 export interface EregionBridge extends EregionApi {
   onEvent(listener: (event: EregionEvent) => void): () => void

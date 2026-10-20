@@ -94,7 +94,8 @@ export class RunStore {
   }
 
   addEvent(runId: number, event: AgentEvent): void {
-    this.db.prepare('INSERT INTO events (run_id, type, payload) VALUES (?, ?, ?)').run(runId, event.kind, JSON.stringify(event))
+    // A run can be deleted with its Forge chat while its last events are still arriving.
+    this.db.prepare('INSERT INTO events (run_id, type, payload) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM runs WHERE id = ?)').run(runId, event.kind, JSON.stringify(event), runId)
   }
 
   events(runId: number): AgentEvent[] {
@@ -116,11 +117,11 @@ export class RunStore {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE run_id = ? AND status = 'queued'").get(runId) as { n: number }).n
   }
 
-  finish(id: number, outcome: SessionOutcome): RunSummary {
+  /** Records how a run ended. Does nothing if the run was deleted meanwhile (with its Forge chat). */
+  finish(id: number, outcome: SessionOutcome): void {
     this.db
       .prepare("UPDATE runs SET ended_at = datetime('now'), result = ?, session_id = COALESCE(?, session_id), tokens_in = ?, tokens_out = ?, tokens_cached = ?, cost_usd = ? WHERE id = ?")
       .run(outcome.state, outcome.sessionId, outcome.usage?.input ?? null, outcome.usage?.output ?? null, outcome.usage?.cached ?? null, outcome.costUsd, id)
-    return this.get(id)
   }
 
   /** Runs left "running" by a previous app session can't be resumed: mark them stopped. */

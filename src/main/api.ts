@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import type { EregionApi, EregionEvent, VariablePreview } from '@shared/api'
 import type { Environment } from '@shared/environment'
-import { branchName, type ProjectFile, type Variable } from '@shared/model'
+import { branchName, type Project, type ProjectFile, type Variable } from '@shared/model'
 import { nextFreeSlot } from '@shared/slots'
 import { resolveVariables } from '@shared/variables'
 import type { Db } from './db'
@@ -34,6 +34,7 @@ import { combineRules } from '@shared/rules'
 import { AgentsInfo } from './agentsInfo'
 import { RulesStore } from './rules'
 import { Tooling } from './tooling'
+import { Forge } from './forge'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -135,6 +136,19 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   const agentsInfo = new AgentsInfo(db, projects)
   const github = options.github ?? new GhCli()
   const rules = new RulesStore(db, projects, github)
+  const houseRules = (project: Project): string => combineRules(getSetting(db, 'rules.house', ''), getSetting(db, `rules.project.${project.id}`, ''), project.name)
+  const forge = new Forge({
+    db,
+    projects,
+    crew,
+    runs,
+    agents,
+    workspaces,
+    userName: () => getSetting(db, 'user.name', host.userName ?? 'you'),
+    houseRules,
+    tooling: (project, repoPaths) => tooling.forRun(project, repoPaths, {}),
+    changed: (projectId) => host.emit({ type: 'forge-changed', projectId })
+  })
   const prStage = new PrStage(engine, prs, github)
   const ci = new CiWatcher(engine, prs, github)
   engine.recover()
@@ -330,6 +344,11 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     setMcpServerAllowed: async (key, allowed) => tooling.setServerAllowed(key, allowed),
     addMcpServer: async (name, spec) => tooling.addServer(name, spec),
     removeMcpServer: async (name) => tooling.removeServer(name),
+    listChats: async (projectId) => forge.list(projectId),
+    createChat: async (projectId, chat) => forge.create(projectId, chat),
+    updateChat: async (chatId, patch) => forge.update(chatId, patch),
+    deleteChat: (chatId) => forge.remove(chatId),
+    sendToChat: (chatId, text, dictated) => forge.send(chatId, text, dictated),
 
     // After the tickets API: in a project linked to Linear, createTicket makes a Linear issue.
     ...integrationsApi

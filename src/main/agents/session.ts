@@ -43,6 +43,12 @@ export interface AgentStartOptions {
   allowedTools?: string[]
   /** Per-run settings JSON, such as skillOverrides. */
   settings?: string
+  /** Appended to Claude Code's system prompt, so the first message can be yours (the Forge). */
+  systemPrompt?: string
+  /** Carries on an earlier session, such as a Forge chat after a restart. */
+  resume?: string
+  /** Shows the first prompt in the conversation as your message. */
+  recordPrompt?: boolean
   /** Keep the session open after a turn, waiting for the next message (Plan, the Forge). */
   conversational?: boolean
   /** Replaces the CLI command, for tests. */
@@ -64,6 +70,7 @@ export function claudeArgs(options: AgentStartOptions): string[] {
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--model', options.model, '--permission-prompts', 'none']
   if (options.profile === 'chat') {
     args.push('--permission-mode', 'plan')
+    if (options.allowedTools?.length) args.push('--allowedTools', ...options.allowedTools)
     if (options.deniedTools?.length) args.push('--disallowedTools', ...options.deniedTools)
   } else {
     args.push('--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'TodoWrite', ...(options.allowedTools ?? []), '--disallowedTools', ...BLOCKED_COMMANDS, ...(options.deniedTools ?? []))
@@ -71,6 +78,8 @@ export function claudeArgs(options: AgentStartOptions): string[] {
   for (const dir of options.addDirs ?? []) args.push('--add-dir', dir)
   if (options.mcpConfig) args.push('--mcp-config', options.mcpConfig, '--strict-mcp-config')
   if (options.settings) args.push('--settings', options.settings)
+  if (options.systemPrompt) args.push('--append-system-prompt', options.systemPrompt)
+  if (options.resume) args.push('--resume', options.resume)
   return args
 }
 
@@ -120,8 +129,12 @@ export class AgentSession extends EventEmitter {
     if (this.options.adapter === 'claude-code') {
       this.spawn(this.options.command ?? ['claude', ...claudeArgs(this.options)])
       this.child?.stdin?.write(userLine(this.options.prompt))
+      if (this.options.recordPrompt) this.recordPromptSoon()
     } else {
-      this.spawn(this.options.command ?? ['cursor-agent', ...cursorArgs(this.options, this.options.prompt, null)])
+      // Cursor has no system prompt flag, so the Forge's instructions lead the first message.
+      const message = this.options.systemPrompt ? `${this.options.systemPrompt}\n\n${this.options.prompt}` : this.options.prompt
+      this.spawn(this.options.command ?? ['cursor-agent', ...cursorArgs(this.options, message, this.options.resume ?? null)])
+      if (this.options.recordPrompt) this.recordPromptSoon()
       this.child?.stdin?.end()
     }
     return this
@@ -199,6 +212,11 @@ export class AgentSession extends EventEmitter {
   private record(event: AgentEvent): void {
     this.events.push(event)
     this.emit('event', event)
+  }
+
+  /** Shows the first prompt as your message, once whoever started the session is listening. */
+  private recordPromptSoon(): void {
+    queueMicrotask(() => this.record({ kind: 'user', text: this.options.prompt, dictated: false, delivery: 'now' }))
   }
 
   private setState(state: SessionState): void {

@@ -6,6 +6,7 @@ import { NewProject } from './screens/NewProject'
 import { Projects } from './screens/Projects'
 import { Board } from './screens/Board'
 import { Costs } from './screens/Costs'
+import { Forge } from './screens/Forge'
 import { Settings } from './screens/settings/Settings'
 import { ProjectSetup } from './screens/setup/ProjectSetup'
 import { TicketScreen } from './screens/ticket/TicketScreen'
@@ -23,7 +24,7 @@ function readCurrentProject(): number | null {
 }
 
 function projectIdOf(route: Route): number | null {
-  return route.name === 'setup' || route.name === 'board' || route.name === 'ticket' || route.name === 'costs' ? route.projectId : null
+  return route.name === 'setup' || route.name === 'board' || route.name === 'ticket' || route.name === 'costs' || route.name === 'forge' ? route.projectId : null
 }
 
 function activeNav(route: Route): NavId | null {
@@ -40,6 +41,8 @@ function activeNav(route: Route): NavId | null {
       return 'settings'
     case 'costs':
       return 'costs'
+    case 'forge':
+      return 'forge'
     default:
       return null
   }
@@ -99,6 +102,9 @@ export function App(): ReactElement {
       break
     case 'costs':
       screen = <Costs key={route.projectId} projectId={route.projectId} />
+      break
+    case 'forge':
+      screen = <Forge key={route.projectId} projectId={route.projectId} chatId={route.chatId} />
       break
     case 'welcome':
       return <Welcome onSetUpProject={() => navigate({ name: 'new-project' })} />

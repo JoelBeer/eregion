@@ -19,6 +19,9 @@ export interface StartRun {
   allowedTools?: string[]
   deniedTools?: string[]
   settings?: string
+  systemPrompt?: string
+  resume?: string
+  recordPrompt?: boolean
   conversational?: boolean
   /** Replaces the agent CLI, for tests and the web preview. */
   command?: string[]
@@ -55,7 +58,8 @@ export class AgentManager {
   ) {}
 
   start(request: StartRun): { runId: number; done: Promise<SessionOutcome> } {
-    const run = this.runs.create({ ticketId: request.ticketId, chatId: request.chatId, stage: request.stage, crewId: request.crew.id, adapter: request.crew.adapter, model: request.crew.model, loop: request.loop })
+    // A Forge Visitor has no crew record (id 0).
+    const run = this.runs.create({ ticketId: request.ticketId, chatId: request.chatId, stage: request.stage, crewId: request.crew.id > 0 ? request.crew.id : null, adapter: request.crew.adapter, model: request.crew.model, loop: request.loop })
     const options: AgentStartOptions = {
       adapter: request.crew.adapter,
       runner: request.runner,
@@ -68,6 +72,9 @@ export class AgentManager {
       allowedTools: request.allowedTools,
       deniedTools: request.deniedTools,
       settings: request.settings,
+      systemPrompt: request.systemPrompt,
+      resume: request.resume,
+      recordPrompt: request.recordPrompt,
       conversational: request.conversational,
       command: request.command ?? this.commandFor?.(request.crew)
     }
