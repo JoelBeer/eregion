@@ -6,6 +6,7 @@
 // appears in a turn's message runs: it writes files ({outputs} is the prompt's outputs folder,
 // {cwd} the working directory), then replies. Rules with "once": true are used up when they run.
 // [{ "when": "Stage: Plan", "write": { "{outputs}/plan.md": "..." }, "reply": "...", "once": true }]
+// A rule with "limit": true writes its files, then ends the turn on a usage-limit notice.
 //
 // Without a script, a message controls the turn:
 //   "write <file> <content>"  writes a file, then replies
@@ -41,6 +42,7 @@ async function scripted(text) {
   if (rule.once) rule.used = true
   if (rule.delayMs) await sleep(rule.delayMs)
   Object.entries(rule.write ?? {}).forEach(([path, content], i) => writeFile(path, content, i))
+  if (rule.limit) return { limit: true }
   return rule.reply ?? 'Done.'
 }
 
@@ -49,6 +51,13 @@ async function turn(text) {
   let reply
   if (rules) {
     reply = await scripted(text)
+    if (reply?.limit) {
+      // What Claude Code prints when the account's usage runs out mid-session.
+      const message = "You've hit your session limit · resets 3:10am (Europe/London)"
+      out({ type: 'assistant', message: { content: [{ type: 'text', text: message }] } })
+      out({ type: 'result', subtype: 'success', is_error: true, result: message, total_cost_usd: cost, num_turns: 1, usage })
+      return
+    }
   } else {
     if (text === 'slow') await sleep(2000)
     if (text.startsWith('write ')) {

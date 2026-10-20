@@ -23,6 +23,9 @@ interface PrRow {
   rerun_sha: string | null
   pushed_sha: string | null
   head_sha: string | null
+  checks_scope: 'required' | 'all' | null
+  checked_at: string | null
+  merged_at: string | null
   attempts: number
 }
 
@@ -54,6 +57,9 @@ function toPr(row: PrRow): StoredPr {
     autofix: row.autofix === 1,
     autofixPausedReason: row.autofix_paused_reason,
     checks: JSON.parse(row.checks) as PrCheck[],
+    checksScope: row.checks_scope,
+    checkedAt: row.checked_at,
+    mergedAt: row.merged_at,
     attempts: row.attempts,
     headSha: row.head_sha,
     rerunSha: row.rerun_sha,
@@ -83,18 +89,18 @@ export class PrStore {
   save(ticketId: number, repoId: number, info: PrInfo, autofix: boolean): StoredPr {
     this.db
       .prepare(
-        `INSERT INTO pull_requests (ticket_id, repo_id, number, url, title, draft, state, base, branch, additions, deletions, changed_files, head_sha, autofix, pushed_sha)
-         VALUES (@ticketId, @repoId, @number, @url, @title, @draft, @state, @base, @branch, @additions, @deletions, @changedFiles, @headSha, @autofix, @headSha)
+        `INSERT INTO pull_requests (ticket_id, repo_id, number, url, title, draft, state, base, branch, additions, deletions, changed_files, head_sha, autofix, pushed_sha, merged_at)
+         VALUES (@ticketId, @repoId, @number, @url, @title, @draft, @state, @base, @branch, @additions, @deletions, @changedFiles, @headSha, @autofix, @headSha, @mergedAt)
          ON CONFLICT (ticket_id, repo_id) DO UPDATE SET number = excluded.number, url = excluded.url, title = excluded.title, draft = excluded.draft,
            state = excluded.state, base = excluded.base, branch = excluded.branch, additions = excluded.additions, deletions = excluded.deletions,
-           changed_files = excluded.changed_files, head_sha = excluded.head_sha`
+           changed_files = excluded.changed_files, head_sha = excluded.head_sha, merged_at = excluded.merged_at`
       )
       .run({ ticketId, repoId, ...info, draft: info.draft ? 1 : 0, autofix: autofix ? 1 : 0 })
     return this.forTicket(ticketId).find((pr) => pr.repoId === repoId) as StoredPr
   }
 
-  update(id: number, patch: Partial<{ checks: PrCheck[]; rerunSha: string | null; pushedSha: string | null; autofix: boolean; autofixPausedReason: string | null }>): StoredPr {
-    const columns: Record<string, string> = { checks: 'checks', rerunSha: 'rerun_sha', pushedSha: 'pushed_sha', autofix: 'autofix', autofixPausedReason: 'autofix_paused_reason' }
+  update(id: number, patch: Partial<{ checks: PrCheck[]; checksScope: 'required' | 'all'; checkedAt: string; rerunSha: string | null; pushedSha: string | null; autofix: boolean; autofixPausedReason: string | null }>): StoredPr {
+    const columns: Record<string, string> = { checks: 'checks', checksScope: 'checks_scope', checkedAt: 'checked_at', rerunSha: 'rerun_sha', pushedSha: 'pushed_sha', autofix: 'autofix', autofixPausedReason: 'autofix_paused_reason' }
     for (const [key, value] of Object.entries(patch)) {
       const stored = key === 'checks' ? JSON.stringify(value) : key === 'autofix' ? (value ? 1 : 0) : value
       this.db.prepare(`UPDATE pull_requests SET ${columns[key]} = ? WHERE id = ?`).run(stored, id)

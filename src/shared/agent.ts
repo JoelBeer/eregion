@@ -33,6 +33,20 @@ export function firstSentence(text: string): string {
   return sentence.length > 80 ? `${sentence.slice(0, 79).trimEnd()}…` : sentence
 }
 
+/**
+ * The agent's own message when it stopped because the account's usage limit ran out, such as
+ * "You've hit your session limit · resets 3:10am"; null for any other message.
+ */
+export function usageLimitMessage(text: string | null | undefined): string | null {
+  if (!text) return null
+  return /hit your (session|usage|weekly|daily|monthly) limit|usage limit (reached|exceeded)|rate limit (reached|exceeded)|limit reached.*resets/i.test(text) ? text.trim() : null
+}
+
+/** What a ticket shows when a run stopped on the usage limit. */
+export function usageLimitDetail(message: string): string {
+  return `Claude's usage limit was reached ("${message}"). Start again once it resets.`
+}
+
 /** One line describing a tool call, the way the session panel shows it. */
 export function summariseTool(name: string, input: Record<string, unknown>): string {
   const str = (key: string): string => (typeof input[key] === 'string' ? (input[key] as string) : '')

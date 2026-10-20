@@ -7,6 +7,7 @@ import { createBackend, type Backend } from '../api'
 import { openDatabase } from '../db'
 import { FakeGitHub } from '../testing/fake-github'
 import { git, makeRepo } from '../testing/git'
+import { checkChanges } from './ciWatch'
 
 const FAKE = ['node', resolve('src/main/testing/fake-claude.mjs')]
 
@@ -125,9 +126,14 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
 
     // Merged on GitHub: teardown, and the ticket is done.
     github.prs[0].state = 'merged'
+    github.prs[0].mergedAt = '2026-10-20T08:05:34Z'
     await backend.ci.check(ticket.id)
     current = await until(backend, ticket.id, (item) => item.stage === 'done')
     expect(current).toMatchObject({ status: 'done', slot: null })
+    const [merged] = await api.getTicketPrs(ticket.id)
+    expect(merged).toMatchObject({ state: 'merged', mergedAt: '2026-10-20T08:05:34Z', checksScope: 'all' })
+    expect(merged.checkedAt).toBeTruthy()
+    expect(backend.tickets.logEntries(ticket.id).map((entry) => entry.message)).toEqual(expect.arrayContaining(['app #1: tests failed', 'app #1: tests passed']))
     await backend.shutdown()
   }, 120_000)
 
@@ -175,4 +181,13 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     expect(stopped.stopDetail).toBe('tests on app #1: The CI database secret is missing.')
     await backend.shutdown()
   }, 120_000)
+})
+
+describe('checkChanges', () => {
+  const check = (name: string, bucket: 'pass' | 'fail' | 'pending') => ({ name, workflow: 'CI', bucket, link: '' })
+  it('says which checks changed state, and nothing when none did', () => {
+    expect(checkChanges([], [check('lint', 'pending'), check('tests', 'pending')])).toBe('lint started, tests started')
+    expect(checkChanges([check('lint', 'pending'), check('tests', 'pending')], [check('lint', 'pass'), check('tests', 'fail')])).toBe('lint passed, tests failed')
+    expect(checkChanges([check('lint', 'pass')], [check('lint', 'pass')])).toBeNull()
+  })
 })

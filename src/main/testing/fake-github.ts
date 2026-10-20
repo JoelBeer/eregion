@@ -1,5 +1,5 @@
 import type { PrCheck } from '@shared/integrations'
-import type { GitHub, PrInfo } from '../integrations/github'
+import type { CheckList, GitHub, PrInfo } from '../integrations/github'
 import type { Runner } from '../runner/types'
 
 interface FakePr extends PrInfo {
@@ -31,7 +31,7 @@ export class FakeGitHub implements GitHub {
   async createPr(runner: Runner, cwd: string, options: { base: string; branch: string; title: string; body: string; draft: boolean }): Promise<string> {
     const number = this.prs.length + 1
     const url = `https://github.com/me/app/pull/${number}`
-    this.prs.push({ id: `PR_${number}`, number, url, title: options.title, draft: options.draft, state: 'open', base: options.base, branch: options.branch, headSha: await this.head(runner, cwd, options.branch), additions: 1, deletions: 0, changedFiles: 1, body: options.body, cwd })
+    this.prs.push({ id: `PR_${number}`, number, url, title: options.title, draft: options.draft, state: 'open', base: options.base, branch: options.branch, headSha: await this.head(runner, cwd, options.branch), additions: 1, deletions: 0, changedFiles: 1, mergedAt: null, body: options.body, cwd })
     this.calls.push(`create ${options.branch}${options.draft ? ' draft' : ''}`)
     return url
   }
@@ -53,10 +53,10 @@ export class FakeGitHub implements GitHub {
     this.calls.push(`ready ${url}`)
   }
 
-  async checks(runner: Runner, _cwd: string, url: string): Promise<PrCheck[]> {
+  async checks(runner: Runner, _cwd: string, url: string): Promise<CheckList> {
     const pr = this.find(url)
     pr.headSha = await this.head(runner, pr.cwd, pr.branch)
-    return this.checkResult(pr)
+    return { checks: this.checkResult(pr), scope: 'all' }
   }
 
   async failedLog(): Promise<string> {

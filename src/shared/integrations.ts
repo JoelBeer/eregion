@@ -94,5 +94,9 @@ export interface PullRequest {
   autofixPausedReason: string | null
   /** The last checks Eregion saw, for the Watch CI screen. */
   checks: PrCheck[]
+  /** Which checks those are: the required ones, or all of them when the repo requires none. */
+  checksScope: 'required' | 'all' | null
+  checkedAt: string | null
+  mergedAt: string | null
   attempts: number
 }

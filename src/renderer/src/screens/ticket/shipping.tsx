@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import type { CheckBucket, PullRequest } from '@shared/integrations'
 import { DEFAULT_CI, type StageConfig } from '@shared/pipeline'
+import type { RunSummary } from '@shared/runs'
 import type { Ticket } from '@shared/tickets'
 import { Markdown } from '../../components/Markdown'
 import { Chip, StatusPill, Switch, type PillStatus } from '../../components/ui'
@@ -112,6 +113,35 @@ const CHECK_MARK: Record<CheckBucket, { mark: string; color: string; label: stri
   cancel: { mark: '–', color: 'var(--ink-600)', label: 'cancelled' }
 }
 
+/** A PR's last-seen checks, with how many passed and which checks they are. */
+export function ChecksList({ pr, requiredOnly }: { pr: PullRequest; requiredOnly: boolean }): ReactElement {
+  const passed = pr.checks.filter((check) => check.bucket === 'pass' || check.bucket === 'skipping').length
+  const scope = pr.checksScope === 'all' && requiredOnly ? `all checks: ${pr.repo} has no required ones` : pr.checksScope === 'required' ? 'required checks' : 'all checks'
+  if (pr.checks.length === 0) return <span className="muted">{pr.checkedAt ? 'No checks reported yet.' : 'Not checked yet.'}</span>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {pr.checks.map((item) => (
+          <li key={`${item.workflow}-${item.name}`} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14 }}>
+            <span aria-label={CHECK_MARK[item.bucket].label} style={{ color: CHECK_MARK[item.bucket].color, width: 14, textAlign: 'center' }}>
+              {CHECK_MARK[item.bucket].mark}
+            </span>
+            <span>{item.workflow ? `${item.workflow} / ${item.name}` : item.name}</span>
+            {item.link && (
+              <button type="button" className="er-btn er-btn-sm er-btn-ghost" style={{ padding: '0 6px', minHeight: 0 }} onClick={() => openLink(item.link)}>
+                Details
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <span className="muted" style={{ fontSize: 13 }}>
+        {passed} of {pr.checks.length} passed · {scope}
+      </span>
+    </div>
+  )
+}
+
 /** Watch CI: each PR's checks, autofix, attempts used and merge state. */
 export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullRequest[]; stage: StageConfig }): ReactElement {
   const settings = { ...DEFAULT_CI, ...stage.ci }
@@ -119,12 +149,14 @@ export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullReque
   const check = useAction(() => window.eregion.checkCiNow(ticket.id))
   const on = prs.some((pr) => pr.autofix)
   const paused = prs.find((pr) => pr.autofixPausedReason)?.autofixPausedReason
+  const lastChecked = prs.map((pr) => pr.checkedAt).filter(Boolean).sort().at(-1) ?? null
   return (
     <section className="panel" aria-label="Watch CI">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 17 }}>Watch CI</h2>
         <span className="muted" style={{ fontSize: 13 }}>
-          Checking every {settings.intervalSec} seconds{settings.includeOptionalChecks ? '' : ', required checks only'}
+          Checking every {settings.intervalSec} seconds
+          {lastChecked ? ` · last checked ${new Date(lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ' · not checked yet'}
         </span>
         <div style={{ flex: 1 }} />
         <button type="button" className="er-btn er-btn-sm" disabled={check.pending || ticket.currentRunId !== null} onClick={() => void check.run()}>
@@ -134,24 +166,7 @@ export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullReque
       {prs.map((pr) => (
         <div key={pr.id} style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--divider-100)', paddingTop: 10 }}>
           <PrRow pr={pr} />
-          {pr.state === 'open' && pr.checks.length === 0 && <span className="muted">No checks reported yet.</span>}
-          {pr.state === 'open' && (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {pr.checks.map((item) => (
-                <li key={`${item.workflow}-${item.name}`} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14 }}>
-                  <span aria-label={CHECK_MARK[item.bucket].label} style={{ color: CHECK_MARK[item.bucket].color, width: 14, textAlign: 'center' }}>
-                    {CHECK_MARK[item.bucket].mark}
-                  </span>
-                  <span>{item.workflow ? `${item.workflow} / ${item.name}` : item.name}</span>
-                  {item.link && (
-                    <button type="button" className="er-btn er-btn-sm er-btn-ghost" style={{ padding: '0 6px', minHeight: 0 }} onClick={() => openLink(item.link)}>
-                      Details
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          {pr.state === 'open' && <ChecksList pr={pr} requiredOnly={!settings.includeOptionalChecks} />}
           {pr.state === 'open' && (
             <span className="muted" style={{ fontSize: 13 }}>
               Fix attempts used: {pr.attempts} of {settings.maxAttempts}
@@ -167,6 +182,44 @@ export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullReque
         </span>
       </div>
       {(autofix.error || check.error) && <span className="error-text">{autofix.error ?? check.error}</span>}
+    </section>
+  )
+}
+
+/** What a finished ticket shows first: what merged, its last checks, and what it cost. */
+export function DoneSummary({ prs, runs }: { prs: PullRequest[]; runs: RunSummary[] }): ReactElement {
+  const mergedAt = prs
+    .map((pr) => pr.mergedAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1)
+  const cost = runs.reduce((sum, run) => sum + (run.costUsd ?? 0), 0)
+  const tokens = runs.reduce((sum, run) => sum + (run.tokensIn ?? 0) + (run.tokensOut ?? 0) + (run.tokensCached ?? 0), 0)
+  const merged = prs.length > 0 && prs.every((pr) => pr.state === 'merged')
+  return (
+    <section className="panel" aria-label="Done">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: 17 }}>Done</h2>
+        <StatusPill status="passed">{merged ? (prs.length === 1 ? 'Merged' : 'All merged') : 'Done'}</StatusPill>
+        {mergedAt && (
+          <span className="muted" style={{ fontSize: 13 }}>
+            {new Date(mergedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+          </span>
+        )}
+      </div>
+      {prs.map((pr) => (
+        <div key={pr.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <PrRow pr={pr} />
+          {pr.checks.length > 0 && <ChecksList pr={pr} requiredOnly={false} />}
+        </div>
+      ))}
+      <span>The environment was torn down and its slot freed. The branch is kept.</span>
+      <span className="muted" style={{ fontSize: 13 }}>
+        {runs.length} {runs.length === 1 ? 'run' : 'runs'}
+        {cost > 0 ? ` · $${cost.toFixed(2)} of Claude usage` : ''}
+        {tokens > 0 ? ` · ${Math.round(tokens / 1000)}k tokens` : ''}
+        {runs.length > 0 ? ' · open a run below to read its conversation' : ''}
+      </span>
     </section>
   )
 }

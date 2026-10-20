@@ -210,5 +210,10 @@ export const migrations: string[] = [
   ALTER TABLE pull_requests ADD COLUMN rerun_sha TEXT;
   ALTER TABLE pull_requests ADD COLUMN pushed_sha TEXT;
   ALTER TABLE ci_attempts ADD COLUMN head_sha TEXT;
+  `,
+  `
+  ALTER TABLE pull_requests ADD COLUMN checks_scope TEXT;
+  ALTER TABLE pull_requests ADD COLUMN checked_at TEXT;
+  ALTER TABLE pull_requests ADD COLUMN merged_at TEXT;
   `
 ]

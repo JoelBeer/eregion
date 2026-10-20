@@ -10,6 +10,15 @@ import type { PrStore, StoredPr } from './prs'
 
 const TICK_MS = 15_000
 
+const BUCKET_WORDS: Record<PrCheck['bucket'], string> = { pass: 'passed', fail: 'failed', pending: 'started', skipping: 'skipped', cancel: 'was cancelled' }
+
+/** The checks that changed state since the last look, as "lint passed, tests failed"; null when none did. */
+export function checkChanges(before: PrCheck[], after: PrCheck[]): string | null {
+  const previous = new Map(before.map((check) => [`${check.workflow}/${check.name}`, check.bucket]))
+  const changed = after.filter((check) => previous.get(`${check.workflow}/${check.name}`) !== check.bucket)
+  return changed.length > 0 ? changed.map((check) => `${check.name} ${BUCKET_WORDS[check.bucket]}`).join(', ') : null
+}
+
 /**
  * Watch CI: polls each ticket's PRs with gh, re-runs a failed check once in case it's flaky, then
  * wakes the fixer in the ticket's worktree, commits and pushes its fix. Finishes the ticket when
@@ -99,8 +108,13 @@ export class CiWatcher {
             this.prs.update(saved.id, { autofixPausedReason: 'Someone else pushed to the branch' })
             this.deps.tickets.log(ticketId, 'github', `Someone else pushed to ${pr.repo} #${pr.number}; autofix is paused for it`)
           }
-          const checks = await this.github.checks(runner, repo.path, pr.url, !settings.includeOptionalChecks)
-          this.prs.update(saved.id, { checks })
+          const { checks, scope } = await this.github.checks(runner, repo.path, pr.url, !settings.includeOptionalChecks)
+          if (scope === 'all' && !settings.includeOptionalChecks && saved.checksScope !== 'all') {
+            this.deps.tickets.log(ticketId, 'github', `${pr.repo} has no required checks, so Eregion watches all of ${pr.repo} #${pr.number}'s checks`)
+          }
+          const changes = checkChanges(saved.checks, checks)
+          if (changes) this.deps.tickets.log(ticketId, 'github', `${pr.repo} #${pr.number}: ${changes}`)
+          this.prs.update(saved.id, { checks, checksScope: scope, checkedAt: new Date(this.now()).toISOString() })
         }
         all = this.prs.forTicket(ticketId)
         if (all.every((pr) => pr.state === 'merged')) {

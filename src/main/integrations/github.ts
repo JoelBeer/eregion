@@ -1,6 +1,12 @@
 import type { CheckBucket, PrCheck } from '@shared/integrations'
 import type { Runner } from '../runner/types'
 
+/** A PR's checks, and whether they are the required ones or all of them. */
+export interface CheckList {
+  checks: PrCheck[]
+  scope: 'required' | 'all'
+}
+
 export interface PrInfo {
   id: string
   number: number
@@ -14,6 +20,7 @@ export interface PrInfo {
   additions: number
   deletions: number
   changedFiles: number
+  mergedAt: string | null
 }
 
 /**
@@ -25,7 +32,7 @@ export interface GitHub {
   viewPr(runner: Runner, cwd: string, url: string): Promise<PrInfo>
   setPrBody(runner: Runner, cwd: string, url: string, body: string): Promise<void>
   markReady(runner: Runner, cwd: string, url: string): Promise<void>
-  checks(runner: Runner, cwd: string, url: string, requiredOnly: boolean): Promise<PrCheck[]>
+  checks(runner: Runner, cwd: string, url: string, requiredOnly: boolean): Promise<CheckList>
   failedLog(runner: Runner, cwd: string, check: PrCheck): Promise<string>
   rerunFailed(runner: Runner, cwd: string, check: PrCheck): Promise<void>
   comment(runner: Runner, cwd: string, url: string, body: string): Promise<void>
@@ -89,8 +96,8 @@ export class GhCli implements GitHub {
   }
 
   async viewPr(runner: Runner, cwd: string, url: string): Promise<PrInfo> {
-    const out = await this.gh(runner, cwd, ['pr', 'view', url, '--json', 'id,number,url,title,isDraft,state,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles'])
-    const pr = JSON.parse(out) as { id: string; number: number; url: string; title: string; isDraft: boolean; state: string; baseRefName: string; headRefName: string; headRefOid: string; additions: number; deletions: number; changedFiles: number }
+    const out = await this.gh(runner, cwd, ['pr', 'view', url, '--json', 'id,number,url,title,isDraft,state,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles,mergedAt'])
+    const pr = JSON.parse(out) as { id: string; number: number; url: string; title: string; isDraft: boolean; state: string; baseRefName: string; headRefName: string; headRefOid: string; additions: number; deletions: number; changedFiles: number; mergedAt: string | null }
     return {
       id: pr.id,
       number: pr.number,
@@ -103,7 +110,8 @@ export class GhCli implements GitHub {
       headSha: pr.headRefOid,
       additions: pr.additions,
       deletions: pr.deletions,
-      changedFiles: pr.changedFiles
+      changedFiles: pr.changedFiles,
+      mergedAt: pr.mergedAt || null
     }
   }
 
@@ -120,14 +128,26 @@ export class GhCli implements GitHub {
     await this.gh(runner, cwd, ['api', 'graphql', '-f', `query=${query}`, '-f', `id=${pr.id}`])
   }
 
-  async checks(runner: Runner, cwd: string, url: string, requiredOnly: boolean): Promise<PrCheck[]> {
-    const args = ['pr', 'checks', url, '--json', 'name,workflow,bucket,link']
-    if (requiredOnly) args.push('--required')
-    // gh exits non-zero while checks fail or are pending, and prints the JSON anyway.
-    const result = await runner.exec(['gh', ...args], { cwd, timeoutMs: 60_000 })
-    if (result.stdout.trim().startsWith('[')) return parseChecks(result.stdout)
-    if (/no (required )?checks reported/i.test(result.stderr)) return []
-    throw new Error(result.stderr.trim() || 'gh pr checks failed')
+  /**
+   * The PR's checks. Asked for required checks only, it falls back to all of them when the repo
+   * requires none (no branch protection), since otherwise there would be nothing to watch.
+   */
+  async checks(runner: Runner, cwd: string, url: string, requiredOnly: boolean): Promise<CheckList> {
+    const read = async (required: boolean): Promise<PrCheck[] | 'none'> => {
+      const args = ['pr', 'checks', url, '--json', 'name,workflow,bucket,link']
+      if (required) args.push('--required')
+      // gh exits non-zero while checks fail or are pending, and prints the JSON anyway.
+      const result = await runner.exec(['gh', ...args], { cwd, timeoutMs: 60_000 })
+      if (result.stdout.trim().startsWith('[')) return parseChecks(result.stdout)
+      if (/no (required )?checks reported/i.test(result.stderr)) return 'none'
+      throw new Error(result.stderr.trim() || 'gh pr checks failed')
+    }
+    if (requiredOnly) {
+      const required = await read(true)
+      if (required !== 'none') return { checks: required, scope: 'required' }
+    }
+    const all = await read(false)
+    return { checks: all === 'none' ? [] : all, scope: 'all' }
   }
 
   /**

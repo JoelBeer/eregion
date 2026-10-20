@@ -206,6 +206,34 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
     expect(workspaces.get(`ticket:${ticket.id}`)?.phase).toBe('ready')
   }, 60_000)
 
+  it('stops with the usage limit, without asking for a fix, when the builder runs out before writing its notes', async () => {
+    const { engine, tickets, ticket, runs } = await setup([
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Build', limit: true }
+    ])
+    await engine.start(ticket.id)
+    await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    await engine.approvePlan(ticket.id)
+    const stopped = await until(tickets, ticket.id, (item) => item.stopReason !== null)
+    expect(stopped).toMatchObject({ stage: 'build', stopReason: 'stuck' })
+    expect(stopped.stopDetail).toBe(`Claude's usage limit was reached ("You've hit your session limit · resets 3:10am (Europe/London)"). Start again once it resets.`)
+    const build = runs.forTicket(ticket.id).at(-1)
+    expect(build?.endNote).toContain('session limit')
+    expect(runs.events(build?.id as number).some((event) => event.kind === 'user')).toBe(false)
+  }, 60_000)
+
+  it('carries on when the usage limit hits after the stage wrote everything it needed', async () => {
+    const { engine, tickets, ticket } = await setup([
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Build', write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, limit: true },
+      { when: 'Stage: Review', write: { '{outputs}/review.json': passedReview.replace('"loop":2', '"loop":1') }, reply: 'Pass.' }
+    ])
+    await engine.start(ticket.id)
+    await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    await engine.approvePlan(ticket.id)
+    expect((await until(tickets, ticket.id, (item) => item.waitingFor === 'manual-review' || item.stopReason !== null)).stopReason).toBeNull()
+  }, 60_000)
+
   it('marks running tickets as stuck after a restart', async () => {
     const { engine, tickets, ticket } = await setup([])
     tickets.update(ticket.id, { status: 'running', stage: 'build' })

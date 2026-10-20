@@ -12,6 +12,8 @@ export interface RunSummary {
   sessionId: string | null
   startedAt: string
   endedAt: string | null
+  /** The agent's last message when the run ended badly, such as a usage-limit notice. */
+  endNote: string | null
   result: 'running' | 'done' | 'failed' | 'stopped'
   tokensIn: number | null
   tokensOut: number | null

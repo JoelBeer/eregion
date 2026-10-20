@@ -1,3 +1,4 @@
+import { usageLimitDetail, usageLimitMessage } from '@shared/agent'
 import type { Environment } from '@shared/environment'
 import { branchName, type Project, type Repo } from '@shared/model'
 import { parseBuildNotes, parseFixes, parsePlan, parseReview, planApprovalBlockers, type ParsedPlan } from '@shared/outputs'
@@ -251,7 +252,9 @@ export class PipelineEngine {
         const current = this.deps.tickets.get(ticket.id)
         // The engine clears currentRunId before ending a run on purpose; anything else is a stop or a crash.
         if (current.currentRunId !== runId) return
-        const detail = outcome.state === 'stopped' ? 'You stopped the run. Start it again when you are ready.' : `The agent stopped: ${outcome.error ?? 'no reason given'}`
+        const limit = usageLimitMessage(outcome.error)
+        const detail =
+          outcome.state === 'stopped' ? 'You stopped the run. Start it again when you are ready.' : limit ? usageLimitDetail(limit) : `The agent stopped: ${outcome.error ?? 'no reason given'}`
         this.stop(current, 'stuck', detail)
       })
     )
@@ -266,8 +269,22 @@ export class PipelineEngine {
     return updated
   }
 
-  /** Asks for a fixed output file once; returns false when it already asked and the file is still wrong. */
+  /** The usage-limit message the run's last turn ended on, if it ran out of usage. */
+  limitReached(runId: number): string | null {
+    const last = this.deps.agents
+      .view(runId)
+      .events.filter((event) => event.kind === 'result')
+      .at(-1)
+    return last && last.kind === 'result' && !last.ok ? usageLimitMessage(last.text) : null
+  }
+
+  /**
+   * Asks for a fixed output file once; returns false when it already asked and the file is still
+   * wrong. Throws when the agent ran out of usage, since it can't fix anything until that resets.
+   */
   requestFix(runId: number, file: string, problems: string[]): boolean {
+    const limit = this.limitReached(runId)
+    if (limit) throw new Error(usageLimitDetail(limit))
     if (this.fixRequested.has(runId)) return false
     this.fixRequested.add(runId)
     this.deps.agents.send(runId, formatFixMessage(file, problems), 'now')
@@ -403,7 +420,10 @@ export class PipelineEngine {
     const prompt = await this.promptFor(ticket, stage, crew, {
       'workspace.repos': this.repoLines(project, paths, (repo) => `read-only plan checkout of ${base[repo.name]}`)
     })
-    await this.startRun(ticket, stage, { cwd: checkout.path, prompt, profile: 'plan', crew, note }, async (current) => {
+    await this.startRun(ticket, stage, { cwd: checkout.path, prompt, profile: 'plan', crew, note }, async (current, runId) => {
+      // Out of usage, the planner can't answer you: stop and say so rather than wait for a reply.
+      const limit = this.limitReached(runId)
+      if (limit) throw new Error(usageLimitDetail(limit))
       const markdown = await this.readOutput(current, 'plan.md')
       if (markdown === null) {
         this.needsYou(current, 'answers', `${crew.name} is waiting for you`)

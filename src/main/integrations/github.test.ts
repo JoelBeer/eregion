@@ -32,12 +32,25 @@ describe('GhCli', () => {
   it('reads checks even though gh exits non-zero while they fail', async () => {
     const { runner } = fakeRunner(() => ({ code: 1, stdout: '[{"name":"tests","workflow":"CI","bucket":"fail","link":"https://github.com/me/app/actions/runs/55/job/66"}]', stderr: '' }))
     const checks = await new GhCli().checks(runner, '/work/app', 'https://github.com/me/app/pull/12', true)
-    expect(checks).toEqual([{ name: 'tests', workflow: 'CI', bucket: 'fail', link: 'https://github.com/me/app/actions/runs/55/job/66' }])
+    expect(checks).toEqual({ checks: [{ name: 'tests', workflow: 'CI', bucket: 'fail', link: 'https://github.com/me/app/actions/runs/55/job/66' }], scope: 'required' })
   })
 
   it('treats "no checks reported" as no checks', async () => {
     const { runner } = fakeRunner(() => ({ code: 1, stdout: '', stderr: "no checks reported on the 'wm-1' branch" }))
-    expect(await new GhCli().checks(runner, '/w', 'https://github.com/me/app/pull/1', false)).toEqual([])
+    expect(await new GhCli().checks(runner, '/w', 'https://github.com/me/app/pull/1', false)).toEqual({ checks: [], scope: 'all' })
+  })
+
+  it('watches all checks when the repo requires none', async () => {
+    // What Word Magic's PR #2 showed: no branch protection, so --required finds nothing.
+    const { runner, calls } = fakeRunner((argv) =>
+      argv.includes('--required')
+        ? { code: 1, stdout: '', stderr: "no required checks reported on the 'wm-1-add-a-colour-theme' branch" }
+        : { code: 0, stdout: '[{"name":"lint","workflow":"CI","bucket":"pass","link":""},{"name":"tests","workflow":"CI","bucket":"pass","link":""}]', stderr: '' }
+    )
+    const result = await new GhCli().checks(runner, '/w', 'https://github.com/JoelBeer/word-magic/pull/2', true)
+    expect(result.scope).toBe('all')
+    expect(result.checks.map((check) => `${check.name} ${check.bucket}`)).toEqual(['lint pass', 'tests pass'])
+    expect(calls).toHaveLength(2)
   })
 
   it('re-runs only the failed jobs of the check’s workflow run', async () => {

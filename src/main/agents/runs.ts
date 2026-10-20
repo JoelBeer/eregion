@@ -20,6 +20,16 @@ interface RunRow {
   tokens_out: number | null
   tokens_cached: number | null
   cost_usd: number | null
+  last_result: string | null
+}
+
+/** Each run with its last result event, so a summary can say why a run failed. */
+const SELECT_RUN = "SELECT runs.*, (SELECT payload FROM events e WHERE e.run_id = runs.id AND e.type = 'result' ORDER BY e.id DESC LIMIT 1) AS last_result FROM runs"
+
+function endNote(payload: string | null): string | null {
+  if (!payload) return null
+  const result = JSON.parse(payload) as { ok?: boolean; text?: string }
+  return result.ok === false ? result.text || null : null
 }
 
 function toSummary(row: RunRow): RunSummary {
@@ -39,7 +49,8 @@ function toSummary(row: RunRow): RunSummary {
     tokensIn: row.tokens_in,
     tokensOut: row.tokens_out,
     tokensCached: row.tokens_cached,
-    costUsd: row.cost_usd
+    costUsd: row.cost_usd,
+    endNote: endNote(row.last_result)
   }
 }
 
@@ -65,17 +76,17 @@ export class RunStore {
   }
 
   get(id: number): RunSummary {
-    const row = this.db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as RunRow | undefined
+    const row = this.db.prepare(`${SELECT_RUN} WHERE id = ?`).get(id) as RunRow | undefined
     if (!row) throw new Error(`Run ${id} not found`)
     return toSummary(row)
   }
 
   forTicket(ticketId: number): RunSummary[] {
-    return (this.db.prepare('SELECT * FROM runs WHERE ticket_id = ? ORDER BY id').all(ticketId) as RunRow[]).map(toSummary)
+    return (this.db.prepare(`${SELECT_RUN} WHERE ticket_id = ? ORDER BY id`).all(ticketId) as RunRow[]).map(toSummary)
   }
 
   forChat(chatId: number): RunSummary[] {
-    return (this.db.prepare('SELECT * FROM runs WHERE chat_id = ? ORDER BY id').all(chatId) as RunRow[]).map(toSummary)
+    return (this.db.prepare(`${SELECT_RUN} WHERE chat_id = ? ORDER BY id`).all(chatId) as RunRow[]).map(toSummary)
   }
 
   setSession(id: number, sessionId: string): void {

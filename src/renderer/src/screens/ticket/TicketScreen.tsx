@@ -1,3 +1,4 @@
+import { usageLimitMessage } from '@shared/agent'
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { StageConfig } from '@shared/pipeline'
 import type { CrewMember, RunSummary } from '@shared/runs'
@@ -9,7 +10,7 @@ import { useAction } from '../../hooks'
 import { href, navigate, type TicketTab } from '../../router'
 import { useCrew } from '../Board'
 import { EnvironmentPanel, PlanPanel, ReviewDecision, Severity, StopBanner } from './panels'
-import { CiPanel, LinearDetails, PrPanel, usePrs } from './shipping'
+import { CiPanel, DoneSummary, LinearDetails, PrPanel, usePrs } from './shipping'
 
 function crewForStage(stage: StageConfig | undefined, crew: CrewMember[]): CrewMember | undefined {
   if (!stage) return undefined
@@ -58,6 +59,11 @@ function useTicket(ticketId: number): { detail: TicketDetail | undefined; output
     }
   }, [ticketId])
   return { detail, outputs, error }
+}
+
+/** How a run ended, in a word or two: a usage limit isn't the agent failing. */
+function runOutcome(run: RunSummary): string {
+  return run.result === 'failed' && usageLimitMessage(run.endNote) ? 'usage limit' : run.result
 }
 
 function runLabel(run: RunSummary, stages: StageConfig[], crew: CrewMember[]): string {
@@ -215,7 +221,7 @@ function LogTab({ detail, crew }: { detail: TicketDetail; crew: CrewMember[] }):
                 <td style={{ padding: '6px 4px' }}>{runLabel(run, detail.stages, crew)}</td>
                 <td className="mono">{run.model}</td>
                 <td>{run.startedAt}</td>
-                <td>{run.result}</td>
+                <td title={run.endNote ?? undefined}>{runOutcome(run)}</td>
                 <td className="mono" style={{ textAlign: 'right' }}>
                   {run.tokensIn !== null ? `${(((run.tokensIn ?? 0) + (run.tokensOut ?? 0) + (run.tokensCached ?? 0)) / 1000).toFixed(0)}k` : ''}
                 </td>
@@ -247,7 +253,8 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
     if (window.confirm('Move this ticket back to the Backlog? Its environment is torn down; its branch is kept.')) await window.eregion.discardTicket(ticketId)
   })
   const ticket = detail?.card.ticket
-  const runId = selectedRun ?? ticket?.currentRunId ?? detail?.runs.at(-1)?.id ?? null
+  // A finished ticket opens on its summary; its runs stay one click away.
+  const runId = selectedRun ?? ticket?.currentRunId ?? (ticket?.stage === 'done' ? null : (detail?.runs.at(-1)?.id ?? null))
   const view = useRun(runId)
   const prs = usePrs(ticketId)
 
@@ -322,16 +329,7 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
         </section>
       )}
       {ticket.stage === 'backlog' && <LinearDetails ticket={ticket} />}
-      {ticket.stage === 'done' && prs.length > 0 && (
-        <section className="panel" aria-label="Shipped">
-          <h2 style={{ fontSize: 17 }}>Shipped</h2>
-          {prs.map((pr) => (
-            <button key={pr.id} type="button" className="er-btn er-btn-sm er-btn-ghost" style={{ alignSelf: 'flex-start' }} onClick={() => void window.eregion.openExternal(pr.url)}>
-              {pr.repo} #{pr.number} · {pr.state === 'merged' ? 'merged' : pr.state}
-            </button>
-          ))}
-        </section>
-      )}
+      {ticket.stage === 'done' && <DoneSummary prs={prs} runs={detail.runs} />}
 
       <StopBanner ticket={ticket} crew={crewForStage(stage, crew)} />
       {ticket.waitingFor === 'slot' && (
@@ -352,7 +350,7 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
 
           {tab === 'conversation' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {detail.runs.length > 1 && (
+              {(detail.runs.length > 1 || (ticket.stage === 'done' && detail.runs.length > 0)) && (
                 <div role="group" aria-label="Runs" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {detail.runs.map((run, index) => {
                     const label = runLabel(run, detail.stages, crew)
@@ -361,18 +359,20 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
                     return (
                       <button key={run.id} type="button" className={`er-btn er-btn-sm${run.id === runId ? ' er-btn-primary' : ''}`} onClick={() => setSelectedRun(run.id)}>
                         {tries > 0 ? `${label} · try ${tries + 1}` : label}
-                        {run.result === 'failed' || run.result === 'stopped' ? ` · ${run.result}` : ''}
+                        {run.result === 'failed' || run.result === 'stopped' ? ` · ${runOutcome(run)}` : ''}
                       </button>
                     )
                   })}
                 </div>
               )}
-              <SessionPanel
-                crew={crew.find((member) => member.id === viewedRun?.crewId) ?? crewForStage(viewedStage, crew)}
-                view={view}
-                stageLabel={`${viewedStage?.name ?? 'Stage'} · ${ticket.key}`}
-                placeholder={<span>Nothing has run yet.</span>}
-              />
+              {(ticket.stage !== 'done' || runId !== null) && (
+                <SessionPanel
+                  crew={crew.find((member) => member.id === viewedRun?.crewId) ?? crewForStage(viewedStage, crew)}
+                  view={view}
+                  stageLabel={`${viewedStage?.name ?? 'Stage'} · ${ticket.key}`}
+                  placeholder={<span>Nothing has run yet.</span>}
+                />
+              )}
               {stage?.kind === 'plan' && <PlanPanel ticket={ticket} outputs={outputs} builder={builder} nextStage={nextStage} />}
               {stage?.kind === 'pr' && <PrPanel ticket={ticket} prs={prs} descriptions={outputs?.prDescriptions ?? {}} nextStage={nextStage} />}
               {stage?.kind === 'ci' && <CiPanel ticket={ticket} prs={prs} stage={stage} />}
