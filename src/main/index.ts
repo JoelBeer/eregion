@@ -1,10 +1,10 @@
 import { join } from 'node:path'
 import { userInfo } from 'node:os'
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, screen, shell } from 'electron'
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
 import { createBackend, type Backend, type Host } from './api'
 import { openDatabase, type Db } from './db'
-import { openUrl } from './openUrl'
+import { insideWsl, openUrl } from './openUrl'
 
 let db: Db
 let backend: Backend | null = null
@@ -20,14 +20,18 @@ function iconPath(): string | undefined {
 }
 
 function createWindow(): void {
-  // Frameless: the app draws one title bar of its own, with the name and the window buttons on one row.
+  // Frameless with the app's own title bar, except inside WSL: WSLg ignores the move and maximise requests a
+  // frameless window makes, so there Windows draws the frame (one row: the name and its own buttons).
+  const customTitleBar = !insideWsl()
+  // Fill the screen even where a maximise request is ignored.
+  const area = screen.getPrimaryDisplay().workAreaSize
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: Math.max(960, area.width),
+    height: Math.max(640, area.height),
     minWidth: 960,
     minHeight: 640,
     show: false,
-    frame: false,
+    frame: !customTitleBar,
     backgroundColor: '#0B6594',
     title: 'Eregion',
     icon: iconPath(),
@@ -56,9 +60,9 @@ function createWindow(): void {
   mainWindow.on('focus', () => void backend?.linearSync.syncAll().catch(() => undefined))
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void mainWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}?frame=${customTitleBar ? 'app' : 'native'}`)
   } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { frame: customTitleBar ? 'app' : 'native' } })
   }
 }
 

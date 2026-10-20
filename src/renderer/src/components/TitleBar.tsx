@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { Logo } from './icons'
 
-/** Whether the app draws its own title bar: in Electron, where the window has no frame. */
-export const hasTitleBar = (): boolean => Boolean(window.eregionWindow)
+/** Whether the app draws its own title bar: in Electron when the window is frameless (not inside WSL). */
+export const hasTitleBar = (): boolean => Boolean(window.eregionWindow) && new URLSearchParams(window.location.search).get('frame') === 'app'
 
 function Glyph({ kind }: { kind: 'minimize' | 'maximize' | 'restore' | 'close' }): ReactElement {
   return (
@@ -29,7 +29,7 @@ export function TitleBar(): ReactElement | null {
     void controls.isMaximized().then(setMaximized)
     return controls.onMaximizedChange(setMaximized)
   }, [controls])
-  if (!controls) return null
+  if (!controls || !hasTitleBar()) return null
   return (
     <header className="er-titlebar" onDoubleClick={() => void controls.toggleMaximize()}>
       <Logo />
