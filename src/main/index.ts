@@ -4,11 +4,14 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, s
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
 import { createBackend, type Backend, type Host } from './api'
 import { openDatabase, type Db } from './db'
-import { insideWsl, openUrl } from './openUrl'
+import { openUrl } from './openUrl'
 
 let db: Db
 let backend: Backend | null = null
 let mainWindow: BrowserWindow | null = null
+// One Eregion at a time: they would share the database. Opening it again brings this window back.
+const firstInstance = app.requestSingleInstanceLock()
+if (!firstInstance) app.quit()
 
 function databasePath(): string {
   return join(app.getPath('userData'), 'eregion.db')
@@ -21,8 +24,10 @@ function iconPath(): string | undefined {
 
 function createWindow(): void {
   // Frameless, with the app's own title bar: the name and the window buttons on one row. (Inside WSL this
-  // needs Wayland mode, set below; under X11, WSLg's frameless windows can't be dragged or minimised.)
+  // needs Wayland mode, from scripts/electron-flags.mjs; under X11, WSLg covers the top of a frameless window
+  // with an invisible title strip of its own that takes every click.)
   const customTitleBar = true
+  const query = { frame: customTitleBar ? 'app' : 'native' }
   // Fill the screen even where a maximise request is ignored.
   const area = screen.getPrimaryDisplay().workAreaSize
   mainWindow = new BrowserWindow({
@@ -30,7 +35,6 @@ function createWindow(): void {
     height: Math.max(640, area.height),
     minWidth: 960,
     minHeight: 640,
-    show: false,
     frame: !customTitleBar,
     backgroundColor: '#0B6594',
     title: 'Eregion',
@@ -42,10 +46,10 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.maximize()
-    mainWindow?.show()
-  })
+  // Shown at once rather than on ready-to-show: under Wayland (inside WSL) a window that was never shown gets
+  // no frames from the compositor, so the page may never paint, ready-to-show never comes and the window never
+  // appears. The background colour covers the moment before the page draws.
+  mainWindow.maximize()
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -60,9 +64,9 @@ function createWindow(): void {
   mainWindow.on('focus', () => void backend?.linearSync.syncAll().catch(() => undefined))
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}?frame=${customTitleBar ? 'app' : 'native'}`)
+    void mainWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}?${new URLSearchParams(query)}`)
   } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { frame: customTitleBar ? 'app' : 'native' } })
+    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'), { query })
   }
 }
 
@@ -122,14 +126,15 @@ function registerIpc(api: EregionApi): void {
   })
 }
 
-// Inside WSL the app must run as a Wayland client (--ozone-platform=wayland, from scripts/electron-flags.mjs):
-// under X11, WSLg can't drag or minimise a frameless window. Chromium chooses before this code runs, so the
-// flag can't be set from here; this only warns when it's missing.
-if (insideWsl() && app.commandLine.getSwitchValue('ozone-platform') !== 'wayland') {
-  console.warn('Inside WSL, start Eregion with --ozone-platform=wayland (npm start does), or the title bar cannot move the window.')
-}
+app.on('second-instance', () => {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
 
 app.whenReady().then(() => {
+  if (!firstInstance) return
   // No File / Edit / View menu: everything lives in the app itself.
   Menu.setApplicationMenu(null)
   db = openDatabase(databasePath())
