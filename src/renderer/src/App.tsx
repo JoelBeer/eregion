@@ -5,6 +5,7 @@ import { navigate, useRoute, type Route } from './router'
 import { NewProject } from './screens/NewProject'
 import { Projects } from './screens/Projects'
 import { Board } from './screens/Board'
+import { Costs } from './screens/Costs'
 import { Settings } from './screens/settings/Settings'
 import { ProjectSetup } from './screens/setup/ProjectSetup'
 import { TicketScreen } from './screens/ticket/TicketScreen'
@@ -22,7 +23,7 @@ function readCurrentProject(): number | null {
 }
 
 function projectIdOf(route: Route): number | null {
-  return route.name === 'setup' || route.name === 'board' || route.name === 'ticket' ? route.projectId : null
+  return route.name === 'setup' || route.name === 'board' || route.name === 'ticket' || route.name === 'costs' ? route.projectId : null
 }
 
 function activeNav(route: Route): NavId | null {
@@ -37,6 +38,8 @@ function activeNav(route: Route): NavId | null {
       return 'projects'
     case 'settings':
       return 'settings'
+    case 'costs':
+      return 'costs'
     default:
       return null
   }
@@ -93,6 +96,9 @@ export function App(): ReactElement {
       break
     case 'settings':
       screen = <Settings tab={route.tab} />
+      break
+    case 'costs':
+      screen = <Costs key={route.projectId} projectId={route.projectId} />
       break
     case 'welcome':
       return <Welcome onSetUpProject={() => navigate({ name: 'new-project' })} />

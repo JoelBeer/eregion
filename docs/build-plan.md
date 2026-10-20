@@ -37,6 +37,13 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - [x] 3. Ticket workspaces
 - [x] 4. Agents
 - [x] 5. Pipeline and board
-- [ ] 6. Integrations
+- [x] 6. Integrations (proven end to end on Word Magic: WM-1 went from Linear through PR #2 to merged and Done)
 - [ ] 7. Crew, Forge, Costs, Settings, voice
 - [ ] 8. Polish and run instructions
+
+## Polish list (phase 8)
+
+- Window: open full screen (maximised); remove the File / Edit / View menu bar; one clean title bar with the Eregion name and the window controls on the same row (frameless window with our own drag region, or a hidden title bar with overlay controls).
+- App icon: the anvil mark from the design system, for the window, the taskbar and the WSLg launcher, instead of the default Electron / Linux penguin icon.
+- Pipeline versions: restore an older pipeline version (saved as a new version), or pull a single stage's settings from an older version, with a diff of what changes.
+- README (including the Linear app steps), licence, run instructions; then make JoelBeer/eregion public.

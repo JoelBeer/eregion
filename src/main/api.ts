@@ -29,6 +29,7 @@ import { createIntegrationsApi } from './integrationsApi'
 import { CiWatcher } from './pipeline/ciWatch'
 import { PrStage } from './pipeline/prStage'
 import { PrStore } from './pipeline/prs'
+import { costReport } from './costs'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -304,6 +305,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     stopRun: (runId) => agents.stop(runId),
 
     openExternal: (url) => host.openExternal(url),
+    getCosts: async (projectId, period) => costReport(db, projectId, period),
 
     // After the tickets API: in a project linked to Linear, createTicket makes a Linear issue.
     ...integrationsApi

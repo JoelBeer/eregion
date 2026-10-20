@@ -6,6 +6,7 @@ import type { StageConfig } from './pipeline'
 import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
 import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
+import type { CostPeriod, CostReport } from './costs'
 import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
@@ -142,6 +143,8 @@ export interface EregionApi {
   importLinearIssue(projectId: number, key: string): Promise<Ticket>
   pullTicketFromLinear(ticketId: number): Promise<Ticket>
 
+  getCosts(projectId: number, period: CostPeriod): Promise<CostReport>
+
   getTicketPrs(ticketId: number): Promise<PullRequest[]>
   markPrsReady(ticketId: number): Promise<void>
   updatePrDescription(ticketId: number, repo: string, markdown: string): Promise<void>
@@ -217,6 +220,7 @@ export const API_METHODS = [
   'syncLinear',
   'importLinearIssue',
   'pullTicketFromLinear',
+  'getCosts',
   'getTicketPrs',
   'markPrsReady',
   'updatePrDescription',
