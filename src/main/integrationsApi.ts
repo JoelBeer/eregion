@@ -123,7 +123,7 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
         whose,
         lastSyncAt: last.at,
         error: last.error,
-        keyExample: config.kind === 'github-issues' ? 'GH-12' : config.kind === 'gitlab-issues' ? 'GL-12' : `${project.linear.teamKey ?? project.initials}-123`
+        keyExample: config.kind === 'github-issues' ? 'GH-12' : config.kind === 'gitlab-issues' ? 'GL-12' : config.kind === 'jira' ? `${config.location?.trim() || 'KEY'}-12` : `${project.linear.teamKey ?? project.initials}-123`
       }
     },
     syncTickets: async () => sync.syncAll(),

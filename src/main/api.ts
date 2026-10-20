@@ -23,7 +23,10 @@ import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
 import { GhCli, type GitHub } from './integrations/github'
 import type { FetchLike } from './integrations/linear'
 import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
+import { Connections } from './integrations/connections'
 import { GitHubIssuesSource } from './integrations/githubIssues'
+import { CodeHosts, GitLabHost, GitLabIssuesSource, gitlabWhoAmI } from './integrations/gitlab'
+import { JiraClient, JiraSource } from './integrations/jira'
 import { LinearSource } from './integrations/linearSource'
 import { IssueSync, sourceIntegrations } from './integrations/sources'
 import { createIntegrationsApi } from './integrationsApi'
@@ -119,7 +122,14 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     host.emit({ type: 'notice', title, body })
   }
   const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
-  const issueSync = new IssueSync(db, [new LinearSource(linearAuth), new GitHubIssuesSource(runnerForRuntimeId)], projects, tickets, {
+  const fetchImpl = options.fetch ?? (fetch as unknown as FetchLike)
+  // Jira and GitLab accounts (Settings › Integrations); a test says who each signs in as.
+  const connections = new Connections(db, host.secrets ?? PLAIN_CODEC, {
+    jira: async (connection, token) => (await new JiraClient(connection, token, fetchImpl).myself()).displayName,
+    gitlab: (connection, token) => gitlabWhoAmI(connection, token, fetchImpl)
+  })
+  const ticketSources = [new LinearSource(linearAuth), new GitHubIssuesSource(runnerForRuntimeId), new JiraSource(connections, fetchImpl), new GitLabIssuesSource(connections, fetchImpl)]
+  const issueSync = new IssueSync(db, ticketSources, projects, tickets, {
     ticketChanged: (ticket) => ticketChanged(ticket),
     ticketRemoved: (projectId) => {
       host.emit({ type: 'project-changed', projectId })
@@ -150,7 +160,8 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   })
   const prs = new PrStore(db)
   const agentsInfo = new AgentsInfo(db, projects)
-  const github = options.github ?? new GhCli()
+  // GitHub through gh, or GitLab for repos on one of your GitLab connections.
+  const github = options.github ?? new CodeHosts(new GhCli(), new GitLabHost(connections, fetchImpl))
   const rules = new RulesStore(db, projects, github)
   const houseRules = (project: Project): string => combineRules(getSetting(db, 'rules.house', ''), getSetting(db, `rules.project.${project.id}`, ''), project.name)
   const forge = new Forge({
@@ -355,6 +366,18 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     getUsage: async (projectId) => usageSummary(db, projectId),
     listAgents: () => agentsInfo.list(),
     listConnectors: async () => agentsInfo.connectors(),
+    listConnections: async () => connections.list(),
+    saveConnection: async (input) => {
+      const saved = await connections.save(input)
+      host.emit({ type: 'linear-changed' })
+      return saved
+    },
+    removeConnection: async (id) => {
+      connections.remove(id)
+      host.emit({ type: 'linear-changed' })
+    },
+    testConnection: async (id) => connections.test(id),
+    listJiraStatuses: async (connectionId, projectKey) => new JiraClient(connections.get(connectionId), connections.token(connectionId), fetchImpl).statuses(projectKey),
     saveCustomAgent: async (agent) => agentsInfo.saveCustom(agent),
     removeCustomAgent: async (id) => agentsInfo.removeCustom(id),
     testAgent: (adapter) => agentsInfo.test(adapter),

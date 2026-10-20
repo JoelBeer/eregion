@@ -155,8 +155,82 @@ function LinearSection({ project, save }: { project: StepProps['project']; save:
 const SOURCE_CHOICES: { kind: TicketSourceKind; detail: string }[] = [
   { kind: 'linear', detail: 'Issues from a Linear team. Connect Linear in Settings › Integrations.' },
   { kind: 'github-issues', detail: "Issues from a GitHub repo, through gh signed in as you. While a ticket is in a stage, its issue carries that stage's eregion: label." },
+  { kind: 'jira', detail: 'Issues from a Jira Cloud project. Add the Jira connection in Settings › Integrations.' },
+  { kind: 'gitlab-issues', detail: 'Issues from a GitLab project, labelled with the stage as for GitHub. Add the GitLab connection in Settings › Integrations.' },
   { kind: 'manual', detail: "No tracker: add tickets with New ticket on the Board. Their keys use the project's initials." }
 ]
+
+/** Which Jira or GitLab connection a project reads from. */
+function ConnectionPicker({ kind, source, save }: { kind: 'jira' | 'gitlab'; source: TicketSourceConfig; save: (source: TicketSourceConfig) => void }): ReactElement {
+  const connections = useQuery(() => window.eregion.listConnections(), []).data?.filter((connection) => connection.kind === kind)
+  if (connections && connections.length === 0) {
+    return (
+      <span>
+        No {kind === 'jira' ? 'Jira' : 'GitLab'} connection yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Add one in Settings › Integrations</a>, then come back.
+      </span>
+    )
+  }
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
+      <label className="muted" htmlFor="source-connection">
+        Connection
+      </label>
+      <select id="source-connection" className="select" value={source.connectionId ?? ''} onChange={(event) => save({ ...source, connectionId: event.target.value || null })}>
+        <option value="">Choose one</option>
+        {connections?.map((connection) => (
+          <option key={connection.id} value={connection.id}>
+            {connection.name} ({connection.url}){connection.account ? ` · ${connection.account}` : ''}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+/** The Jira status each stage moves its issue to, from the project's own statuses. */
+function JiraStatuses({ project, source, save }: { project: StepProps['project']; source: TicketSourceConfig; save: (source: TicketSourceConfig) => void }): ReactElement | null {
+  const pipeline = useQuery(() => window.eregion.getPipeline(project.id), [project.id])
+  const statuses = useQuery(
+    () => (source.connectionId && source.location ? window.eregion.listJiraStatuses(source.connectionId, source.location) : Promise.resolve([] as string[])),
+    [source.connectionId, source.location]
+  )
+  if (!source.connectionId || !source.location) return null
+  const stages = (pipeline.data?.stages ?? []).filter((stage) => stage.enabled)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span className="label">Jira status when a ticket enters each stage</span>
+      <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 320px)', gap: '8px 12px', alignItems: 'center' }}>
+        {[...stages.map((stage) => ({ id: stage.id, name: stage.name })), { id: 'done', name: 'Done (merged)' }].map((stage) => (
+          <div key={stage.id} style={{ display: 'contents' }}>
+            <span>{stage.name}</span>
+            <select
+              className="select"
+              aria-label={`Jira status for ${stage.name}`}
+              value={source.statusByStage?.[stage.id] ?? ''}
+              onChange={(event) => {
+                const statusByStage = { ...source.statusByStage }
+                if (event.target.value) statusByStage[stage.id] = event.target.value
+                else delete statusByStage[stage.id]
+                save({ ...source, statusByStage })
+              }}
+            >
+              <option value="">Don't change it</option>
+              {statuses.data?.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+      {statuses.error && <span className="error-text">{statuses.error}</span>}
+      <span className="muted" style={{ fontSize: 13 }}>
+        Eregion moves the issue with whichever transition leads to that status; if none does from where it is, the ticket says so.
+      </span>
+    </div>
+  )
+}
 
 /**
  * A tracker other than Linear: where its issues are, whose come in (yours, chosen people's, or everyone's),
@@ -311,6 +385,33 @@ export function IntegrationsStep({ project, next }: StepProps): ReactElement {
         </section>
       )}
 
+      {source.kind === 'jira' && (
+        <section className="panel" aria-label="Jira">
+          <h2 style={{ fontSize: 18 }}>Jira</h2>
+          <ConnectionPicker kind="jira" source={source} save={(next) => void saveSource.run(next)} />
+          <TrackerSection
+            key={`jira-${project.id}`}
+            source={source}
+            save={(next) => void saveSource.run(next)}
+            location={{ label: 'Project key', placeholder: 'SHOP', hint: 'The letters before the issue numbers, like SHOP in SHOP-12. Issues still To Do come in.', peopleHint: 'Jira account ids, comma-separated' }}
+          />
+          <JiraStatuses project={project} source={source} save={(next) => void saveSource.run(next)} />
+        </section>
+      )}
+
+      {source.kind === 'gitlab-issues' && (
+        <section className="panel" aria-label="GitLab issues">
+          <h2 style={{ fontSize: 18 }}>GitLab issues</h2>
+          <ConnectionPicker kind="gitlab" source={source} save={(next) => void saveSource.run(next)} />
+          <TrackerSection
+            key={`gitlab-${project.id}`}
+            source={source}
+            save={(next) => void saveSource.run(next)}
+            location={{ label: 'Project', placeholder: 'group/app', hint: 'Its path on GitLab. Tickets are GL- and the issue number, like GL-12.', peopleHint: 'GitLab usernames, comma-separated' }}
+          />
+        </section>
+      )}
+
       {source.kind !== 'manual' && (
         <section className="panel" aria-label="Labels">
           <h2 style={{ fontSize: 18 }}>Labels</h2>
@@ -319,13 +420,13 @@ export function IntegrationsStep({ project, next }: StepProps): ReactElement {
       )}
 
       <section className="panel" aria-label="Code">
-        <h2 style={{ fontSize: 18 }}>Code: GitHub</h2>
+        <h2 style={{ fontSize: 18 }}>Code</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '8px 12px' }}>
           {project.repos.map((repo) => (
             <div key={repo.id} style={{ display: 'contents' }}>
               <span>{repo.name}</span>
               <span>
-                {repo.githubRepo ? <span className="mono">{repo.githubRepo}</span> : <span className="error-text">No GitHub remote found</span>}
+                {repo.githubRepo ? <span className="mono">{repo.githubRepo}</span> : <span className="muted">Not on GitHub: pull requests go to GitLab when its remote is on one of your GitLab connections</span>}
                 <span className="muted"> · PRs into {repo.defaultBranch}</span>
               </span>
             </div>

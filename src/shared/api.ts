@@ -11,7 +11,7 @@ import type { CostListing, CostPeriod, CostReport, UsageSummary } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
 import type { AgentConnector, CustomAgent } from './connectors'
-import type { SourceStatus, TicketSourceConfig } from './sources'
+import type { Connection, ConnectionInput, SourceStatus, TicketSourceConfig } from './sources'
 import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
@@ -175,6 +175,14 @@ export interface EregionApi {
 
   listAgents(): Promise<AgentInfo[]>
   /** Sends a tiny prompt with the cheapest model in every runtime where the CLI is installed. */
+  /** Your Jira and GitLab connections (Settings › Integrations), without their tokens. */
+  listConnections(): Promise<Connection[]>
+  /** Adds or edits a connection, then checks who it signs in as. */
+  saveConnection(input: ConnectionInput): Promise<Connection>
+  removeConnection(id: string): Promise<void>
+  testConnection(id: string): Promise<Connection>
+  /** The statuses a Jira project's issues can be in, for choosing one per stage. */
+  listJiraStatuses(connectionId: string, projectKey: string): Promise<string[]>
   /** Every agent Eregion can run, built-in and yours, without checking what's installed (quick). */
   listConnectors(): Promise<AgentConnector[]>
   /** Adds or replaces an agent you set up with a command template. */
@@ -296,6 +304,11 @@ export const API_METHODS = [
   'getCosts',
   'getUsage',
   'listAgents',
+  'listConnections',
+  'saveConnection',
+  'removeConnection',
+  'testConnection',
+  'listJiraStatuses',
   'listConnectors',
   'saveCustomAgent',
   'removeCustomAgent',

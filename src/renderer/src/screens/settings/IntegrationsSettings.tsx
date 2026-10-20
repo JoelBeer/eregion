@@ -2,6 +2,7 @@ import { useState, type ReactElement } from 'react'
 import type { ImportAssignees, LinearStatus, LinearUser } from '@shared/integrations'
 import { StatusPill } from '../../components/ui'
 import { useAction, useQuery } from '../../hooks'
+import { ConnectionsSection } from './ConnectionsSection'
 
 export function useLinearStatus(): { status: LinearStatus | undefined; reload: () => void } {
   const query = useQuery(() => window.eregion.getLinearStatus(), [], (event) => event.type === 'linear-changed')
@@ -233,6 +234,8 @@ export function IntegrationsSettings(): ReactElement {
           </span>
         )}
       </section>
+
+      <ConnectionsSection />
     </div>
   )
 }
