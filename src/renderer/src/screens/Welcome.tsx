@@ -5,11 +5,12 @@ import { RobotAvatar } from '../components/RobotAvatar'
 import { Button } from '../components/ui'
 import { useAction } from '../hooks'
 
-const TOOL_NAMES: Record<ToolCheck['tool'], string> = {
+const TOOL_NAMES: Record<string, string> = {
   git: 'git',
   gh: 'GitHub CLI (gh)',
   claude: 'Claude Code',
-  'cursor-agent': 'Cursor CLI'
+  'cursor-agent': 'Cursor CLI',
+  codex: 'Codex CLI'
 }
 
 function ToolsSection({ onReady }: { onReady: (ready: boolean) => void }): ReactElement {
@@ -43,7 +44,7 @@ function ToolsSection({ onReady }: { onReady: (ready: boolean) => void }): React
         </Button>
       </div>
       {checks === null ? (
-        <span className="muted">Looking for git, gh, Claude Code and the Cursor CLI…</span>
+        <span className="muted">Looking for git, gh, Claude Code, the Cursor CLI and Codex…</span>
       ) : (
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <tbody>
@@ -52,7 +53,7 @@ function ToolsSection({ onReady }: { onReady: (ready: boolean) => void }): React
                 <td style={{ width: 28, padding: '6px 0', color: check.found ? 'var(--primary-600)' : 'var(--red-700, #B42318)' }}>
                   {check.found ? '✓' : '✕'}
                 </td>
-                <td style={{ padding: '6px 8px' }}>{TOOL_NAMES[check.tool]}</td>
+                <td style={{ padding: '6px 8px' }}>{TOOL_NAMES[check.tool] ?? check.tool}</td>
                 <td className="muted" style={{ padding: '6px 8px' }}>
                   {check.runtime}
                 </td>
@@ -67,7 +68,7 @@ function ToolsSection({ onReady }: { onReady: (ready: boolean) => void }): React
       <span className="muted" style={{ fontSize: 13 }}>
         {ready
           ? 'Everything Eregion needs is here.'
-          : 'You need git, gh signed in, and at least one of Claude Code or the Cursor CLI.'}
+          : 'You need git, gh signed in, and at least one of Claude Code, the Cursor CLI or Codex.'}
       </span>
     </section>
   )

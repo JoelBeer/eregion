@@ -4,8 +4,12 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { firstSentence, summariseTool, type AgentEvent } from '@shared/agent'
 import { NativeRunner } from '../runner/native'
-import { parseClaudeLine, parseCursorLine } from './parse'
-import { BLOCKED_COMMANDS, claudeArgs, startAgent, type AgentStartOptions } from './session'
+import { parseClaudeLine, parseCursorLine, parseCodexLine } from './parse'
+import { BLOCKED_COMMANDS, claudeArgs, startAgent, type AgentStartOptions, codexArgs } from './session'
+import { BUILT_IN_CONNECTORS, customConnector } from '@shared/connectors'
+
+const CLAUDE = BUILT_IN_CONNECTORS[0]
+const CODEX = BUILT_IN_CONNECTORS[2]
 
 const FAKE = ['node', resolve('src/main/testing/fake-claude.mjs')]
 
@@ -59,14 +63,14 @@ describe('shared helpers', () => {
   })
 
   it('blocks the git and gh commands Eregion owns, and makes the Forge read-only', () => {
-    const base = { adapter: 'claude-code', runner: new NativeRunner(), cwd: '/tmp', model: 'sonnet', prompt: 'x' } as const
+    const base = { connector: CLAUDE, runner: new NativeRunner(), cwd: '/tmp', model: 'sonnet', prompt: 'x' } as const
     const build = claudeArgs({ ...base, profile: 'build', addDirs: ['/out'] })
     expect(build).toEqual(expect.arrayContaining(['--permission-mode', 'acceptEdits', '--permission-prompts', 'none', '--add-dir', '/out', ...BLOCKED_COMMANDS]))
     expect(claudeArgs({ ...base, profile: 'chat' })).toEqual(expect.arrayContaining(['--permission-mode', 'plan']))
   })
 
   it("passes a run's MCP servers strictly, its allowed MCP tools, and turns off skills you haven't allowed", () => {
-    const base = { adapter: 'claude-code', runner: new NativeRunner(), cwd: '/tmp', model: 'sonnet', prompt: 'x', profile: 'build' } as const
+    const base = { connector: CLAUDE, runner: new NativeRunner(), cwd: '/tmp', model: 'sonnet', prompt: 'x', profile: 'build' } as const
     const args = claudeArgs({ ...base, mcpConfig: '{"mcpServers":{}}', allowedTools: ['mcp__laravel-boost', 'Skill'], deniedTools: ['Skill(deploy)'], settings: '{"skillOverrides":{"deploy":"off"}}' })
     expect(args.join(' ')).toContain("--allowedTools Bash Read Edit Write Glob Grep WebFetch WebSearch TodoWrite mcp__laravel-boost Skill --disallowedTools")
     expect(args.slice(args.indexOf('--disallowedTools')).join(' ')).toContain('Skill(deploy)')
@@ -77,7 +81,7 @@ describe('shared helpers', () => {
 describe.skipIf(process.platform === 'win32')('AgentSession with a fake Claude Code', () => {
   async function run(prompt: string, extra: Partial<AgentStartOptions> = {}) {
     const cwd = await mkdtemp(join(tmpdir(), 'eregion-agent-'))
-    const session = startAgent({ adapter: 'claude-code', runner: new NativeRunner(), cwd, model: 'fake', prompt, profile: 'build', command: FAKE, ...extra })
+    const session = startAgent({ connector: CLAUDE, runner: new NativeRunner(), cwd, model: 'fake', prompt, profile: 'build', command: FAKE, ...extra })
     return { session, cwd }
   }
 
@@ -139,5 +143,62 @@ describe.skipIf(process.platform === 'win32')('AgentSession with a fake Claude C
     const outcome = await session.done
     expect(outcome.state).toBe('failed')
     expect(outcome.error).toBeTruthy()
+  })
+})
+
+describe('Codex', () => {
+  it('reads codex exec --json: the thread, commands, messages, file changes and usage without the cached tokens', () => {
+    const lines = [
+      { type: 'thread.started', thread_id: 'th-1' },
+      { type: 'turn.started' },
+      { type: 'item.started', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc ls', aggregated_output: '', status: 'in_progress' } },
+      { type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc ls', aggregated_output: 'app\n', exit_code: 0, status: 'completed' } },
+      { type: 'item.completed', item: { id: 'item_2', type: 'file_change', changes: [{ path: 'app/hint.txt', kind: 'add' }], status: 'completed' } },
+      { type: 'item.completed', item: { id: 'item_3', type: 'agent_message', text: 'Added the hint.' } },
+      { type: 'turn.completed', usage: { input_tokens: 1200, cached_input_tokens: 1000, output_tokens: 80, reasoning_output_tokens: 20 } }
+    ].flatMap((line) => parseCodexLine(JSON.stringify(line)))
+    expect(lines).toEqual([
+      { kind: 'init', sessionId: 'th-1', model: '' },
+      { kind: 'tool', id: 'item_1', name: 'Bash', summary: '$ bash -lc ls' },
+      { kind: 'tool-result', id: 'item_1', ok: true, output: 'app\n' },
+      { kind: 'tool', id: 'item_2', name: 'Edit', summary: 'edited app/hint.txt' },
+      { kind: 'tool-result', id: 'item_2', ok: true, output: '' },
+      { kind: 'text', text: 'Added the hint.' },
+      { kind: 'result', ok: true, text: '', costUsd: null, usage: { input: 200, output: 80, cached: 1000 }, turns: 1 }
+    ])
+    expect(parseCodexLine(JSON.stringify({ type: 'turn.failed', error: { message: "You've hit your usage limit" } }))).toEqual([
+      { kind: 'result', ok: false, text: "You've hit your usage limit", costUsd: null, usage: null, turns: 1 }
+    ])
+  })
+
+  it('runs codex exec in the workspace-write sandbox with the outputs folder writable, and resumes the thread for a follow-up', () => {
+    const base = { connector: CODEX, runner: new NativeRunner(), cwd: '/tmp', prompt: 'x', profile: 'build' } as const
+    expect(codexArgs({ ...base, model: 'default', addDirs: ['/out'] }, 'Do it', null)).toEqual(['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-c', 'sandbox_workspace_write.writable_roots=["/out"]', 'Do it'])
+    expect(codexArgs({ ...base, model: 'gpt-x', profile: 'chat', addDirs: ['/out'] }, 'Hi', 'th-1')).toEqual(['exec', '--json', '--skip-git-repo-check', '--sandbox', 'read-only', '--model', 'gpt-x', 'resume', 'th-1', 'Hi'])
+  })
+})
+
+describe.skipIf(process.platform === 'win32')('custom agents', () => {
+  // Prints Codex-style JSON lines, carrying on the thread it was given.
+  const script = "const [p, s] = process.argv.slice(1); const t = s || 'thread-1'; for (const e of [{ type: 'thread.started', thread_id: t }, { type: 'item.completed', item: { id: 'i', type: 'agent_message', text: 'You said: ' + p + ' (' + t + ')' } }, { type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 5 } }]) console.log(JSON.stringify(e))"
+
+  it('runs a command template, reads its output format, and carries on the conversation with its follow-up arguments', async () => {
+    const connector = customConnector({ id: 'echo-agent', name: 'Echo', command: 'node', output: 'codex-jsonl', args: ['-e', script, '{{prompt}}'], resumeArgs: ['-e', script, '{{prompt}}', '{{session}}'], models: ['m'] })
+    const session = startAgent({ connector, runner: new NativeRunner(), cwd: await mkdtemp(join(tmpdir(), 'eregion-custom-')), model: 'm', prompt: 'first', profile: 'build', conversational: true })
+    await new Promise<void>((resolve) => session.on('state', (state) => state === 'waiting' && resolve()))
+    expect(session.send('second', 'now')).toBe('delivered')
+    await new Promise<void>((resolve) => session.on('state', (state) => state === 'waiting' && resolve()))
+    session.end()
+    const outcome = await session.done
+    expect(outcome).toMatchObject({ state: 'done', sessionId: 'thread-1', lastText: 'You said: second (thread-1)', usage: { input: 20, output: 10, cached: 0 } })
+  })
+
+  it("runs a plain-text agent once, and says it can't carry on a conversation", async () => {
+    const connector = customConnector({ id: 'shell-agent', name: 'Shell', command: 'sh', output: 'text', args: ['-c', 'echo thinking; echo "Done: $0"', '{{prompt}}'], models: [] })
+    expect(connector.capabilities).toMatchObject({ followUps: false, reportsTokens: false })
+    const session = startAgent({ connector, runner: new NativeRunner(), cwd: await mkdtemp(join(tmpdir(), 'eregion-custom-')), model: '', prompt: 'the task', profile: 'build', conversational: true })
+    const outcome = await session.done
+    expect(outcome).toMatchObject({ state: 'done', lastText: 'Done: the task', usage: null })
+    expect(() => session.send('more', 'now')).toThrow('This run has ended')
   })
 })

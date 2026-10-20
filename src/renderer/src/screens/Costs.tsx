@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactElement } from 'react'
+import { noCostLabel } from '@shared/connectors'
 import { COST_PAGE, COST_PERIODS, formatTokens, formatUsd, type CostPeriod, type TicketCost } from '@shared/costs'
+import { useConnectors } from '../agents'
 import { CrewAvatar } from '../components/RobotAvatar'
 import { useQuery } from '../hooks'
 import { href } from '../router'
@@ -24,6 +26,7 @@ function Total({ label, value, note }: { label: string; value: string; note?: st
 
 function Runs({ projectId, ticket }: { projectId: number; ticket: TicketCost }): ReactElement {
   const crew = useCrew()
+  const connectors = useConnectors()
   return (
     <section className="panel" aria-label={`${ticket.key} runs`}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
@@ -69,7 +72,7 @@ function Runs({ projectId, ticket }: { projectId: number; ticket: TicketCost }):
                   {run.tokens > 0 ? formatTokens(run.tokens) : '—'}
                 </td>
                 <td className="mono" style={{ textAlign: 'right' }}>
-                  {run.costUsd !== null ? formatUsd(run.costUsd) : run.adapter === 'cursor' ? 'Cursor plan' : 'not reported'}
+                  {run.costUsd !== null ? formatUsd(run.costUsd) : noCostLabel(connectors.find((item) => item.id === run.adapter))}
                 </td>
               </tr>
             )

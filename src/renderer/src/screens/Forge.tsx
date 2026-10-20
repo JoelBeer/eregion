@@ -9,6 +9,7 @@ import { Chip } from '../components/ui'
 import { useAction, useQuery } from '../hooks'
 import { navigate } from '../router'
 import { useCrew } from './Board'
+import { useConnectors } from '../agents'
 
 const money = (usd: number): string => `$${usd.toFixed(2)}`
 
@@ -22,6 +23,12 @@ function who(chat: Chat, crew: CrewMember[]): CrewMember {
 
 function NewChat({ projectId, onCreated }: { projectId: number; onCreated: (chat: Chat) => void }): ReactElement {
   const crew = useCrew()
+  const connectors = useConnectors()
+  // A chat is a conversation: crew on an agent that can't carry one on are shown but can't be picked.
+  const cannotChat = (member: CrewMember): string | null => {
+    const connector = connectors.find((item) => item.id === member.adapter)
+    return connector && !connector.capabilities.followUps ? `${connector.name} can't carry on a conversation` : null
+  }
   const project = useQuery(() => window.eregion.getProject(projectId), [projectId]).data
   const models = useQuery<ModelOption[]>(() => window.eregion.listModels('claude-code'), []).data ?? []
   const [crewId, setCrewId] = useState<number | null>(null)
@@ -36,7 +43,16 @@ function NewChat({ projectId, onCreated }: { projectId: number; onCreated: (chat
         <span className="label">Talk to</span>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {crew.map((member) => (
-            <button key={member.id} type="button" aria-pressed={crewId === member.id} className={`er-btn${crewId === member.id ? ' er-btn-primary' : ''}`} onClick={() => setCrewId(member.id)} style={{ gap: 8 }}>
+            <button
+              key={member.id}
+              type="button"
+              aria-pressed={crewId === member.id}
+              className={`er-btn${crewId === member.id ? ' er-btn-primary' : ''}`}
+              onClick={() => setCrewId(member.id)}
+              disabled={cannotChat(member) !== null}
+              title={cannotChat(member) ?? undefined}
+              style={{ gap: 8 }}
+            >
               <CrewAvatar member={member} size={22} />
               {member.name}
               <span style={{ fontSize: 12, opacity: 0.8 }}>{member.model.replace('claude-', '')}</span>

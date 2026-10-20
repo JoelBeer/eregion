@@ -1,6 +1,7 @@
-/** One agent CLI's stream, normalised so every stage and screen handles Claude Code and Cursor alike. */
+/** One agent CLI's stream, normalised so every stage and screen handles every agent alike. */
 
-export type AdapterId = 'claude-code' | 'cursor'
+/** An agent connector's id: 'claude-code', 'cursor', 'codex', or a custom agent's (see connectors.ts). */
+export type AdapterId = string
 
 export interface Usage {
   /** Input tokens billed at full price, including cache writes. */
@@ -19,11 +20,6 @@ export type AgentEvent =
   | { kind: 'result'; ok: boolean; text: string; costUsd: number | null; usage: Usage | null; turns: number }
   | { kind: 'system'; text: string }
   | { kind: 'error'; text: string }
-
-export const ADAPTER_LABELS: Record<AdapterId, string> = {
-  'claude-code': 'Claude Code',
-  cursor: 'Cursor CLI'
-}
 
 /** The first sentence of an agent message, cut to 80 characters: what the board's speech bubble shows. */
 export function firstSentence(text: string): string {

@@ -232,5 +232,23 @@ export const migrations: string[] = [
   UPDATE tickets SET loops = json_object('review', json_object('failures', review_failures, 'extra', extra_loops))
     WHERE review_failures > 0 OR extra_loops > 0;
   UPDATE tickets SET returned_from = 'review' WHERE review_failures > 0 AND status <> 'done';
+  `,
+  // Agent connectors: a crew member can use any agent (Codex, or one you add), so crew.adapter loses its
+  // CHECK. SQLite can't drop a CHECK, so the table is rebuilt; migrate() turns foreign keys off around this.
+  `
+  CREATE TABLE crew_new (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL,
+    adapter TEXT NOT NULL,
+    model TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    parts TEXT NOT NULL DEFAULT '{}'
+  );
+  INSERT INTO crew_new (id, name, role, adapter, model, seed, created_at, parts)
+    SELECT id, name, role, adapter, model, seed, created_at, parts FROM crew;
+  DROP TABLE crew;
+  ALTER TABLE crew_new RENAME TO crew;
   `
 ]

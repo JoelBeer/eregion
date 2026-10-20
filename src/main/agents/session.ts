@@ -1,8 +1,9 @@
 import type { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import type { AdapterId, AgentEvent, Usage } from '@shared/agent'
+import type { AgentEvent, Usage } from '@shared/agent'
+import { fillArgs, type AgentConnector } from '@shared/connectors'
 import type { Runner } from '../runner'
-import { parseClaudeLine, parseCursorLine } from './parse'
+import { parseClaudeLine, parseCodexLine, parseCursorLine, parseTextLine } from './parse'
 
 const PID_MARKER = '__EREGION_PID__'
 
@@ -27,7 +28,8 @@ export const BLOCKED_COMMANDS = [
 ]
 
 export interface AgentStartOptions {
-  adapter: AdapterId
+  /** Which agent CLI runs it, and what it can do. */
+  connector: AgentConnector
   runner: Runner
   cwd: string
   model: string
@@ -90,14 +92,39 @@ export function cursorArgs(options: AgentStartOptions, message: string, resume: 
   return [...args, message]
 }
 
+/**
+ * `codex exec --json` in the workspace-write sandbox (read-only for Forge chats), with the outputs folder as an
+ * extra writable root. A follow-up resumes the same thread. 'default' leaves the model to your Codex config.
+ */
+export function codexArgs(options: AgentStartOptions, message: string, resume: string | null): string[] {
+  const args = ['exec', '--json', '--skip-git-repo-check', '--sandbox', options.profile === 'chat' ? 'read-only' : 'workspace-write']
+  if (options.model && options.model !== 'default') args.push('--model', options.model)
+  if (options.addDirs?.length && options.profile !== 'chat') args.push('-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(options.addDirs)}`)
+  if (resume) args.push('resume', resume)
+  return [...args, message]
+}
+
+/** A custom agent's arguments for a new run, or for carrying on its conversation. */
+export function customArgs(connector: AgentConnector, options: AgentStartOptions, message: string, resume: string | null): string[] {
+  const template = resume && connector.resumeArgs ? connector.resumeArgs : (connector.args ?? [])
+  return fillArgs(template, { prompt: message, model: options.model, session: resume ?? '' })
+}
+
+const PARSERS = {
+  'claude-stream-json': parseClaudeLine,
+  'cursor-stream-json': parseCursorLine,
+  'codex-jsonl': parseCodexLine,
+  text: parseTextLine
+} as const
+
 function userLine(text: string): string {
   return `${JSON.stringify({ type: 'user', message: { role: 'user', content: text } })}\n`
 }
 
 /**
  * One agent run: the CLI process, its normalised events, and messages from you. Claude Code takes
- * messages while it works (they arrive at its next turn boundary); Cursor gets them as a follow-up
- * run in the same chat once the current one ends.
+ * messages while it works (they arrive at its next turn boundary); every other agent runs one process per
+ * turn and gets them as a follow-up in the same conversation once the current turn ends, if it can.
  */
 export class AgentSession extends EventEmitter {
   readonly events: AgentEvent[] = []
@@ -122,22 +149,39 @@ export class AgentSession extends EventEmitter {
 
   /** True when a message can reach the agent before its current turn ends. */
   get takesMessagesMidRun(): boolean {
-    return this.options.adapter === 'claude-code'
+    return this.options.connector.capabilities.midRunMessages
+  }
+
+  /** Claude Code keeps one process for the whole conversation, reading your messages as stream-json. */
+  private get streaming(): boolean {
+    return this.options.connector.id === 'claude-code'
   }
 
   start(): this {
-    if (this.options.adapter === 'claude-code') {
+    if (this.streaming) {
       this.spawn(this.options.command ?? ['claude', ...claudeArgs(this.options)])
       this.child?.stdin?.write(userLine(this.options.prompt))
-      if (this.options.recordPrompt) this.recordPromptSoon()
     } else {
-      // Cursor has no system prompt flag, so the Forge's instructions lead the first message.
+      // Only Claude Code has a system prompt flag, so for the others the Forge's instructions lead the first message.
       const message = this.options.systemPrompt ? `${this.options.systemPrompt}\n\n${this.options.prompt}` : this.options.prompt
-      this.spawn(this.options.command ?? ['cursor-agent', ...cursorArgs(this.options, message, this.options.resume ?? null)])
-      if (this.options.recordPrompt) this.recordPromptSoon()
-      this.child?.stdin?.end()
+      this.turn(message, this.options.resume ?? null)
     }
+    if (this.options.recordPrompt) this.recordPromptSoon()
     return this
+  }
+
+  /** Starts one turn of an agent that runs a process per turn: a new run, or a follow-up when `resume` is set. */
+  private turn(message: string, resume: string | null): void {
+    const { connector } = this.options
+    let argv: string[]
+    if (connector.id === 'cursor') argv = ['cursor-agent', ...cursorArgs(this.options, message, resume)]
+    else if (connector.id === 'codex') argv = ['codex', ...codexArgs(this.options, message, resume)]
+    else argv = [connector.command, ...customArgs(connector, this.options, message, resume)]
+    this.spawn(this.options.command ?? argv)
+    // A custom template without {{prompt}} reads the message from its input.
+    const template = resume && connector.resumeArgs ? connector.resumeArgs : connector.args
+    if (!connector.builtIn && !template?.some((arg) => arg.includes('{{prompt}}'))) this.child?.stdin?.write(message)
+    this.child?.stdin?.end()
   }
 
   private spawn(argv: string[]): void {
@@ -172,7 +216,10 @@ export class AgentSession extends EventEmitter {
       if (this.child !== child) return
       this.child = null
       if (this.stopping) return this.finish('stopped')
-      if (this.options.adapter === 'cursor' && this.state === 'running' && code === 0) {
+      // Plain-text agents have no result line: the turn ended when the process did.
+      if (this.options.connector.output === 'text') this.handleEvent({ kind: 'result', ok: code === 0, text: code === 0 ? this.lastText : stderr.trim(), costUsd: null, usage: null, turns: 1 })
+      const followUps = this.options.connector.capabilities.followUps
+      if (!this.streaming && this.state === 'running' && code === 0 && followUps) {
         if (this.queue.length > 0) return this.followUp()
         if (this.options.conversational && !this.finishing) return this.setState('waiting')
       }
@@ -186,7 +233,7 @@ export class AgentSession extends EventEmitter {
       this.innerPid = Number(line.slice(PID_MARKER.length))
       return
     }
-    const parsed = this.options.adapter === 'claude-code' ? parseClaudeLine(line) : parseCursorLine(line)
+    const parsed = PARSERS[this.options.connector.output](line)
     for (const event of parsed) this.handleEvent(event)
   }
 
@@ -206,7 +253,7 @@ export class AgentSession extends EventEmitter {
       if (!event.ok && !this.error) this.error = event.text || 'The agent reported an error'
     }
     this.record(event)
-    if (event.kind === 'result' && this.options.adapter === 'claude-code') this.afterTurn()
+    if (event.kind === 'result' && this.streaming) this.afterTurn()
   }
 
   private record(event: AgentEvent): void {
@@ -240,8 +287,7 @@ export class AgentSession extends EventEmitter {
   private followUp(): void {
     const text = this.queue.splice(0).join('\n\n')
     this.setState('running')
-    this.spawn(this.options.command ?? ['cursor-agent', ...cursorArgs(this.options, text, this.sessionId)])
-    this.child?.stdin?.end()
+    this.turn(text, this.sessionId)
   }
 
   /**
@@ -252,10 +298,11 @@ export class AgentSession extends EventEmitter {
     if (this.state === 'done' || this.state === 'failed' || this.state === 'stopped') {
       throw new Error('This run has ended')
     }
+    if (!this.options.connector.capabilities.followUps && !this.streaming) throw new Error(`${this.options.connector.name} can't carry on a conversation`)
     this.record({ kind: 'user', text, dictated, delivery })
     if (this.state === 'waiting') {
       this.setState('running')
-      if (this.options.adapter === 'claude-code') {
+      if (this.streaming) {
         this.child?.stdin?.write(userLine(text))
       } else {
         this.queue.push(text)

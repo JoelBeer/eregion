@@ -1,6 +1,8 @@
 import { usageLimitMessage } from '@shared/agent'
 import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { noCostLabel } from '@shared/connectors'
 import { isGenericStage, sendBackTarget, type StageConfig } from '@shared/pipeline'
+import { useConnectors } from '../../agents'
 import type { CrewMember, RunSummary } from '@shared/runs'
 import type { RepoDiff, TicketDetail, TicketOutputs } from '@shared/ticketDetail'
 import { Markdown } from '../../components/Markdown'
@@ -200,6 +202,7 @@ function DiffTab({ ticketId }: { ticketId: number }): ReactElement {
 }
 
 function LogTab({ detail, crew }: { detail: TicketDetail; crew: CrewMember[] }): ReactElement {
+  const connectors = useConnectors()
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <section className="panel" aria-label="Runs">
@@ -226,7 +229,7 @@ function LogTab({ detail, crew }: { detail: TicketDetail; crew: CrewMember[] }):
                   {run.tokensIn !== null ? `${(((run.tokensIn ?? 0) + (run.tokensOut ?? 0) + (run.tokensCached ?? 0)) / 1000).toFixed(0)}k` : ''}
                 </td>
                 <td className="mono" style={{ textAlign: 'right' }}>
-                  {run.costUsd !== null ? `$${run.costUsd.toFixed(2)}` : run.adapter === 'cursor' ? 'Cursor plan' : ''}
+                  {run.costUsd !== null ? `${run.costUsd.toFixed(2)}` : noCostLabel(connectors.find((item) => item.id === run.adapter))}
                 </td>
               </tr>
             ))}

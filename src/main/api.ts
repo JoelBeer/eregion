@@ -102,7 +102,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   const runs = new RunStore(db)
   runs.closeAbandoned()
   const crew = new CrewStore(db)
-  const agents = new AgentManager(runs, (notice) => host.emit(notice), options.agentCommand)
+  const agents = new AgentManager(runs, (notice) => host.emit(notice), options.agentCommand, (id) => agentsInfo.connector(id))
   const workspaces = new Workspaces(projects, services, (environment) => host.emit({ type: 'environment', environment }), undefined, options.workspaceRoot)
   const changed = (projectId: number): void => {
     host.emit({ type: 'project-changed', projectId })
@@ -202,8 +202,8 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       // First run: create the default crew on whichever agent is installed (Claude Code if both are).
       if (crew.list().length === 0) {
         const found = (tool: string): boolean => checks.some((check) => check.tool === tool && check.found)
-        if (found('claude') || found('cursor-agent')) {
-          crew.ensureDefaults(found('claude') ? 'claude-code' : 'cursor')
+        if (found('claude') || found('cursor-agent') || found('codex')) {
+          crew.ensureDefaults(found('claude') ? 'claude-code' : found('codex') ? 'codex' : 'cursor')
           host.emit({ type: 'crew-changed' })
         }
       }
@@ -352,6 +352,9 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     getCosts: async (projectId, period, listing) => costReport(db, projectId, period, listing),
     getUsage: async (projectId) => usageSummary(db, projectId),
     listAgents: () => agentsInfo.list(),
+    listConnectors: async () => agentsInfo.connectors(),
+    saveCustomAgent: async (agent) => agentsInfo.saveCustom(agent),
+    removeCustomAgent: async (id) => agentsInfo.removeCustom(id),
     testAgent: (adapter) => agentsInfo.test(adapter),
     listModels: async (adapter) => agentsInfo.models(adapter),
     addModel: async (adapter, id) => agentsInfo.addModel(adapter, id),

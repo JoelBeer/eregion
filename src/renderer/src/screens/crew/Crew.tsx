@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { ADAPTER_LABELS, type AdapterId } from '@shared/agent'
+import type { AdapterId } from '@shared/agent'
+import { missingCapabilities } from '@shared/connectors'
+import { agentName, useConnectors } from '../../agents'
 import { candidateSeeds, rank, ROLES } from '@shared/crew'
 import { PALETTES, PARTS, randomSeed, robotFromSeed, type Mood, type RobotParts } from '@shared/robot'
 import type { CrewMember } from '@shared/runs'
@@ -71,6 +73,7 @@ function PartRows({ look, onChange }: { look: Look; onChange: (look: Look) => vo
 }
 
 function CrewList(): ReactElement {
+  const connectors = useConnectors()
   const crew = useCrew()
   const stats = useQuery(() => window.eregion.crewStats(), [], (event) => event.type === 'crew-changed' || event.type === 'run-state').data ?? []
   const { quiet, setQuiet, chime, setChime } = useQuiet()
@@ -99,7 +102,7 @@ function CrewList(): ReactElement {
               <h2 style={{ fontSize: 20 }}>{member.name}</h2>
               <span>{member.role}</span>
               <span className="muted" style={{ fontSize: 13 }}>
-                {ADAPTER_LABELS[member.adapter]} · <span className="mono">{member.model}</span>
+                {agentName(connectors, member.adapter)} · <span className="mono">{member.model}</span>
               </span>
               <Chip tone="info">
                 {rank(memberStats?.shipped ?? 0)} · {memberStats?.shipped ?? 0} shipped
@@ -149,6 +152,8 @@ function MemberEditor({ member }: { member: CrewMember | null }): ReactElement {
   const [model, setModel] = useState(member?.model ?? 'claude-sonnet-5-5')
   const [building, setBuilding] = useState(Object.keys(look.parts).length > 0)
   const models = useQuery(() => window.eregion.listModels(adapter), [adapter]).data ?? []
+  const connectors = useConnectors()
+  const connector = connectors.find((item) => item.id === adapter)
   useEffect(() => {
     pendingLook = null
   }, [])
@@ -218,12 +223,22 @@ function MemberEditor({ member }: { member: CrewMember | null }): ReactElement {
           <div className="field">
             <label htmlFor="crew-agent">Agent</label>
             <select id="crew-agent" className="select" value={adapter} onChange={(event) => setAdapter(event.target.value as AdapterId)}>
-              {(Object.keys(ADAPTER_LABELS) as AdapterId[]).map((item) => (
-                <option key={item} value={item}>
-                  {ADAPTER_LABELS[item]}
+              {connectors.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
                 </option>
               ))}
+              {!connectors.some((item) => item.id === adapter) && <option value={adapter}>{agentName(connectors, adapter)}</option>}
             </select>
+            {connector &&
+              missingCapabilities(connector, { followUps: role === 'Planner', tooling: true }).map((line) => (
+                <span key={line} className="muted" style={{ fontSize: 12 }}>
+                  {line}.
+                </span>
+              ))}
+            <span className="muted" style={{ fontSize: 12 }}>
+              Set up agents, or add your own, in Settings › Agents.
+            </span>
           </div>
           <div className="field">
             <label htmlFor="crew-model">Model</label>

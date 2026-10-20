@@ -1,4 +1,5 @@
 import type { AgentEvent } from '@shared/agent'
+import { builtInConnector, BUILT_IN_CONNECTORS, type AgentConnector } from '@shared/connectors'
 import type { CrewMember, RunView } from '@shared/runs'
 import type { Runner } from '../runner'
 import type { RunStore } from './runs'
@@ -54,14 +55,30 @@ export class AgentManager {
   constructor(
     private readonly runs: RunStore,
     private readonly notify: (notice: RunNotice) => void,
-    private readonly commandFor?: (crew: CrewMember) => string[] | undefined
+    private readonly commandFor?: (crew: CrewMember) => string[] | undefined,
+    /** Built-in and custom agents by id (Settings › Agents). */
+    private readonly connectorFor: (id: string) => AgentConnector | undefined = builtInConnector
   ) {}
 
+  /** The agent a crew member uses; one that's been removed is reported as such rather than guessed. */
+  connector(id: string): AgentConnector {
+    const connector = this.connectorFor(id)
+    if (!connector) throw new Error(`The agent "${id}" isn't set up any more. Pick another in the crew member's settings.`)
+    return connector
+  }
+
+  /** Whether the run can be sent another message after its turn: Eregion's fix requests need this. */
+  canFollowUp(runId: number): boolean {
+    const run = this.runs.get(runId)
+    return (this.connectorFor(run.adapter) ?? BUILT_IN_CONNECTORS[0]).capabilities.followUps
+  }
+
   start(request: StartRun): { runId: number; done: Promise<SessionOutcome> } {
+    const connector = this.connector(request.crew.adapter)
     // A Forge Visitor has no crew record (id 0).
     const run = this.runs.create({ ticketId: request.ticketId, chatId: request.chatId, stage: request.stage, crewId: request.crew.id > 0 ? request.crew.id : null, adapter: request.crew.adapter, model: request.crew.model, loop: request.loop })
     const options: AgentStartOptions = {
-      adapter: request.crew.adapter,
+      connector,
       runner: request.runner,
       cwd: request.cwd,
       model: request.crew.model,
@@ -113,7 +130,7 @@ export class AgentManager {
       state: session ? session.state : run.result === 'running' ? 'stopped' : run.result,
       events: this.runs.events(runId),
       queued: this.runs.queuedCount(runId),
-      takesMessagesMidRun: run.adapter === 'claude-code'
+      takesMessagesMidRun: this.connectorFor(run.adapter)?.capabilities.midRunMessages ?? false
     }
   }
 

@@ -12,13 +12,27 @@ export function openDatabase(file: string): Db {
   return db
 }
 
+/**
+ * Runs the migrations this database hasn't had, each in a transaction. Foreign keys are off meanwhile (they
+ * can't be switched inside a transaction), so a migration that rebuilds a table doesn't cascade into the
+ * tables pointing at it; they're checked before being switched back on.
+ */
 export function migrate(db: Db): number {
   const current = db.pragma('user_version', { simple: true }) as number
-  for (let index = current; index < migrations.length; index++) {
-    db.transaction(() => {
-      db.exec(migrations[index])
-      db.pragma(`user_version = ${index + 1}`)
-    })()
+  if (current >= migrations.length) return migrations.length
+  const enforced = db.pragma('foreign_keys', { simple: true }) === 1
+  db.pragma('foreign_keys = OFF')
+  try {
+    for (let index = current; index < migrations.length; index++) {
+      db.transaction(() => {
+        db.exec(migrations[index])
+        const broken = db.pragma('foreign_key_check') as unknown[]
+        if (broken.length > 0) throw new Error(`Migration ${index + 1} would leave ${broken.length} broken references`)
+        db.pragma(`user_version = ${index + 1}`)
+      })()
+    }
+  } finally {
+    if (enforced) db.pragma('foreign_keys = ON')
   }
   return migrations.length
 }

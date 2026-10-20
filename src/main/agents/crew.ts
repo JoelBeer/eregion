@@ -1,4 +1,5 @@
 import type { AdapterId } from '@shared/agent'
+import { builtInConnector } from '@shared/connectors'
 import { robotFromSeed, type Palette, type RobotParts } from '@shared/robot'
 import type { CrewStats } from '@shared/crew'
 import type { CrewMember } from '@shared/runs'
@@ -12,11 +13,12 @@ export function seedWithPalette(palette: Palette, start = 1): number {
   return start
 }
 
-const DEFAULTS: { name: string; role: CrewMember['role']; palette: Palette; model: Record<AdapterId, string> }[] = [
-  { name: 'Ember', role: 'Planner', palette: 'ember', model: { 'claude-code': 'claude-opus-5-5', cursor: 'auto' } },
-  { name: 'Rivet', role: 'Builder', palette: 'teal', model: { 'claude-code': 'claude-sonnet-5-5', cursor: 'auto' } },
-  { name: 'Anvil', role: 'Reviewer', palette: 'periwinkle', model: { 'claude-code': 'claude-opus-5-5', cursor: 'auto' } },
-  { name: 'Ingot', role: 'Shipper', palette: 'brass', model: { 'claude-code': 'claude-sonnet-5-5', cursor: 'auto' } }
+/** The default crew. On Claude Code they get the models below; on any other agent, its first (default) model. */
+const DEFAULTS: { name: string; role: CrewMember['role']; palette: Palette; claudeModel: string }[] = [
+  { name: 'Ember', role: 'Planner', palette: 'ember', claudeModel: 'claude-opus-5-5' },
+  { name: 'Rivet', role: 'Builder', palette: 'teal', claudeModel: 'claude-sonnet-5-5' },
+  { name: 'Anvil', role: 'Reviewer', palette: 'periwinkle', claudeModel: 'claude-opus-5-5' },
+  { name: 'Ingot', role: 'Shipper', palette: 'brass', claudeModel: 'claude-sonnet-5-5' }
 ]
 
 interface CrewRow {
@@ -57,7 +59,8 @@ export class CrewStore {
     if (this.list().length > 0) return this.list()
     const insert = this.db.prepare('INSERT INTO crew (name, role, adapter, model, seed) VALUES (?, ?, ?, ?, ?)')
     this.db.transaction(() => {
-      DEFAULTS.forEach((member, index) => insert.run(member.name, member.role, adapter, member.model[adapter], seedWithPalette(member.palette, 1 + index * 1000)))
+      const model = (member: (typeof DEFAULTS)[number]): string => (adapter === 'claude-code' ? member.claudeModel : (builtInConnector(adapter)?.models[0]?.id ?? 'default'))
+      DEFAULTS.forEach((member, index) => insert.run(member.name, member.role, adapter, model(member), seedWithPalette(member.palette, 1 + index * 1000)))
     })()
     return this.list()
   }

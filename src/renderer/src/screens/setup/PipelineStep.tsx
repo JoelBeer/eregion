@@ -17,7 +17,9 @@ import {
   type StageConfig,
   type StageTemplate
 } from '@shared/pipeline'
+import { missingCapabilities, type AgentConnector } from '@shared/connectors'
 import type { CrewMember } from '@shared/runs'
+import { useConnectors } from '../../agents'
 import { Switch } from '../../components/ui'
 import { errorMessage, useAction } from '../../hooks'
 import { useCrew } from '../Board'
@@ -68,9 +70,21 @@ function toggleAction(stage: StageConfig, action: StageAction, on: boolean): Sta
   return { ...stage, after: on ? [...rest, action] : rest }
 }
 
+/**
+ * Who runs a stage. Plan and interactive stages need an agent that can carry on a conversation, so crew on
+ * agents that can't are greyed out; what the chosen agent can't do is said underneath.
+ */
 function CrewPicker({ stage, crew, onChange }: { stage: StageConfig; crew: CrewMember[]; onChange: (stage: StageConfig) => void }): ReactElement {
+  const connectors = useConnectors()
   const value = stage.crewId !== null ? `id:${stage.crewId}` : `role:${stage.crewRole ?? 'Builder'}`
+  const needsConversation = stage.kind === 'plan' || stage.mode === 'interactive'
+  const connectorOf = (member: CrewMember | undefined): AgentConnector | undefined => (member ? connectors.find((item) => item.id === member.adapter) : undefined)
+  const cannot = (member: CrewMember | undefined): boolean => needsConversation && connectorOf(member)?.capabilities.followUps === false
+  const chosen = stage.crewId !== null ? crew.find((member) => member.id === stage.crewId) : crew.find((member) => member.role === (stage.crewRole ?? 'Builder'))
+  const chosenConnector = connectorOf(chosen)
+  const notes = chosenConnector ? missingCapabilities(chosenConnector, { followUps: needsConversation, tooling: true }) : []
   return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
     <select
       className="select"
       aria-label="Who runs it"
@@ -84,7 +98,7 @@ function CrewPicker({ stage, crew, onChange }: { stage: StageConfig; crew: CrewM
         {ROLES.map((role) => {
           const holder = crew.find((member) => member.role === role)
           return (
-            <option key={role} value={`role:${role}`}>
+            <option key={role} value={`role:${role}`} disabled={cannot(holder)}>
               Whoever is the {role}
               {holder ? ` (${holder.name})` : ''}
             </option>
@@ -93,12 +107,18 @@ function CrewPicker({ stage, crew, onChange }: { stage: StageConfig; crew: CrewM
       </optgroup>
       <optgroup label="Always">
         {crew.map((member) => (
-          <option key={member.id} value={`id:${member.id}`}>
-            {member.name} · {member.model}
+          <option key={member.id} value={`id:${member.id}`} disabled={cannot(member)}>
+            {member.name} · {connectorOf(member)?.name ?? member.adapter} · {member.model}
           </option>
         ))}
       </optgroup>
     </select>
+      {notes.map((note) => (
+        <span key={note} className={needsConversation && note.includes('conversation') ? 'error-text' : 'muted'} style={{ fontSize: 12 }}>
+          {note}.
+        </span>
+      ))}
+    </span>
   )
 }
 

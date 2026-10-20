@@ -304,6 +304,8 @@ export class PipelineEngine {
     const limit = this.limitReached(runId)
     if (limit) throw new Error(usageLimitDetail(limit))
     if (this.fixRequested.has(runId)) return false
+    // An agent that can't carry on a conversation can't be asked to fix its file: the ticket stops instead.
+    if (!this.deps.agents.canFollowUp(runId)) return false
     this.fixRequested.add(runId)
     this.deps.agents.send(runId, formatFixMessage(file, problems), 'now')
     return true

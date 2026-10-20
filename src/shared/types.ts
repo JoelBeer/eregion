@@ -3,7 +3,8 @@ export type Runtime = { kind: 'native' } | { kind: 'wsl'; distro: string }
 
 /** One external tool Eregion depends on, as found in one runtime. */
 export interface ToolCheck {
-  tool: 'git' | 'gh' | 'claude' | 'cursor-agent'
+  /** git, gh, or an agent's command (claude, cursor-agent, codex, or a custom agent's). */
+  tool: string
   runtime: string
   found: boolean
   version?: string

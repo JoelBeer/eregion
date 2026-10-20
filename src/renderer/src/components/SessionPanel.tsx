@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
-import { ADAPTER_LABELS, type AgentEvent } from '@shared/agent'
+import type { AgentEvent } from '@shared/agent'
+import { agentName, useConnectors } from '../agents'
 import type { CrewMember, RunView } from '@shared/runs'
 import { NavIcon } from './icons'
 import { CrewAvatar } from './RobotAvatar'
@@ -130,6 +131,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
 
   const [dictated, setDictated] = useState(false)
   const voice = useVoice()
+  const connectors = useConnectors()
 
   const send = async (delivery: 'now' | 'queue', text = draft.trim(), byVoice = dictated): Promise<void> => {
     if (!text || (!view && !onSend)) return
@@ -195,7 +197,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
       <div className="er-session-head">
         <CrewAvatar member={crew} size={26} onDark />
         <span className="er-session-name">{name}</span>
-        <span>{[crew ? ADAPTER_LABELS[crew.adapter] : null, view?.run.model ?? crew?.model].filter(Boolean).join(' · ')}</span>
+        <span>{[crew ? agentName(connectors, crew.adapter) : null, view?.run.model ?? crew?.model].filter(Boolean).join(' · ')}</span>
         <Chip tone="forge">{stageLabel}</Chip>
         {path && <span className="er-session-path">{path}</span>}
       </div>

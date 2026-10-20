@@ -72,6 +72,69 @@ export function parseClaudeLine(line: string): AgentEvent[] {
 }
 
 /**
+ * Turns one line of `codex exec --json` into events. Codex reports items (messages, commands, file changes,
+ * MCP calls) as they start and complete, and each turn's usage when it completes. Its input tokens include
+ * the cached ones, so those are taken off to match the other agents.
+ */
+export function parseCodexLine(line: string): AgentEvent[] {
+  let message: Json
+  try {
+    message = JSON.parse(line) as Json
+  } catch {
+    return line.trim() ? [{ kind: 'system', text: line.trim() }] : []
+  }
+  const item = (message.item as Json | undefined) ?? {}
+  const id = String(item.id ?? '')
+  switch (message.type) {
+    case 'thread.started':
+      return [{ kind: 'init', sessionId: String(message.thread_id ?? ''), model: '' }]
+    case 'item.started':
+      if (item.type === 'command_execution') return [{ kind: 'tool', id, name: 'Bash', summary: summariseTool('Bash', { command: item.command }) }]
+      if (item.type === 'mcp_tool_call') return [{ kind: 'tool', id, name: `mcp__${String(item.server ?? '')}__${String(item.tool ?? '')}`, summary: `${String(item.server ?? '')} · ${String(item.tool ?? '')}` }]
+      if (item.type === 'web_search') return [{ kind: 'tool', id, name: 'WebSearch', summary: `searched ${String(item.query ?? '')}` }]
+      return []
+    case 'item.completed':
+      switch (item.type) {
+        case 'agent_message':
+          return typeof item.text === 'string' && item.text.trim() ? [{ kind: 'text', text: item.text }] : []
+        case 'command_execution':
+          return [{ kind: 'tool-result', id, ok: item.status === 'completed' && (item.exit_code === 0 || item.exit_code === undefined), output: String(item.aggregated_output ?? '').slice(0, 4000) }]
+        case 'mcp_tool_call':
+          return [{ kind: 'tool-result', id, ok: item.status === 'completed', output: JSON.stringify(item.result ?? item.error ?? '').slice(0, 4000) }]
+        case 'web_search':
+          return [{ kind: 'tool-result', id, ok: true, output: '' }]
+        case 'file_change': {
+          const paths = asArray(item.changes).map((change) => String(change.path ?? ''))
+          return [
+            { kind: 'tool', id, name: 'Edit', summary: `edited ${paths.join(', ')}` },
+            { kind: 'tool-result', id, ok: item.status === 'completed', output: '' }
+          ]
+        }
+        case 'error':
+          return [{ kind: 'system', text: String(item.message ?? '') }]
+        default:
+          return []
+      }
+    case 'turn.completed': {
+      const usage = (message.usage as Json | undefined) ?? {}
+      const number = (key: string): number => (typeof usage[key] === 'number' ? (usage[key] as number) : 0)
+      return [{ kind: 'result', ok: true, text: '', costUsd: null, usage: { input: Math.max(0, number('input_tokens') - number('cached_input_tokens')), output: number('output_tokens'), cached: number('cached_input_tokens') }, turns: 1 }]
+    }
+    case 'turn.failed':
+      return [{ kind: 'result', ok: false, text: String(((message.error as Json | undefined) ?? {}).message ?? 'The turn failed'), costUsd: null, usage: null, turns: 1 }]
+    case 'error':
+      return [{ kind: 'error', text: String(message.message ?? '') }]
+    default:
+      return []
+  }
+}
+
+/** A custom agent that prints plain text: every line is something it said. */
+export function parseTextLine(line: string): AgentEvent[] {
+  return line.trim() ? [{ kind: 'text', text: line }] : []
+}
+
+/**
  * Turns one line of `cursor-agent -p --output-format stream-json` into events. Cursor's stream uses
  * `tool_call` events with a started/completed subtype instead of content blocks.
  */
