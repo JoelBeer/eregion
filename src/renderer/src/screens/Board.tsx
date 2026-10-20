@@ -141,7 +141,7 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
   const runtimes = [...new Set(project.data.repos.map((repo) => (repo.runtime.startsWith('wsl:') ? `WSL ${repo.runtime.slice(4)}` : 'this machine')))].join(', ')
 
   return (
-    <main style={{ flex: 1, minWidth: 0, padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <main style={{ flex: 1, minWidth: 0, height: '100%', minHeight: 0, padding: '24px 28px 8px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
         <h1 style={{ fontSize: 20 }}>{project.data.name}</h1>
         <span className="muted" style={{ fontSize: 13 }}>
@@ -164,13 +164,14 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
           }}
         />
       )}
-      <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(250px, 1fr))`, gap: 16, minWidth: columns.length * 266, alignItems: 'start' }}>
+      {/* The board fills the rest of the screen: it scrolls sideways with its scrollbar along the bottom, and each column scrolls its own cards under a heading that stays put. */}
+      <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overflowY: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(250px, 1fr))`, gap: 16, minWidth: columns.length * 266, height: '100%' }}>
           {columns.map((column) => {
             const columnCards = visible.filter((card) => card.ticket.stage === column.id)
             const member = crewFor(column.stage)
             return (
-              <section key={column.id} aria-label={column.name} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <section key={column.id} aria-label={column.name} style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 2px 4px', borderTop: '3px solid var(--aqua-400)' }}>
                   {member && !quiet && <CrewAvatar member={member} size={22} />}
                   <h2 style={{ fontSize: 15 }}>{column.name}</h2>
@@ -178,14 +179,16 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
                     {member ? `${member.name} · ${columnCards.length}` : columnCards.length}
                   </span>
                 </div>
-                {columnCards.map((card) => (
-                  <BoardCard key={card.ticket.id} card={card} crew={crew.find((item) => item.id === card.crewId)} />
-                ))}
-                {columnCards.length === 0 && column.id === 'backlog' && (
-                  <div style={{ border: '1px dashed var(--border-300)', borderRadius: 12, padding: 14, fontSize: 13 }} className="muted">
-                    No tickets waiting. Add one with New ticket.
-                  </div>
-                )}
+                <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 4px 12px' }}>
+                  {columnCards.map((card) => (
+                    <BoardCard key={card.ticket.id} card={card} crew={crew.find((item) => item.id === card.crewId)} />
+                  ))}
+                  {columnCards.length === 0 && column.id === 'backlog' && (
+                    <div style={{ border: '1px dashed var(--border-300)', borderRadius: 12, padding: 14, fontSize: 13 }} className="muted">
+                      No tickets waiting. Add one with New ticket.
+                    </div>
+                  )}
+                </div>
               </section>
             )
           })}
