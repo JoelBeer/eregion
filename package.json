@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "A desktop app that moves Linear tickets through a configurable pipeline of AI agents, each in its own git worktree.",
   "private": true,
+  "license": "MIT",
+  "author": "Joel Beer",
+  "repository": "github:JoelBeer/eregion",
+  "engines": { "node": ">=22" },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

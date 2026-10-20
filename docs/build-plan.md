@@ -39,7 +39,7 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 - [x] 5. Pipeline and board
 - [x] 6. Integrations (proven end to end on Word Magic: WM-1 went from Linear through PR #2 to merged and Done)
 - [x] 7. Crew, Forge, Costs, Settings, voice (left for later: per-stage skill modes such as "always run" and "ask me first", allowing single tools of an MCP server, and MCP choices for Cursor runs)
-- [ ] 8. Polish and run instructions
+- [x] 8. Polish and run instructions (the window, icon and launcher; pipeline history; README and MIT licence. Still to do: make the repo public, and installers)
 
 ## Polish list (phase 8)
 
