@@ -20,9 +20,9 @@ function iconPath(): string | undefined {
 }
 
 function createWindow(): void {
-  // Frameless with the app's own title bar, except inside WSL: WSLg ignores the move and maximise requests a
-  // frameless window makes, so there Windows draws the frame (one row: the name and its own buttons).
-  const customTitleBar = !insideWsl()
+  // Frameless, with the app's own title bar: the name and the window buttons on one row. (Inside WSL this
+  // needs Wayland mode, set below; under X11, WSLg's frameless windows can't be dragged or minimised.)
+  const customTitleBar = true
   // Fill the screen even where a maximise request is ignored.
   const area = screen.getPrimaryDisplay().workAreaSize
   mainWindow = new BrowserWindow({
@@ -120,6 +120,13 @@ function registerIpc(api: EregionApi): void {
     if (action === 'close') mainWindow.close()
     return mainWindow.isMaximized()
   })
+}
+
+// Inside WSL the app must run as a Wayland client (--ozone-platform=wayland, from scripts/electron-flags.mjs):
+// under X11, WSLg can't drag or minimise a frameless window. Chromium chooses before this code runs, so the
+// flag can't be set from here; this only warns when it's missing.
+if (insideWsl() && app.commandLine.getSwitchValue('ozone-platform') !== 'wayland') {
+  console.warn('Inside WSL, start Eregion with --ozone-platform=wayland (npm start does), or the title bar cannot move the window.')
 }
 
 app.whenReady().then(() => {
