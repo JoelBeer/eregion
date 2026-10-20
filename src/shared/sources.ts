@@ -60,6 +60,24 @@ export function labelsMatch(labels: string[], rules: Pick<ImportRules, 'labels' 
   return rules.labels.every((label) => have.has(label.toLowerCase())) && !rules.excludeLabels.some((label) => have.has(label.toLowerCase()))
 }
 
+/** A project's ticket source as the Board shows it. */
+export interface SourceStatus {
+  kind: TicketSourceKind
+  name: string
+  /** The team, repo or project it reads from. */
+  location: string | null
+  /** Why it can't sync now, or null when it can. */
+  notReady: string | null
+  /** Issues come in by themselves (otherwise only by key). */
+  auto: boolean
+  /** Whose issues: "assigned to you", "in the team", ... */
+  whose: string
+  lastSyncAt: string | null
+  error: string | null
+  /** What an issue key looks like here, for the import box. */
+  keyExample: string
+}
+
 /** The label GitHub Issues and GitLab carry while a ticket is in a stage. */
 export const STAGE_LABEL_PREFIX = 'eregion:'
 export const stageLabel = (stageId: string): string => `${STAGE_LABEL_PREFIX}${stageId}`

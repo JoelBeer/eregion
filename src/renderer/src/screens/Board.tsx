@@ -8,8 +8,7 @@ import { useAction, useQuery } from '../hooks'
 import { navigate } from '../router'
 import { useQuiet } from '../quiet'
 import type { Project } from '@shared/model'
-import { sourceOf } from '@shared/sources'
-import { timeAgo, useLinearStatus } from './settings/IntegrationsSettings'
+import { timeAgo } from './settings/IntegrationsSettings'
 
 export function useCrew(): CrewMember[] {
   return useQuery(() => window.eregion.listCrew(), [], (event) => event.type === 'crew-changed').data ?? []
@@ -45,23 +44,33 @@ function useBoard(projectId: number): { cards: TicketCard[] | undefined; reload:
   return { cards, reload: () => void load.current() }
 }
 
-function LinearBar({ project }: { project: Project }): ReactElement | null {
-  const { status } = useLinearStatus()
+/** Where the project's tickets come from (Linear, GitHub Issues...), how the sync is doing, and import by key. */
+function SourceBar({ project }: { project: Project }): ReactElement | null {
+  const status = useQuery(
+    () => window.eregion.getSourceStatus(project.id),
+    [project.id],
+    (event) => event.type === 'linear-changed' || (event.type === 'project-changed' && event.projectId === project.id)
+  ).data
   const [key, setKey] = useState('')
-  const sync = useAction(() => window.eregion.syncLinear())
+  const sync = useAction(() => window.eregion.syncTickets())
   const importKey = useAction(async () => {
-    const ticket = await window.eregion.importLinearIssue(project.id, key)
+    const ticket = await window.eregion.importIssue(project.id, key)
     setKey('')
     navigate({ name: 'ticket', projectId: project.id, ticketId: ticket.id, tab: 'conversation' })
   })
-  if (sourceOf(project).kind !== 'linear' || !project.linear.teamId || !status?.method) return null
-  const manual = project.linear.pullFrom === 'manual'
-  const assignees = status.importAssignees
-  const whose = assignees.mode === 'me' ? 'assigned to you' : assignees.mode === 'everyone' ? 'in the team' : 'assigned to the people you chose'
+  if (!status || status.kind === 'manual') return null
+  if (status.notReady) {
+    return (
+      <span className="muted" style={{ fontSize: 13 }}>
+        {status.name}: {status.notReady}.
+      </span>
+    )
+  }
+  const manual = !status.auto
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13 }}>
       <span className="muted">
-        Linear {project.linear.teamName ?? project.linear.teamKey}: {manual ? 'import issues by key' : `issues ${whose} come in by themselves`} · synced {timeAgo(status.lastSyncAt)}
+        {status.name} {status.location}: {manual ? 'import issues by key' : `issues ${status.whose} come in by themselves`} · synced {timeAgo(status.lastSyncAt)}
       </span>
       {status.error && <span className="error-text">Sync failed: {status.error}</span>}
       {!manual && (
@@ -76,7 +85,7 @@ function LinearBar({ project }: { project: Project }): ReactElement | null {
           if (key.trim()) void importKey.run()
         }}
       >
-        <input className="input mono" aria-label="Linear issue key" placeholder={`${project.linear.teamKey ?? 'WM'}-123`} value={key} onChange={(event) => setKey(event.target.value)} style={{ width: 120, padding: '4px 8px' }} />
+        <input className="input mono" aria-label={`${status.name} issue key`} placeholder={status.keyExample} value={key} onChange={(event) => setKey(event.target.value)} style={{ width: 120, padding: '4px 8px' }} />
         <button type="submit" className="er-btn er-btn-sm" disabled={!key.trim() || importKey.pending}>
           Import
         </button>
@@ -86,7 +95,8 @@ function LinearBar({ project }: { project: Project }): ReactElement | null {
   )
 }
 
-function NewTicket({ projectId, linked, onDone }: { projectId: number; linked: boolean; onDone: () => void }): ReactElement {
+/** A new ticket: a new issue in the project's tracker when it has one (`linkedTo` is its name), or a ticket of Eregion's own. */
+function NewTicket({ projectId, linkedTo, onDone }: { projectId: number; linkedTo: string | null; onDone: () => void }): ReactElement {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const create = useAction(async () => {
@@ -109,7 +119,7 @@ function NewTicket({ projectId, linked, onDone }: { projectId: number; linked: b
         <textarea id="ticket-description" className="textarea" rows={4} value={description} onChange={(event) => setDescription(event.target.value)} />
       </div>
       <span className="muted" style={{ fontSize: 13 }}>
-        {linked ? 'Creates the issue in Linear, assigned to you, and adds it to the Backlog.' : "For work that isn't in Linear. It gets a key from the project's initials."}
+        {linkedTo ? `Creates the issue in ${linkedTo}, assigned to you, and adds it to the Backlog.` : "A ticket of Eregion's own. It gets a key from the project's initials."}
       </span>
       {create.error && <span className="error-text">{create.error}</span>}
       <div style={{ display: 'flex', gap: 8 }}>
@@ -131,7 +141,7 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
   const { cards, reload } = useBoard(projectId)
   const [adding, setAdding] = useState(false)
   const { quiet } = useQuiet()
-  const { status: linearStatus } = useLinearStatus()
+  const source = useQuery(() => window.eregion.getSourceStatus(projectId), [projectId], (event) => event.type === 'linear-changed' || (event.type === 'project-changed' && event.projectId === projectId)).data
   const [search, setSearch] = useState('')
 
   if (!project.data || !pipeline.data || !cards) return <main style={{ padding: 28 }} className="muted">Loading…</main>
@@ -156,11 +166,11 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
           + New ticket
         </button>
       </header>
-      <LinearBar project={project.data} />
+      <SourceBar project={project.data} />
       {adding && (
         <NewTicket
           projectId={projectId}
-          linked={Boolean(sourceOf(project.data).kind === 'linear' && project.data.linear.teamId && linearStatus?.method)}
+          linkedTo={source && source.kind !== 'manual' && !source.notReady ? source.name : null}
           onDone={() => {
             setAdding(false)
             reload()

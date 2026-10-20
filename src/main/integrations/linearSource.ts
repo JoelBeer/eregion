@@ -22,6 +22,10 @@ export class LinearSource implements TicketSource {
     return client
   }
 
+  location(project: Project): string | null {
+    return project.linear.teamName ?? project.linear.teamKey ?? null
+  }
+
   notReady(project: Project): string | null {
     if (!this.auth.client()) return 'Connect Linear first, in Settings › Integrations'
     if (!project.linear.teamId) return `Choose ${project.name}'s Linear team in its Tickets and code step`

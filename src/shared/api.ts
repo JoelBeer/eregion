@@ -11,7 +11,7 @@ import type { CostListing, CostPeriod, CostReport, UsageSummary } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
 import type { AgentConnector, CustomAgent } from './connectors'
-import type { TicketSourceConfig } from './sources'
+import type { SourceStatus, TicketSourceConfig } from './sources'
 import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
@@ -160,8 +160,14 @@ export interface EregionApi {
   listLinearUsers(): Promise<LinearUser[]>
   setLinearImportAssignees(value: ImportAssignees): Promise<LinearStatus>
   syncLinear(): Promise<LinearStatus>
-  importLinearIssue(projectId: number, key: string): Promise<Ticket>
-  pullTicketFromLinear(ticketId: number): Promise<Ticket>
+  /** Where the project's tickets come from, and how its sync is doing. */
+  getSourceStatus(projectId: number): Promise<SourceStatus>
+  /** Syncs every project's tickets now. */
+  syncTickets(): Promise<void>
+  /** Brings one issue in from the project's tracker by its key (WM-12, GH-12, #12...). */
+  importIssue(projectId: number, key: string): Promise<Ticket>
+  /** Pulls a ticket's issue again from its tracker. */
+  pullTicket(ticketId: number): Promise<Ticket>
 
   getCosts(projectId: number, period: CostPeriod, listing?: CostListing): Promise<CostReport>
   /** Today's and this month's spend and tokens, for the sidebar. */
@@ -283,8 +289,10 @@ export const API_METHODS = [
   'listLinearUsers',
   'setLinearImportAssignees',
   'syncLinear',
-  'importLinearIssue',
-  'pullTicketFromLinear',
+  'getSourceStatus',
+  'syncTickets',
+  'importIssue',
+  'pullTicket',
   'getCosts',
   'getUsage',
   'listAgents',

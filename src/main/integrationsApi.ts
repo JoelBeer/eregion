@@ -1,5 +1,6 @@
 import type { EregionApi } from '@shared/api'
 import { callbackUrl, OAUTH_PORTS, type LinearStatus } from '@shared/integrations'
+import { importRules, sourceOf, SOURCE_NAMES } from '@shared/sources'
 import type { Ticket } from '@shared/tickets'
 import type { LinearAuth } from './integrations/linearAuth'
 import type { IssueSync } from './integrations/sources'
@@ -22,8 +23,10 @@ export type IntegrationsApi = Pick<
   | 'listLinearUsers'
   | 'setLinearImportAssignees'
   | 'syncLinear'
-  | 'importLinearIssue'
-  | 'pullTicketFromLinear'
+  | 'getSourceStatus'
+  | 'syncTickets'
+  | 'importIssue'
+  | 'pullTicket'
   | 'getTicketPrs'
   | 'markPrsReady'
   | 'updatePrDescription'
@@ -100,8 +103,32 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
       await sync.syncAll()
       return status()
     },
-    importLinearIssue: async (projectId, key) => sync.importByKey(projects.get(projectId), key),
-    pullTicketFromLinear: async (ticketId) => sync.pullAgain(tickets.get(ticketId)),
+    getSourceStatus: async (projectId) => {
+      const project = projects.get(projectId)
+      const config = sourceOf(project)
+      const source = sync.source(project)
+      const last = sync.lastSync(config.kind)
+      const rules = importRules(config)
+      const assignees = auth.importAssignees()
+      const who = config.kind === 'linear' ? (assignees.mode === 'people' ? 'people' : assignees.mode) : rules.who
+      const people = config.kind === 'linear' && assignees.mode === 'people' ? assignees.people : rules.people
+      const whose = who === 'me' ? 'assigned to you' : who === 'everyone' ? 'open, assigned to anyone' : `assigned to ${people.map((person) => person.name).join(', ') || 'the people you chose'}`
+      const location = source?.location(project) ?? null
+      return {
+        kind: config.kind,
+        name: SOURCE_NAMES[config.kind],
+        location,
+        notReady: source ? source.notReady(project) : null,
+        auto: config.kind === 'linear' ? (project.linear.pullFrom ?? 'assigned') !== 'manual' : (config.pullFrom ?? 'auto') !== 'manual',
+        whose,
+        lastSyncAt: last.at,
+        error: last.error,
+        keyExample: config.kind === 'github-issues' ? 'GH-12' : config.kind === 'gitlab-issues' ? 'GL-12' : `${project.linear.teamKey ?? project.initials}-123`
+      }
+    },
+    syncTickets: async () => sync.syncAll(),
+    importIssue: async (projectId, key) => sync.importByKey(projects.get(projectId), key),
+    pullTicket: async (ticketId) => sync.pullAgain(tickets.get(ticketId)),
 
     getTicketPrs: async (ticketId) => prs.forTicket(ticketId).map(({ repoId: _repoId, headSha: _headSha, rerunSha: _rerunSha, pushedSha: _pushedSha, ...pr }) => pr),
     markPrsReady: (ticketId) => deps.prStage.markReady(ticketId),

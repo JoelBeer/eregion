@@ -30,6 +30,8 @@ export interface TicketSource {
   readonly kind: Exclude<TicketSourceKind, 'manual'>
   /** Why it can't sync this project now (not connected, no team chosen), or null when it can. */
   notReady(project: Project): string | null
+  /** The team, repo or project it reads this project's issues from, for the screens. */
+  location(project: Project): string | null
   /** Issues that should be in the Backlog now: whoever the rules say, in importable states, with the right labels. */
   candidates(project: Project): Promise<SourceIssue[]>
   /** Current versions of these issues, for ones that dropped out of the candidates. */
@@ -58,8 +60,13 @@ export interface SyncEvents {
   statusChanged(): void
 }
 
-function ticketData(issue: SourceIssue, previous: LinearData = {}): LinearData {
-  return { ...previous, ...issue.data, pulledAt: new Date().toISOString() }
+function ticketData(source: TicketSource, issue: SourceIssue, previous: LinearData = {}): LinearData {
+  return { ...previous, ...issue.data, source: source.kind, pulledAt: new Date().toISOString() }
+}
+
+/** Whether a ticket's issue is in this tracker: a project that changed trackers keeps its old tickets untouched. */
+export function fromSource(ticket: Ticket, kind: TicketSource['kind']): boolean {
+  return ticket.linearId !== null && (ticket.linear.source ?? 'linear') === kind
 }
 
 /**
@@ -167,7 +174,7 @@ export class IssueSync {
     for (const issue of issues) {
       seen.add(issue.id)
       const existing = this.tickets.findByLinearId(project.id, issue.id)
-      if (existing) {
+      if (existing && fromSource(existing, source.kind)) {
         this.refresh(project, source, existing, issue)
         result.refreshed++
         continue
@@ -177,7 +184,7 @@ export class IssueSync {
         this.tickets.log(clash.id, 'warning', `${name} issue ${issue.key} has the same key as this ticket made in Eregion, so it wasn't imported`)
         continue
       }
-      const ticket = this.tickets.create({ projectId: project.id, key: issue.key, title: issue.title, description: issue.description, url: issue.url, linearId: issue.id, linear: { ...ticketData(issue), isNew: true } })
+      const ticket = this.tickets.create({ projectId: project.id, key: issue.key, title: issue.title, description: issue.description, url: issue.url, linearId: issue.id, linear: { ...ticketData(source, issue), isNew: true } })
       this.tickets.log(ticket.id, 'source', `Imported from ${name}${issue.data.assignee ? ` (assigned to ${issue.data.assignee})` : ''}`)
       result.imported.push(issue.key)
       this.events.ticketChanged(ticket)
@@ -185,7 +192,7 @@ export class IssueSync {
     }
 
     // Issues that dropped out of the list: assigned away, finished, or moved on in the tracker.
-    const missing = this.tickets.list(project.id).filter((ticket) => ticket.linearId && !seen.has(ticket.linearId) && ticket.stage !== 'done')
+    const missing = this.tickets.list(project.id).filter((ticket) => fromSource(ticket, source.kind) && !seen.has(ticket.linearId as string) && ticket.stage !== 'done')
     const current = missing.length > 0 ? await source.byIds(project, missing.map((ticket) => ticket.linearId as string)) : []
     for (const ticket of missing) {
       const issue = current.find((item) => item.id === ticket.linearId)
@@ -208,7 +215,7 @@ export class IssueSync {
   }
 
   private refresh(project: Project, source: TicketSource, ticket: Ticket, issue: SourceIssue): void {
-    const data = ticketData(issue, ticket.linear)
+    const data = ticketData(source, issue, ticket.linear)
     if (source.wanted(project, issue)) data.reassigned = false
     const changed = ticket.title !== issue.title || ticket.description !== issue.description || JSON.stringify({ ...ticket.linear, pulledAt: null }) !== JSON.stringify({ ...data, pulledAt: null })
     const updated = this.tickets.update(ticket.id, { title: issue.title, description: issue.description, url: issue.url, linear: data })
@@ -220,12 +227,12 @@ export class IssueSync {
     const source = this.requireSource(project)
     const issue = await source.byKey(project, key.trim())
     const existing = this.tickets.findByLinearId(project.id, issue.id)
-    if (existing) {
+    if (existing && fromSource(existing, source.kind)) {
       this.refresh(project, source, existing, issue)
       return this.tickets.get(existing.id)
     }
-    if (this.tickets.findByKey(project.id, issue.key)) throw new Error(`${issue.key} is already used by a ticket made in Eregion`)
-    const ticket = this.tickets.create({ projectId: project.id, key: issue.key, title: issue.title, description: issue.description, url: issue.url, linearId: issue.id, linear: ticketData(issue) })
+    if (this.tickets.findByKey(project.id, issue.key)) throw new Error(`${issue.key} is already used by another ticket in this project`)
+    const ticket = this.tickets.create({ projectId: project.id, key: issue.key, title: issue.title, description: issue.description, url: issue.url, linearId: issue.id, linear: ticketData(source, issue) })
     this.tickets.log(ticket.id, 'source', `Imported from ${SOURCE_NAMES[source.kind]} by key`)
     this.events.ticketChanged(ticket)
     return ticket
@@ -234,7 +241,7 @@ export class IssueSync {
   async pullAgain(ticket: Ticket): Promise<Ticket> {
     const project = this.projects.get(ticket.projectId)
     const source = this.requireSource(project)
-    if (!ticket.linearId) throw new Error(`${ticket.key} didn't come from ${SOURCE_NAMES[source.kind]}`)
+    if (!fromSource(ticket, source.kind)) throw new Error(`${ticket.key} didn't come from ${SOURCE_NAMES[source.kind]}`)
     this.refresh(project, source, ticket, await source.byKey(project, ticket.key))
     return this.tickets.get(ticket.id)
   }
@@ -254,10 +261,9 @@ export function sourceIntegrations(sync: IssueSync, notify: (title: string, body
   const hook =
     <K extends keyof TicketSource['hooks']>(name: K) =>
     async (ticket: Ticket, ...rest: unknown[]): Promise<void> => {
-      if (!ticket.linearId) return
       const project = rest.at(-1) as Project
       const source = sync.source(project)
-      if (!source || source.notReady(project)) return
+      if (!source || !fromSource(ticket, source.kind) || source.notReady(project)) return
       const fn = source.hooks[name] as ((...args: unknown[]) => Promise<void>) | undefined
       await fn?.(ticket, ...rest)
     }

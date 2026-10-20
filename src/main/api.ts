@@ -5,7 +5,7 @@ import { branchName, type Project, type ProjectFile, type Variable } from '@shar
 import { nextFreeSlot } from '@shared/slots'
 import { resolveVariables } from '@shared/variables'
 import type { Db } from './db'
-import { detectRepo, detectRepoAt } from './projects/detect'
+import { detectRepo, detectRepoAt, runnerForRuntimeId } from './projects/detect'
 import { ProjectStore } from './projects/store'
 import { ticketBuiltins } from './recipe/context'
 import { ServiceManager } from './recipe/services'
@@ -23,6 +23,7 @@ import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
 import { GhCli, type GitHub } from './integrations/github'
 import type { FetchLike } from './integrations/linear'
 import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
+import { GitHubIssuesSource } from './integrations/githubIssues'
 import { LinearSource } from './integrations/linearSource'
 import { IssueSync, sourceIntegrations } from './integrations/sources'
 import { createIntegrationsApi } from './integrationsApi'
@@ -118,7 +119,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     host.emit({ type: 'notice', title, body })
   }
   const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
-  const issueSync = new IssueSync(db, [new LinearSource(linearAuth)], projects, tickets, {
+  const issueSync = new IssueSync(db, [new LinearSource(linearAuth), new GitHubIssuesSource(runnerForRuntimeId)], projects, tickets, {
     ticketChanged: (ticket) => ticketChanged(ticket),
     ticketRemoved: (projectId) => {
       host.emit({ type: 'project-changed', projectId })

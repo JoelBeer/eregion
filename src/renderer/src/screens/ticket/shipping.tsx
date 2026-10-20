@@ -226,7 +226,7 @@ export function DoneSummary({ prs, runs }: { prs: PullRequest[]; runs: RunSummar
 
 /** A ticket from Linear before work starts: what came in, and Pull again. */
 export function LinearDetails({ ticket }: { ticket: Ticket }): ReactElement | null {
-  const pull = useAction(() => window.eregion.pullTicketFromLinear(ticket.id))
+  const pull = useAction(() => window.eregion.pullTicket(ticket.id))
   if (!ticket.linearId) return null
   const { linear } = ticket
   const facts = [linear.state, linear.priority && linear.priority !== 'No priority' ? `${linear.priority} priority` : null, linear.estimate ? `Estimate ${linear.estimate}` : null, linear.assignee ? `Assigned to ${linear.assignee}` : null].filter(Boolean)

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { DEFAULT_IMPORT_STATE_TYPES, type LinearState, type LinearStateType, type LinearTeam } from '@shared/integrations'
 import { DEFAULT_LINEAR_PUSH, type GithubProjectConfig, type LinearProjectConfig } from '@shared/model'
-import { importRules, sourceOf, SOURCE_NAMES, type ImportRules, type TicketSourceConfig, type TicketSourceKind } from '@shared/sources'
+import { DEFAULT_SOURCE_PUSH, importRules, sourceOf, SOURCE_NAMES, type ImportRules, type TicketSourceConfig, type TicketSourceKind } from '@shared/sources'
 import { Switch } from '../../components/ui'
 import { errorMessage, useAction, useQuery } from '../../hooks'
 import { href } from '../../router'
@@ -154,8 +154,82 @@ function LinearSection({ project, save }: { project: StepProps['project']; save:
 /** The ticket sources this version of Eregion can read, in the order they're offered. */
 const SOURCE_CHOICES: { kind: TicketSourceKind; detail: string }[] = [
   { kind: 'linear', detail: 'Issues from a Linear team. Connect Linear in Settings › Integrations.' },
+  { kind: 'github-issues', detail: "Issues from a GitHub repo, through gh signed in as you. While a ticket is in a stage, its issue carries that stage's eregion: label." },
   { kind: 'manual', detail: "No tracker: add tickets with New ticket on the Board. Their keys use the project's initials." }
 ]
+
+/**
+ * A tracker other than Linear: where its issues are, whose come in (yours, chosen people's, or everyone's),
+ * by themselves or by key, and what goes back to it.
+ */
+function TrackerSection({
+  source,
+  save,
+  location
+}: {
+  source: TicketSourceConfig
+  save: (source: TicketSourceConfig) => void
+  location: { label: string; placeholder: string; hint: string; peopleHint: string }
+}): ReactElement {
+  const rules = importRules(source)
+  const push = { ...DEFAULT_SOURCE_PUSH, ...source.push }
+  const [where, setWhere] = useState(source.location ?? '')
+  const [people, setPeople] = useState(rules.people.map((person) => person.id).join(', '))
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
+        <label className="muted" htmlFor="source-location">
+          {location.label}
+        </label>
+        <input id="source-location" className="input mono" placeholder={location.placeholder} value={where} onChange={(event) => setWhere(event.target.value)} onBlur={() => save({ ...source, location: where.trim() })} />
+        <span />
+        <span className="muted" style={{ fontSize: 13 }}>
+          {location.hint}
+        </span>
+        <span className="muted">Pull tickets</span>
+        <select className="select" aria-label="Pull tickets" value={source.pullFrom ?? 'auto'} onChange={(event) => save({ ...source, pullFrom: event.target.value as 'auto' | 'manual' })}>
+          <option value="auto">Automatically</option>
+          <option value="manual">Only issues I import by key</option>
+        </select>
+      </div>
+      {(source.pullFrom ?? 'auto') === 'auto' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span className="label">Open issues assigned to</span>
+          {(['me', 'people', 'everyone'] as const).map((who) => (
+            <label key={who} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="radio" name="source-who" checked={rules.who === who} onChange={() => save({ ...source, rules: { ...rules, who } })} />
+              {who === 'me' ? 'Me' : who === 'people' ? 'Specific people' : 'Anyone, or no one (everything open)'}
+            </label>
+          ))}
+          {rules.who === 'people' && (
+            <input
+              className="input mono"
+              aria-label="People"
+              style={{ marginLeft: 24, maxWidth: 420 }}
+              placeholder={location.peopleHint}
+              value={people}
+              onChange={(event) => setPeople(event.target.value)}
+              onBlur={() => save({ ...source, rules: { ...rules, people: labelList(people).map((id) => ({ id, name: id })) } })}
+            />
+          )}
+          <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+            Check every
+            <input className="input" type="number" min={30} style={{ width: 90 }} value={source.pollSec ?? 60} onChange={(event) => save({ ...source, pollSec: Math.max(30, Number(event.target.value) || 60) })} />
+            seconds
+          </label>
+          <span className="muted" style={{ fontSize: 13 }}>
+            Closed issues never come in. An issue assigned to someone else leaves the Backlog, or gets flagged if work has started.
+          </span>
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span className="label">Send back</span>
+        <Switch label="The approved plan, as a comment" checked={push.planComment} onChange={(planComment) => save({ ...source, push: { ...push, planComment } })} />
+        <Switch label="Links to the pull requests, as a comment" checked={push.prLinks} onChange={(prLinks) => save({ ...source, push: { ...push, prLinks } })} />
+      </div>
+    </div>
+  )
+}
 
 /** Comma-separated labels, as typed. */
 const labelList = (text: string): string[] =>
@@ -217,6 +291,23 @@ export function IntegrationsStep({ project, next }: StepProps): ReactElement {
           <h2 style={{ fontSize: 18 }}>Linear</h2>
           <LinearSection project={project} save={(linear) => void saveLinear.run(linear)} />
           {saveLinear.error && <span className="error-text">{saveLinear.error}</span>}
+        </section>
+      )}
+
+      {source.kind === 'github-issues' && (
+        <section className="panel" aria-label="GitHub Issues">
+          <h2 style={{ fontSize: 18 }}>GitHub Issues</h2>
+          <TrackerSection
+            key={project.id}
+            source={source}
+            save={(next) => void saveSource.run(next)}
+            location={{
+              label: 'Repo',
+              placeholder: project.repos.find((repo) => repo.githubRepo)?.githubRepo ?? 'owner/name',
+              hint: 'Leave it empty to use the first repo. Tickets are GH- and the issue number, like GH-12.',
+              peopleHint: 'GitHub usernames, comma-separated'
+            }}
+          />
         </section>
       )}
 

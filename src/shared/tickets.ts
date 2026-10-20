@@ -16,6 +16,8 @@ export interface LinearData {
   assignee?: string | null
   /** The assignee's id in the tracker, for telling whether it's still assigned to whoever this project imports for. */
   assigneeId?: string | null
+  /** Which tracker the issue is in. Tickets from before sources came from Linear. */
+  source?: 'linear' | 'github-issues' | 'jira' | 'gitlab-issues'
   /** Imported by a sync and not started yet: the card shows "New". */
   isNew?: boolean
   /** Assigned to someone else in Linear after work started here. */
