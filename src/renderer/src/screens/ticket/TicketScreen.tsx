@@ -1,6 +1,6 @@
 import { usageLimitMessage } from '@shared/agent'
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import type { StageConfig } from '@shared/pipeline'
+import { isGenericStage, sendBackTarget, type StageConfig } from '@shared/pipeline'
 import type { CrewMember, RunSummary } from '@shared/runs'
 import type { RepoDiff, TicketDetail, TicketOutputs } from '@shared/ticketDetail'
 import { Markdown } from '../../components/Markdown'
@@ -69,7 +69,7 @@ function runOutcome(run: RunSummary): string {
 function runLabel(run: RunSummary, stages: StageConfig[], crew: CrewMember[]): string {
   const stage = stages.find((item) => item.id === run.stage)
   const member = crew.find((item) => item.id === run.crewId)
-  const pass = stage?.kind === 'build' || stage?.kind === 'review' ? ` ${run.loop}` : ''
+  const pass = stage && isGenericStage(stage) ? ` ${run.loop}` : ''
   return `${stage?.name ?? run.stage}${pass} · ${member?.name ?? run.model}`
 }
 
@@ -276,7 +276,7 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
   const viewedRun = detail.runs.find((run) => run.id === runId)
   const viewedStage = detail.stages.find((item) => item.id === viewedRun?.stage) ?? stage
   const nextStage = currentIndex >= 0 ? (stages[currentIndex + 1] ?? null) : null
-  const builder = crewForStage(detail.stages.find((item) => item.kind === 'build'), crew)
+  const builder = crewForStage(nextStage ?? undefined, crew)
   const tabs: { id: TicketTab; label: string }[] = [
     { id: 'conversation', label: 'Conversation' },
     { id: 'outputs', label: 'Outputs' },
@@ -376,8 +376,8 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
               {stage?.kind === 'plan' && <PlanPanel ticket={ticket} outputs={outputs} builder={builder} nextStage={nextStage} />}
               {stage?.kind === 'pr' && <PrPanel ticket={ticket} prs={prs} descriptions={outputs?.prDescriptions ?? {}} nextStage={nextStage} />}
               {stage?.kind === 'ci' && <CiPanel ticket={ticket} prs={prs} stage={stage} />}
-              {ticket.waitingFor === 'manual-review' && <ReviewDecision ticket={ticket} outputs={outputs} nextStage={nextStage} />}
-              {stage?.kind === 'custom' && ticket.waitingFor === 'approval' && (
+              {ticket.waitingFor === 'manual-review' && stage && <ReviewDecision ticket={ticket} outputs={outputs} stage={stage} sendBackTo={sendBackTarget(stages, stage.id) ?? null} nextStage={nextStage} />}
+              {stage && isGenericStage(stage) && ticket.waitingFor === 'approval' && (
                 <button type="button" className="er-btn er-btn-primary" onClick={() => void window.eregion.approveStage(ticketId).then(() => navigate({ name: 'ticket', projectId, ticketId, tab: 'conversation' }))}>
                   Approve {stage.name}
                 </button>

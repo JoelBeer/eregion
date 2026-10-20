@@ -1,5 +1,22 @@
 import { Fragment, useEffect, useState, type DragEvent, type ReactElement } from 'react'
-import { DEFAULT_CI, defaultPipeline, isPinnedStage, moveStage, validatePipeline, type CiSettings, type DoneWhen, type StageAction, type StageConfig } from '@shared/pipeline'
+import {
+  canFail,
+  DEFAULT_CI,
+  defaultPipeline,
+  isGenericStage,
+  isPinnedStage,
+  moveStage,
+  readsVerdict,
+  stageAccess,
+  stageFromTemplate,
+  validatePipeline,
+  verdictFile,
+  type CiSettings,
+  type DoneWhen,
+  type StageAction,
+  type StageConfig,
+  type StageTemplate
+} from '@shared/pipeline'
 import type { CrewMember } from '@shared/runs'
 import { Switch } from '../../components/ui'
 import { errorMessage, useAction } from '../../hooks'
@@ -20,7 +37,8 @@ const DONE_LABELS: Record<DoneWhen, string> = {
   approval: 'You approve it',
   'agent-finishes': 'The agent finishes and its files are written',
   command: 'A command passes',
-  'review-pass': 'The review passes, then you approve it',
+  verdict: 'Its verdict passes',
+  'review-pass': 'Its verdict passes, then you check it',
   'prs-ready': 'The pull requests are open',
   'prs-merged': 'The pull requests are merged',
   'prs-green': 'Every required check is green'
@@ -38,6 +56,9 @@ const STAGE_COLOURS: Record<StageConfig['kind'], string> = {
 
 const ROLES: CrewMember['role'][] = ['Planner', 'Builder', 'Reviewer', 'Shipper']
 
+/** How a stage between Plan and Watch CI can be done. */
+const GENERIC_DONE: DoneWhen[] = ['agent-finishes', 'approval', 'command', 'verdict', 'review-pass']
+
 function hasAction(stage: StageConfig, type: StageAction['type']): boolean {
   return stage.after.some((action) => action.type === type)
 }
@@ -45,27 +66,6 @@ function hasAction(stage: StageConfig, type: StageAction['type']): boolean {
 function toggleAction(stage: StageConfig, action: StageAction, on: boolean): StageConfig {
   const rest = stage.after.filter((item) => item.type !== action.type)
   return { ...stage, after: on ? [...rest, action] : rest }
-}
-
-function newCustomStage(stages: StageConfig[]): StageConfig {
-  let n = 1
-  while (stages.some((stage) => stage.id === `custom-${n}`)) n++
-  return {
-    id: `custom-${n}`,
-    name: 'New stage',
-    kind: 'custom',
-    enabled: true,
-    crewRole: 'Builder',
-    crewId: null,
-    mode: 'autonomous',
-    workspace: 'ticket-worktrees',
-    goal: '',
-    outputs: [],
-    doneWhen: 'agent-finishes',
-    before: [],
-    after: [],
-    linearState: null
-  }
 }
 
 function CrewPicker({ stage, crew, onChange }: { stage: StageConfig; crew: CrewMember[]; onChange: (stage: StageConfig) => void }): ReactElement {
@@ -131,50 +131,62 @@ function CiEditor({ ci, onChange }: { ci: CiSettings; onChange: (ci: CiSettings)
 
 function StageEditor({ stage, stages, crew, onChange, onMove, onRemove }: { stage: StageConfig; stages: StageConfig[]; crew: CrewMember[]; onChange: (stage: StageConfig) => void; onMove: (by: -1 | 1) => void; onRemove: () => void }): ReactElement {
   const defaults = defaultPipeline().find((item) => item.kind === stage.kind)
-  const doneOptions: DoneWhen[] = stage.kind === 'custom' ? ['agent-finishes', 'approval', 'command'] : stage.kind === 'ci' ? ['prs-merged', 'prs-green'] : [stage.doneWhen]
-  const earlier = stages.slice(0, stages.indexOf(stage)).filter((item) => item.kind !== 'plan')
+  const generic = isGenericStage(stage)
+  const doneOptions: DoneWhen[] = generic ? GENERIC_DONE : stage.kind === 'ci' ? ['prs-merged', 'prs-green'] : [stage.doneWhen]
+  const index = stages.indexOf(stage)
+  const earlier = stages.slice(0, index).filter(isGenericStage)
+  const access = stageAccess(stage)
+  const verdict = verdictFile(stage)
+  const fallbackReturn = [...earlier].reverse().find((item) => stageAccess(item) === 'changes') ?? earlier.at(-1)
   return (
     <section className="panel" aria-label={`${stage.name} settings`}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <input className="input" aria-label="Stage name" style={{ width: 220, fontWeight: 600 }} value={stage.name} onChange={(event) => onChange({ ...stage, name: event.target.value })} />
         <span className="muted" style={{ fontSize: 13 }}>
-          {KIND_LABELS[stage.kind]} stage
+          {generic ? (stage.kind === 'custom' ? 'Your own stage' : `From the ${KIND_LABELS[stage.kind]} template`) : `${KIND_LABELS[stage.kind]} stage`}
         </span>
         <div style={{ flex: 1 }} />
         {!isPinnedStage(stage) && (
           <>
-            <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => onMove(-1)} disabled={stages.indexOf(stage) <= 1}>
+            <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => onMove(-1)} disabled={index <= 1}>
               ← Move earlier
             </button>
-            <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => onMove(1)} disabled={stages.indexOf(stage) >= stages.length - (stages.at(-1)?.kind === 'ci' ? 2 : 1)}>
+            <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => onMove(1)} disabled={index >= stages.length - (stages.at(-1)?.kind === 'ci' ? 2 : 1)}>
               Move later →
+            </button>
+            <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={onRemove}>
+              Remove stage
             </button>
           </>
         )}
         {stage.kind === 'ci' && <Switch label="On" checked={stage.enabled} onChange={(enabled) => onChange({ ...stage, enabled })} />}
-        {stage.kind === 'custom' && (
-          <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={onRemove}>
-            Remove stage
-          </button>
-        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '160px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
         <span className="muted">Who runs it</span>
         <CrewPicker stage={stage} crew={crew} onChange={onChange} />
 
-        {stage.kind === 'custom' && (
+        {generic && (
           <>
             <span className="muted">Works in</span>
             <select className="select" aria-label="Works in" value={stage.workspace} onChange={(event) => onChange({ ...stage, workspace: event.target.value as StageConfig['workspace'] })}>
-              <option value="ticket-worktrees">The ticket's worktrees (can change code)</option>
+              <option value="ticket-worktrees">The ticket's worktrees, with its app running</option>
               <option value="plan-checkout">The shared read-only checkout</option>
             </select>
+            {stage.workspace === 'ticket-worktrees' && (
+              <>
+                <span className="muted">Changes</span>
+                <select className="select" aria-label="Changes" value={access} onChange={(event) => onChange({ ...stage, access: event.target.value as 'changes' | 'read-only' })}>
+                  <option value="changes">It can change the ticket's files</option>
+                  <option value="read-only">Read-only: anything it changes is thrown away</option>
+                </select>
+              </>
+            )}
             <span className="muted">Files it writes</span>
             <input
               className="input mono"
               aria-label="Files it writes"
-              placeholder="notes.md, report.json"
+              placeholder="notes.md, check.json"
               value={stage.outputs.join(', ')}
               onChange={(event) => onChange({ ...stage, outputs: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) })}
             />
@@ -199,48 +211,73 @@ function StageEditor({ stage, stages, crew, onChange, onMove, onRemove }: { stag
             <input className="input mono" aria-label="Done command" placeholder="php artisan test" value={stage.doneCommand ?? ''} onChange={(event) => onChange({ ...stage, doneCommand: event.target.value })} />
           </>
         )}
-
-        {stage.kind === 'review' && (
+        {generic && readsVerdict(stage) && (
           <>
-            <span className="muted">If it fails</span>
-            <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              back to
-              <select
-                className="select"
-                aria-label="Return to"
-                value={stage.onFailure?.returnTo ?? 'build'}
-                onChange={(event) => onChange({ ...stage, onFailure: { maxLoops: stage.onFailure?.maxLoops ?? 2, returnTo: event.target.value } })}
-              >
-                {earlier.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-              at most
-              <input
-                className="input"
-                type="number"
-                min={1}
-                max={10}
-                aria-label="Loops"
-                style={{ width: 70 }}
-                value={stage.onFailure?.maxLoops ?? 2}
-                onChange={(event) => onChange({ ...stage, onFailure: { returnTo: stage.onFailure?.returnTo ?? 'build', maxLoops: Math.min(10, Math.max(1, Number(event.target.value) || 2)) } })}
-              />
-              times, then stop and ask me
+            <span className="muted">Verdict</span>
+            <span className={verdict ? 'muted' : 'error-text'} style={{ fontSize: 13 }}>
+              {verdict ? (
+                <>
+                  Read from <span className="mono">{verdict}</span>: {'{"verdict": "pass" | "fail", "summary", "issues": [...]}'}, like Review's.
+                </>
+              ) : (
+                'Add a .json file to the files it writes; the verdict goes in it.'
+              )}
             </span>
           </>
         )}
 
+        {generic && canFail(stage) && (
+          <>
+            <span className="muted">If it fails</span>
+            <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                className="select"
+                aria-label="Go back to"
+                value={stage.onFailure?.returnTo ?? ''}
+                onChange={(event) => onChange({ ...stage, onFailure: event.target.value ? { maxLoops: stage.onFailure?.maxLoops ?? 2, returnTo: event.target.value } : undefined })}
+              >
+                <option value="">Stop and ask me</option>
+                {earlier.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    Go back to {item.name}
+                  </option>
+                ))}
+              </select>
+              {stage.onFailure && (
+                <>
+                  at most
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={10}
+                    aria-label="Loops"
+                    style={{ width: 70 }}
+                    value={stage.onFailure.maxLoops}
+                    onChange={(event) => onChange({ ...stage, onFailure: { returnTo: stage.onFailure?.returnTo ?? fallbackReturn?.id ?? '', maxLoops: Math.min(10, Math.max(1, Number(event.target.value) || 2)) } })}
+                  />
+                  times, then stop and ask me
+                </>
+              )}
+            </span>
+            {stage.onFailure && (
+              <>
+                <span />
+                <span className="muted" style={{ fontSize: 12 }}>
+                  The cap stops a runaway loop from spending all the tokens. Agent errors and usage limits don't count: they stop and ask you without using up a loop.
+                </span>
+              </>
+            )}
+          </>
+        )}
       </div>
 
-      {stage.kind !== 'pr' && stage.kind !== 'ci' && stage.kind !== 'plan' && (
+      {generic && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span className="muted" style={{ fontSize: 13 }}>
             Afterwards
           </span>
-          {stage.kind === 'build' && (
+          {stage.workspace === 'ticket-worktrees' && access === 'changes' && (
             <>
               <Switch label="Commit the changes" checked={hasAction(stage, 'commit')} onChange={(on) => onChange(toggleAction(stage, { type: 'commit' }, on))} />
               <Switch label="Push the branch" checked={hasAction(stage, 'push')} onChange={(on) => onChange(toggleAction(stage, { type: 'push' }, on))} />
@@ -263,10 +300,38 @@ function StageEditor({ stage, stages, crew, onChange, onMove, onRemove }: { stag
         </div>
         <textarea id={`goal-${stage.id}`} className="textarea mono" rows={12} style={{ fontSize: 12.5 }} value={stage.goal} onChange={(event) => onChange({ ...stage, goal: event.target.value })} />
         <span className="muted" style={{ fontSize: 12 }}>
-          Eregion adds the ticket, the workspace and the output format around this. Variables like <span className="mono">{'{{ticket.key}}'}</span> work here.
+          Eregion adds the ticket, the workspace and the output format around this. Variables like <span className="mono">{'{{ticket.key}}'}</span> work here, and{' '}
+          <span className="mono">{'{{review.previous}}'}</span> holds the failed verdict when work comes back to this stage.
         </span>
       </div>
     </section>
+  )
+}
+
+/** The templates + offers between two stages. */
+function AddStageMenu({ stages, onPick, onCancel }: { stages: StageConfig[]; onPick: (template: StageTemplate) => void; onCancel: () => void }): ReactElement {
+  const hasPr = stages.some((stage) => stage.kind === 'pr')
+  return (
+    <div role="group" aria-label="Add a stage" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span className="muted" style={{ fontSize: 13 }}>
+        Add a stage here:
+      </span>
+      <button type="button" className="er-btn er-btn-sm" onClick={() => onPick('build')}>
+        Build
+      </button>
+      <button type="button" className="er-btn er-btn-sm" onClick={() => onPick('review')}>
+        Review
+      </button>
+      <button type="button" className="er-btn er-btn-sm" disabled={hasPr} title={hasPr ? 'There can only be one Pull requests stage' : undefined} onClick={() => onPick('pr')}>
+        Pull requests
+      </button>
+      <button type="button" className="er-btn er-btn-sm" onClick={() => onPick('custom')}>
+        Blank
+      </button>
+      <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={onCancel}>
+        Cancel
+      </button>
+    </div>
   )
 }
 
@@ -277,6 +342,7 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
   const [selected, setSelected] = useState('plan')
   const [dragging, setDragging] = useState<number | null>(null)
   const [over, setOver] = useState<number | null>(null)
+  const [adding, setAdding] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
 
@@ -321,14 +387,16 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
     event.preventDefault()
     if (over !== index) setOver(index)
   }
-  /** Adds a new stage at `index`; past the end means just before Watch CI, which stays last. */
-  const insertAt = (index: number): void => {
-    const added = newCustomStage(stages)
+  /** Adds a stage from a template at `index`; past the end means just before Watch CI, which stays last. */
+  const insertAt = (index: number, template: StageTemplate): void => {
     const ci = stages.findIndex((item) => item.kind === 'ci')
+    const at = ci >= 0 ? Math.min(index, ci) : index
+    const added = stageFromTemplate(template, stages, at)
     const copy = [...stages]
-    copy.splice(ci >= 0 ? Math.min(index, ci) : index, 0, added)
+    copy.splice(at, 0, added)
     setStages(copy)
     setSelected(added.id)
+    setAdding(null)
   }
   const crewFor = (item: StageConfig): CrewMember | undefined => crew.find((member) => member.id === item.crewId) ?? crew.find((member) => member.role === item.crewRole)
   const subtitle = (item: StageConfig): string => {
@@ -349,7 +417,7 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
               <Fragment key={item.id}>
                 {index > 0 && (
                   <li>
-                    <button type="button" className="er-stage-insert" aria-label={`Add a stage before ${item.name}`} title="Add a stage here" onClick={() => insertAt(index)}>
+                    <button type="button" className="er-stage-insert" aria-label={`Add a stage before ${item.name}`} title="Add a stage here" aria-expanded={adding === index} onClick={() => setAdding(adding === index ? null : index)}>
                       +
                     </button>
                   </li>
@@ -397,11 +465,12 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
             )
           })}
           <li onDragOver={(event) => event.preventDefault()} onDrop={(event) => drop(event, stages.length - 1)}>
-            <button type="button" className="er-btn er-btn-dashed er-btn-sm" onClick={() => insertAt(stages.length)}>
+            <button type="button" className="er-btn er-btn-dashed er-btn-sm" aria-expanded={adding === stages.length} onClick={() => setAdding(adding === stages.length ? null : stages.length)}>
               + Add stage
             </button>
           </li>
         </ol>
+        {adding !== null && <AddStageMenu stages={stages} onPick={(template) => insertAt(adding, template)} onCancel={() => setAdding(null)} />}
         <span className="muted" style={{ fontSize: 13 }}>
           Drag stages by the handle to reorder them. Use + between two stages to insert one. Plan always comes first and Watch CI last. The Board has a column for each stage.
         </span>

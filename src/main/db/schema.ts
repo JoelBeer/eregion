@@ -223,5 +223,14 @@ export const migrations: string[] = [
   `,
   `
   ALTER TABLE crew ADD COLUMN parts TEXT NOT NULL DEFAULT '{}';
+  `,
+  // Generic stages: loop counts per stage instead of one review count (review_failures and extra_loops
+  // are no longer read). A ticket that failed review keeps its count under the default Review stage.
+  `
+  ALTER TABLE tickets ADD COLUMN loops TEXT NOT NULL DEFAULT '{}';
+  ALTER TABLE tickets ADD COLUMN returned_from TEXT;
+  UPDATE tickets SET loops = json_object('review', json_object('failures', review_failures, 'extra', extra_loops))
+    WHERE review_failures > 0 OR extra_loops > 0;
+  UPDATE tickets SET returned_from = 'review' WHERE review_failures > 0 AND status <> 'done';
   `
 ]

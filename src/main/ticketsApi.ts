@@ -25,7 +25,7 @@ export type TicketsApi = Pick<
   | 'approvePlan'
   | 'approveReview'
   | 'approveStage'
-  | 'sendBackToBuild'
+  | 'sendBack'
   | 'backToPlan'
   | 'retryTicket'
   | 'allowOneMoreLoop'
@@ -215,7 +215,7 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     approvePlan: (ticketId) => engine.approvePlan(ticketId),
     approveReview: (ticketId) => background(deps, ticketId, () => engine.approveReview(ticketId)),
     approveStage: (ticketId) => background(deps, ticketId, () => engine.approveStage(ticketId)),
-    sendBackToBuild: (ticketId, note) => background(deps, ticketId, () => engine.sendBackToBuild(ticketId, note)),
+    sendBack: (ticketId, note) => background(deps, ticketId, () => engine.sendBack(ticketId, note)),
     backToPlan: (ticketId, note) => background(deps, ticketId, () => engine.backToPlan(ticketId, note)),
     retryTicket: (ticketId, note) => background(deps, ticketId, () => engine.retry(ticketId, note)),
     allowOneMoreLoop: (ticketId) => background(deps, ticketId, () => engine.allowOneMoreLoop(ticketId)),

@@ -1,9 +1,9 @@
 import { firstSentence } from './agent'
 import type { Environment } from './environment'
 import type { PullRequest } from './integrations'
-import type { StageConfig } from './pipeline'
+import { isGenericStage, stageAccess, type StageConfig } from './pipeline'
 import type { Mood } from './robot'
-import { STOP_LABELS, type Ticket, type TicketCard } from './tickets'
+import { STOP_LABELS, stageLoops, type Ticket, type TicketCard } from './tickets'
 
 export interface CardInputs {
   ticket: Ticket
@@ -38,8 +38,9 @@ export function ciSummary(prs: NonNullable<CardInputs['prs']>): string {
 export function ticketCard(inputs: CardInputs): TicketCard {
   const { ticket, stages, environment, lastAgentText, openQuestions } = inputs
   const stage = stages.find((item) => item.id === ticket.stage)
-  const review = stages.find((item) => item.kind === 'review')
-  const allowedLoops = (review?.onFailure?.maxLoops ?? 2) + ticket.extraLoops
+  // The stage whose failed work sent the ticket back (or stopped it at its loop limit), and its count.
+  const failedStage = ticket.returnedFrom ? stages.find((item) => item.id === ticket.returnedFrom) : undefined
+  const failedLoops = failedStage?.onFailure ? stageLoops(ticket, failedStage.id, failedStage.onFailure.maxLoops) : null
   let pill: TicketCard['pill'] = null
   let mood: Mood = 'idle'
   let bubble: string | null = null
@@ -59,7 +60,7 @@ export function ticketCard(inputs: CardInputs): TicketCard {
     const detail = (ticket.stopDetail ?? '').split('\n')[0]
     bubble =
       ticket.stopReason === 'loop_limit'
-        ? `Review failed ${ticket.reviewFailures} times. Your call: one more loop, or back to Plan.`
+        ? `${failedStage?.name ?? stage?.name ?? 'The stage'} failed ${failedLoops?.failures ?? 0} times. Your call: one more loop, or back to Plan.`
         : `${STOP_LABELS[ticket.stopReason]}: ${firstSentence(detail).replace(/\.$/, '')}.`
   } else if (ticket.status === 'needs_you') {
     mood = 'needsYou'
@@ -74,7 +75,7 @@ export function ticketCard(inputs: CardInputs): TicketCard {
         break
       case 'manual-review':
         pill = { status: 'needsYou', label: 'Your turn' }
-        bubble = 'AI review passed. Your turn to click around.'
+        bubble = `${stage?.name ?? 'The stage'} passed. Your turn to click around.`
         break
       case 'ready-for-review':
         pill = { status: 'needsYou', label: 'PRs open as drafts' }
@@ -104,8 +105,9 @@ export function ticketCard(inputs: CardInputs): TicketCard {
   }
 
   const tags: string[] = []
-  if (stage?.kind === 'build' && ticket.reviewFailures > 0 && !ticket.stopReason) tags.push(`Back from review · loop ${ticket.reviewFailures} of ${allowedLoops}`)
-  else if (stage?.kind === 'build' && ticket.loop > 1 && !ticket.stopReason) tags.push(`${stage.name} · pass ${ticket.loop}`)
+  const answering = failedStage && failedLoops && stage && failedStage.onFailure?.returnTo === stage.id
+  if (answering && !ticket.stopReason) tags.push(`Back from ${failedStage.name.toLowerCase()} · loop ${failedLoops.failures} of ${failedLoops.allowed}`)
+  else if (stage && isGenericStage(stage) && stageAccess(stage) === 'changes' && ticket.loop > 1 && !ticket.stopReason) tags.push(`${stage.name} · pass ${ticket.loop}`)
   if (ticket.stage === 'backlog' && ticket.linear.isNew) tags.push('New')
   if (ticket.linear.reassigned && ticket.stage !== 'done') tags.push('Reassigned in Linear')
   if (stage?.kind === 'ci' && inputs.prs?.some((pr) => pr.state === 'open' && (!pr.autofix || pr.autofixPausedReason))) tags.push('Autofix off')

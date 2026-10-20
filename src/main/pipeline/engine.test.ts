@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { defaultPipeline, stageFromTemplate, type StageConfig } from '@shared/pipeline'
 import type { Ticket } from '@shared/tickets'
 import { CrewStore } from '../agents/crew'
 import { AgentManager } from '../agents/manager'
@@ -76,7 +77,7 @@ async function setup(rules: unknown[]) {
     onTicketChanged: (ticket) => changes.push(ticket)
   })
   const ticket = tickets.create({ projectId: project.id, key: 'WM-1', title: 'Hints' })
-  return { engine, tickets, runs, agents, ticket, repo, root, changes, notices, workspaces }
+  return { engine, tickets, runs, agents, ticket, repo, root, changes, notices, workspaces, pipelines }
 }
 
 /** Waits until the ticket matches, checking as it changes. */
@@ -117,7 +118,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
     await engine.approvePlan(ticket.id)
 
     current = await until(tickets, ticket.id, (item) => item.stage === 'review' && item.waitingFor === 'manual-review', 30_000)
-    expect(current).toMatchObject({ status: 'needs_you', loop: 2, reviewFailures: 1, affectedRepos: ['app'], slot: 1 })
+    expect(current).toMatchObject({ status: 'needs_you', loop: 2, loops: { review: { failures: 1, extra: 0 } }, returnedFrom: null, affectedRepos: ['app'], slot: 1 })
     expect(current.planApprovedAt).not.toBeNull()
 
     // Eregion committed each Build pass on the ticket branch and pushed it to origin.
@@ -176,12 +177,12 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
     await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
     await engine.approvePlan(ticket.id)
     const limited = await until(tickets, ticket.id, (item) => item.stopReason === 'loop_limit', 40_000)
-    expect(limited).toMatchObject({ stage: 'review', reviewFailures: 2, loop: 2 })
+    expect(limited).toMatchObject({ stage: 'review', loops: { review: { failures: 2, extra: 0 } }, returnedFrom: 'review', loop: 2 })
     expect(limited.stopDetail).toContain('loop 2 of 2')
 
     await engine.allowOneMoreLoop(ticket.id)
-    const again = await until(tickets, ticket.id, (item) => item.stage === 'build' || item.extraLoops === 1)
-    expect(again.extraLoops).toBe(1)
+    const again = await until(tickets, ticket.id, (item) => item.stage === 'build' || item.loops.review?.extra === 1)
+    expect(again.loops.review?.extra).toBe(1)
     await engine.discard(ticket.id)
     expect(tickets.get(ticket.id)).toMatchObject({ stage: 'backlog', status: 'idle', slot: null })
   }, 60_000)
@@ -232,6 +233,70 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
     await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
     await engine.approvePlan(ticket.id)
     expect((await until(tickets, ticket.id, (item) => item.waitingFor === 'manual-review' || item.stopReason !== null)).stopReason).toBeNull()
+  }, 60_000)
+
+  it('runs a stage you added from its fields: a read-only verdict that sends the work back to Build, then moves on by itself', async () => {
+    const failedCheck = JSON.stringify({ loop: 1, verdict: 'fail', summary: 'Needs a hint test.', issues: [{ id: 'c1-1', severity: 'high', repo: 'app', file: 'hint.txt', line: null, problem: 'Untested.', fix: 'Test it.' }] })
+    const { engine, tickets, runs, ticket, repo, pipelines } = await setup([
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Build, pass 1', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
+      { when: 'Stage: Check, loop 1', once: true, write: { '{cwd}/app/stray.txt': 'x', '{outputs}/check.json': failedCheck }, reply: 'Fail.' },
+      { when: 'Stage: Build, pass 2', once: true, write: { '{cwd}/app/hint.test': 't', '{outputs}/build-notes.md': notes(2), '{outputs}/fixes.json': JSON.stringify({ loop: 2, fixes: [{ issueId: 'c1-1', fixed: true, files: ['app/hint.test'], note: '' }] }) }, reply: 'Fixed.' },
+      { when: 'Stage: Check, loop 2', once: true, write: { '{outputs}/check.json': JSON.stringify({ loop: 2, verdict: 'pass', summary: 'Good.', issues: [] }) }, reply: 'Pass.' }
+    ])
+    const check: StageConfig = {
+      ...stageFromTemplate('custom', defaultPipeline(), 2),
+      id: 'check',
+      name: 'Check',
+      goal: 'Stage: Check, loop {{loop}}. Write your verdict to {{outputs.dir}}/check.json.',
+      outputs: ['check.json'],
+      doneWhen: 'verdict',
+      access: 'read-only',
+      onFailure: { returnTo: 'build', maxLoops: 2 }
+    }
+    pipelines.save(ticket.projectId, [...defaultPipeline().slice(0, 2), check])
+
+    await engine.start(ticket.id)
+    await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    await engine.approvePlan(ticket.id)
+    const done = await until(tickets, ticket.id, (item) => item.status === 'done' || item.stopReason !== null, 40_000)
+    expect(done).toMatchObject({ status: 'done', stopReason: null, loops: { check: { failures: 1, extra: 0 } }, returnedFrom: null })
+    expect(runs.forTicket(ticket.id).map((run) => [run.stage, run.loop])).toEqual([
+      ['plan', 1],
+      ['build', 1],
+      ['check', 1],
+      ['build', 2],
+      ['check', 2]
+    ])
+    // The check was read-only: what it wrote in the worktree was thrown away, not committed.
+    expect(git(repo.clone, 'ls-tree', '-r', '--name-only', 'wm-1-hints').split('\n')).toEqual(['README.md', 'hint.test', 'hint.txt'])
+    expect(tickets.logEntries(ticket.id).map((entry) => entry.message)).toContain('Rivet changed files in app during Check; Eregion discarded them: stray.txt')
+  }, 60_000)
+
+  it("loops back when a stage's done command fails, and moves on once it passes", async () => {
+    const { engine, tickets, ticket, repo, pipelines } = await setup([
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Build, pass 1', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
+      { when: 'Stage: Build, pass 2', once: true, write: { '{cwd}/app/ok.txt': 'ok', '{outputs}/build-notes.md': notes(2) }, reply: 'Fixed.' },
+      { when: 'Stage: Tests', reply: 'Ran them.' }
+    ])
+    const tests: StageConfig = {
+      ...stageFromTemplate('custom', defaultPipeline(), 2),
+      id: 'tests',
+      name: 'Tests',
+      goal: 'Stage: Tests, pass {{loop}}. Run the tests.',
+      doneWhen: 'command',
+      doneCommand: 'test -f app/ok.txt',
+      onFailure: { returnTo: 'build', maxLoops: 2 }
+    }
+    pipelines.save(ticket.projectId, [...defaultPipeline().slice(0, 2), tests])
+
+    await engine.start(ticket.id)
+    await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    await engine.approvePlan(ticket.id)
+    const done = await until(tickets, ticket.id, (item) => item.status === 'done' || item.stopReason !== null, 40_000)
+    expect(done).toMatchObject({ status: 'done', loop: 2, loops: { tests: { failures: 1, extra: 0 } }, returnedFrom: null })
+    expect(git(repo.clone, 'log', '--format=%s', 'wm-1-hints', '-2').split('\n')).toEqual(['WM-1: Hints (build pass 2)', 'WM-1: Hints (build pass 1)'])
   }, 60_000)
 
   it('marks running tickets as stuck after a restart', async () => {

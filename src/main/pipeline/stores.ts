@@ -1,6 +1,6 @@
 import { defaultPipeline, validatePipeline, type StageConfig } from '@shared/pipeline'
 import type { PipelineVersionSummary } from '@shared/pipelineDiff'
-import type { LinearData, StopReason, Ticket, TicketStatus, WaitingFor } from '@shared/tickets'
+import type { LinearData, StageLoops, StopReason, Ticket, TicketStatus, WaitingFor } from '@shared/tickets'
 import type { Db } from '../db'
 
 export interface PipelineVersion {
@@ -97,8 +97,8 @@ interface TicketRow {
   stop_detail: string | null
   waiting_for: WaitingFor | null
   loop: number
-  review_failures: number
-  extra_loops: number
+  loops: string
+  returned_from: string | null
   slot: number | null
   branch: string | null
   affected_repos: string
@@ -125,8 +125,8 @@ function toTicket(row: TicketRow): Ticket {
     stopDetail: row.stop_detail,
     waitingFor: row.waiting_for,
     loop: row.loop,
-    reviewFailures: row.review_failures,
-    extraLoops: row.extra_loops,
+    loops: JSON.parse(row.loops) as StageLoops,
+    returnedFrom: row.returned_from,
     slot: row.slot,
     branch: row.branch,
     affectedRepos: JSON.parse(row.affected_repos) as string[],
@@ -163,8 +163,8 @@ const COLUMNS: Record<keyof TicketPatch, string> = {
   stopDetail: 'stop_detail',
   waitingFor: 'waiting_for',
   loop: 'loop',
-  reviewFailures: 'review_failures',
-  extraLoops: 'extra_loops',
+  loops: 'loops',
+  returnedFrom: 'returned_from',
   slot: 'slot',
   branch: 'branch',
   affectedRepos: 'affected_repos',
@@ -213,7 +213,7 @@ export class TicketStore {
     for (const [key, value] of Object.entries(patch) as [keyof TicketPatch, unknown][]) {
       if (value === undefined) continue
       sets.push(`${COLUMNS[key]} = ?`)
-      values.push(key === 'linear' || key === 'affectedRepos' ? JSON.stringify(value) : value)
+      values.push(key === 'linear' || key === 'affectedRepos' || key === 'loops' ? JSON.stringify(value) : value)
     }
     if (sets.length > 0) {
       this.db.prepare(`UPDATE tickets SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`).run(...values, id)

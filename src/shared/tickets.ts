@@ -26,6 +26,14 @@ export type StopReason = 'blocked' | 'stuck' | 'setup_failed' | 'loop_limit' | '
 /** What a ticket that needs you is waiting for, when it isn't stopped. */
 export type WaitingFor = 'answers' | 'approval' | 'manual-review' | 'ready-for-review' | 'slot'
 
+export type StageLoops = Record<string, { failures: number; extra: number }>
+
+/** How many times a stage's work has failed on this ticket, and how many it's allowed. */
+export function stageLoops(ticket: Pick<Ticket, 'loops'>, stageId: string, maxLoops: number): { failures: number; allowed: number } {
+  const entry = ticket.loops[stageId] ?? { failures: 0, extra: 0 }
+  return { failures: entry.failures, allowed: maxLoops + entry.extra }
+}
+
 export interface Ticket {
   id: number
   projectId: number
@@ -42,10 +50,12 @@ export interface Ticket {
   stopReason: StopReason | null
   stopDetail: string | null
   waitingFor: WaitingFor | null
-  /** Build pass number: 1 the first time. */
+  /** Pass number: 1 the first time, one more each time the work goes back round. */
   loop: number
-  reviewFailures: number
-  extraLoops: number
+  /** Per stage id: how many times its work failed, and the extra loops you allowed past its limit. */
+  loops: StageLoops
+  /** The stage whose failed work sent the ticket back, until that stage passes. */
+  returnedFrom: string | null
   slot: number | null
   branch: string | null
   affectedRepos: string[]

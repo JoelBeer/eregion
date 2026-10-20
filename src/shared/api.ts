@@ -109,7 +109,7 @@ export interface EregionApi {
   approvePlan(ticketId: number): Promise<void>
   approveReview(ticketId: number): Promise<void>
   approveStage(ticketId: number): Promise<void>
-  sendBackToBuild(ticketId: number, note: string): Promise<void>
+  sendBack(ticketId: number, note: string): Promise<void>
   backToPlan(ticketId: number, note: string): Promise<void>
   retryTicket(ticketId: number, note?: string): Promise<void>
   allowOneMoreLoop(ticketId: number): Promise<void>
@@ -234,7 +234,7 @@ export const API_METHODS = [
   'approvePlan',
   'approveReview',
   'approveStage',
-  'sendBackToBuild',
+  'sendBack',
   'backToPlan',
   'retryTicket',
   'allowOneMoreLoop',

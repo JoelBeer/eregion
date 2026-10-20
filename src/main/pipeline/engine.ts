@@ -1,13 +1,13 @@
 import { usageLimitDetail, usageLimitMessage } from '@shared/agent'
 import type { Environment } from '@shared/environment'
 import { branchName, type Project, type Repo } from '@shared/model'
-import { parseBuildNotes, parseFixes, parsePlan, parseReview, planApprovalBlockers, type ParsedPlan } from '@shared/outputs'
-import { nextStage, stageById, type StageConfig, type StageKind } from '@shared/pipeline'
+import { parseBuildNotes, parseFixes, parsePlan, parseReview, planApprovalBlockers, type ParsedBuildNotes, type ParsedPlan, type Review } from '@shared/outputs'
+import { isGenericStage, nextStage, readsVerdict, sendBackTarget, stageAccess, stageById, verdictFile, type StageConfig, type StageKind } from '@shared/pipeline'
 import { composePrompt } from '@shared/prompts'
 import type { CrewMember } from '@shared/runs'
 import { nextFreeSlot } from '@shared/slots'
 import { render } from '@shared/template'
-import type { StopReason, Ticket, WaitingFor } from '@shared/tickets'
+import { stageLoops, type StopReason, type Ticket, type WaitingFor } from '@shared/tickets'
 import type { RunTooling } from '@shared/tooling'
 import type { CrewStore } from '../agents/crew'
 import type { AgentManager, RunNotice } from '../agents/manager'
@@ -51,6 +51,12 @@ export interface EngineDeps {
   tooling?: (project: Project, repoPaths: Record<string, string>, values: Record<string, string>) => Promise<RunTooling>
 }
 
+/** Where an earlier copy of an output file is kept: review.json for loop 2 is history/review-2.json. */
+function historyName(file: string, suffix: string): string {
+  const dot = file.lastIndexOf('.')
+  return dot > 0 ? `${file.slice(0, dot)}-${suffix}${file.slice(dot)}` : `${file}-${suffix}`
+}
+
 /** The message Eregion sends when a stage's output file doesn't pass its checks. */
 export function formatFixMessage(file: string, problems: string[]): string {
   return `${file} isn't valid: ${problems.join('; ')}. Fix the file and don't change anything else.`
@@ -58,7 +64,7 @@ export function formatFixMessage(file: string, problems: string[]): string {
 
 /**
  * Moves tickets through their pipeline: starts each stage's run, checks what it wrote, commits and
- * pushes Build's work, loops Review back to Build, and stops a ticket with a reason when it needs you.
+ * pushes its work, loops failed work back to an earlier stage, and stops a ticket with a reason when it needs you.
  * Everything that matters is saved on the ticket, so the board survives restarts.
  */
 export class PipelineEngine {
@@ -70,9 +76,7 @@ export class PipelineEngine {
   constructor(readonly deps: EngineDeps) {
     this.runnerFor = deps.runnerFor ?? runnerForRuntimeId
     this.handlers.set('plan', (ticket, stage, note) => this.runPlan(ticket, stage, note))
-    this.handlers.set('build', (ticket, stage, note) => this.runBuild(ticket, stage, note))
-    this.handlers.set('review', (ticket, stage) => this.runReview(ticket, stage))
-    this.handlers.set('custom', (ticket, stage, note) => this.runCustom(ticket, stage, note))
+    // Every other stage runs from its fields (runStage); PR and Watch CI register their own.
   }
 
   /** Lets later modules add stages such as PR and Watch CI. */
@@ -317,8 +321,8 @@ export class PipelineEngine {
         pipelineVersion: pipeline.version,
         branch: ticket.branch ?? branchName(ticket.key, ticket.title),
         loop: 1,
-        reviewFailures: 0,
-        extraLoops: 0,
+        loops: {},
+        returnedFrom: null,
         linear: { ...ticket.linear, isNew: false }
       })
       const first = nextStage(pipeline.stages, '')
@@ -334,7 +338,7 @@ export class PipelineEngine {
     } catch (error) {
       this.deps.tickets.log(ticket.id, 'warning', `Couldn't update Linear: ${(error as Error).message}`)
     }
-    const handler = this.handlers.get(stage.kind)
+    const handler = this.handlers.get(stage.kind) ?? (isGenericStage(stage) ? (current: Ticket, config: StageConfig, text?: string) => this.runStage(current, config, text) : undefined)
     if (!handler) {
       this.stop(entered, 'stuck', `${stage.name} can't run yet in this version of Eregion`)
       return
@@ -477,76 +481,161 @@ export class PipelineEngine {
     })
   }
 
-  // ---------- Build ----------
+  // ---------- Generic stages ----------
 
-  private async runBuild(ticket: Ticket, stage: StageConfig, note?: string): Promise<void> {
-    const environment = await this.ensureEnvironment(ticket)
-    if (!environment) return
-    ticket = this.deps.tickets.get(ticket.id)
-    const project = this.project(ticket)
-    const crew = this.crewFor(stage)
-    const previousReview = await this.failedReview(ticket)
-    await this.removeOutput(ticket, 'build-notes.md')
-    await this.removeOutput(ticket, 'fixes.json')
-    const firstAffected = project.repos.find((repo) => ticket.affectedRepos.includes(repo.name)) ?? project.repos[0]
-    const prompt = await this.promptFor(ticket, stage, crew, {
-      'workspace.repos': this.repoLines(project, this.worktreePaths(environment), (repo) => (ticket.affectedRepos.includes(repo.name) ? 'changes' : `read-only, detached at ${repo.defaultBranch}`)),
-      'base.ref': `origin/${firstAffected.defaultBranch}`,
-      'env.summary': this.envSummary(environment),
-      'outputs.plan': (await this.readOutput(ticket, 'plan.md')) ?? '',
-      'review.previous': previousReview?.text ?? ''
-    })
-    const cwd = await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)
-    await this.startRun(ticket, stage, { cwd, prompt, profile: 'build', crew, note }, async (current, runId) => {
-      const notesText = await this.readOutput(current, 'build-notes.md')
-      const notes = notesText === null ? null : parseBuildNotes(notesText)
-      const problems = notes ? [...notes.problems] : ["build-notes.md wasn't written"]
-      if (notes?.blocked) {
-        this.endRun(current)
-        this.stop(this.deps.tickets.get(current.id), 'blocked', notes.blocked)
-        return
-      }
-      let fixesProblems: string[] = []
-      if (previousReview) {
-        const fixesText = await this.readOutput(current, 'fixes.json')
-        fixesProblems = fixesText === null ? ["fixes.json wasn't written"] : parseFixes(fixesText, previousReview.issueIds).problems
-      }
-      if (problems.length > 0 || fixesProblems.length > 0) {
-        const file = problems.length > 0 ? 'build-notes.md' : 'fixes.json'
-        if (this.requestFix(runId, file, problems.length > 0 ? problems : fixesProblems)) return
-        this.endRun(current)
-        this.stop(this.deps.tickets.get(current.id), 'stuck', `${file} isn't valid after one fix request: ${(problems.length > 0 ? problems : fixesProblems).join('; ')}`)
-        return
-      }
-      const ended = this.endRun(current)
-      if (notes?.blockedNote) this.deps.tickets.log(ended.id, 'note', `${crew.name}: ${notes.blockedNote}`)
-      await this.keepHistory(ended, 'build-notes.md', `build-notes-${ended.loop}.md`)
-      if (previousReview) await this.keepHistory(ended, 'fixes.json', `fixes-${ended.loop}.json`)
-      await this.afterBuild(ended, stage, notes?.summary ?? '', environment)
-    })
+  /** The stage whose failed work this one has to answer: the ticket came back here from it. */
+  private failedVerdict(ticket: Ticket, stage: StageConfig): StageConfig | null {
+    const from = ticket.returnedFrom ? stageById(this.stages(ticket), ticket.returnedFrom) : undefined
+    return from && from.onFailure?.returnTo === stage.id && verdictFile(from) ? from : null
   }
 
-  /** The review the next Build pass must answer, when the last review failed. */
-  private async failedReview(ticket: Ticket): Promise<{ text: string; issueIds: string[] } | null> {
-    if (ticket.reviewFailures === 0) return null
-    const text = await this.readOutput(ticket, 'review.json')
+  /** The issue ids of a failed verdict, which fixes.json has to answer. */
+  private async verdictIssues(ticket: Ticket, verdictStage: StageConfig): Promise<{ text: string; issueIds: string[] } | null> {
+    const file = verdictFile(verdictStage)
+    const text = file ? await this.readOutput(ticket, file) : null
     if (!text) return null
     try {
-      const review = JSON.parse(text) as { verdict?: string; issues?: { id?: string }[] }
-      if (review.verdict !== 'fail') return null
-      return { text, issueIds: (review.issues ?? []).map((issue) => String(issue.id)) }
+      const verdict = JSON.parse(text) as { verdict?: string; issues?: { id?: string }[] }
+      if (verdict.verdict !== 'fail') return null
+      return { text, issueIds: (verdict.issues ?? []).map((issue) => String(issue.id)) }
     } catch {
       return null
     }
   }
 
-  private async afterBuild(ticket: Ticket, stage: StageConfig, summary: string, environment: Environment): Promise<void> {
+  /**
+   * Runs any stage that isn't Plan, PR or Watch CI, entirely from its fields: where it works, whether it may
+   * change files, what it must write, how it's done, and where it goes when its work fails. Output files are
+   * read by name: build-notes.md can stop the ticket as Blocked and gives the commit its summary, the stage's
+   * verdict file says pass or fail, and fixes.json answers the verdict that sent the work back here.
+   */
+  private async runStage(ticket: Ticket, stage: StageConfig, note?: string): Promise<void> {
     const project = this.project(ticket)
-    const runner = this.runner(project)
-    const commits: string[] = []
+    const crew = this.crewFor(stage)
+    const access = stageAccess(stage)
+    let cwd: string
+    let repoPaths: Record<string, string>
+    let environment: Environment | null = null
+    let repos: string
+    if (stage.workspace === 'ticket-worktrees') {
+      environment = await this.ensureEnvironment(ticket)
+      if (!environment) return
+      ticket = this.deps.tickets.get(ticket.id)
+      cwd = await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)
+      repoPaths = this.worktreePaths(environment)
+      repos = this.repoLines(project, repoPaths, (repo) =>
+        access === 'changes' && ticket.affectedRepos.includes(repo.name) ? 'changes' : ticket.affectedRepos.includes(repo.name) ? 'read-only' : `read-only, detached at ${repo.defaultBranch}`
+      )
+    } else {
+      const checkout = await this.deps.workspaces.refreshPlanCheckout(project)
+      cwd = checkout.path
+      repoPaths = Object.fromEntries(checkout.repos.map((repo) => [repo.name, repo.path]))
+      repos = this.repoLines(project, repoPaths, () => 'read-only')
+    }
+
+    const answering = this.failedVerdict(ticket, stage)
+    const previous = answering ? await this.verdictIssues(ticket, answering) : null
+    const ownVerdict = verdictFile(stage)
+    const recheck = ownVerdict !== null && (ticket.loops[stage.id]?.failures ?? 0) > 0
+    const firstAffected = project.repos.find((repo) => ticket.affectedRepos.includes(repo.name)) ?? project.repos[0]
+    const prompt = await this.promptFor(ticket, stage, crew, {
+      'workspace.repos': repos,
+      'base.ref': `origin/${firstAffected.defaultBranch}`,
+      'env.summary': this.envSummary(environment ?? undefined),
+      'outputs.plan': (await this.readOutput(ticket, 'plan.md')) ?? '',
+      'outputs.build_notes': (await this.readOutput(ticket, 'build-notes.md')) ?? '',
+      'review.previous': previous?.text ?? (recheck && ownVerdict ? ((await this.readOutput(ticket, ownVerdict)) ?? '') : ''),
+      'fixes.current': recheck ? ((await this.readOutput(ticket, 'fixes.json')) ?? '') : ''
+    })
+    if (recheck && ownVerdict) await this.keepHistory(ticket, ownVerdict, historyName(ownVerdict, `before-${ticket.loop}`))
+    for (const output of stage.outputs) await this.removeOutput(ticket, output)
+    if (previous) await this.removeOutput(ticket, 'fixes.json')
+
+    await this.startRun(ticket, stage, { cwd, prompt, profile: access === 'changes' ? 'build' : 'review', crew, note, repoPaths }, async (current, runId) => {
+      const problems: { file: string; problems: string[] }[] = []
+      let notes: ParsedBuildNotes | null = null
+      let verdict: Review | null = null
+      for (const output of stage.outputs) {
+        const text = await this.readOutput(current, output)
+        if (text === null) {
+          problems.push({ file: output, problems: [`${output} wasn't written`] })
+        } else if (output === 'build-notes.md') {
+          notes = parseBuildNotes(text)
+          if (notes.problems.length > 0) problems.push({ file: output, problems: notes.problems })
+        } else if (output === ownVerdict) {
+          const parsed = parseReview(text, project.repos.map((repo) => repo.name))
+          verdict = parsed.review
+          if (!parsed.review) problems.push({ file: output, problems: parsed.problems })
+        }
+      }
+      if (notes?.blocked) {
+        this.endRun(current)
+        this.stop(this.deps.tickets.get(current.id), 'blocked', notes.blocked)
+        return
+      }
+      if (previous) {
+        const fixesText = await this.readOutput(current, 'fixes.json')
+        const fixes = fixesText === null ? ["fixes.json wasn't written"] : parseFixes(fixesText, previous.issueIds).problems
+        if (fixes.length > 0) problems.push({ file: 'fixes.json', problems: fixes })
+      }
+      if (problems.length > 0) {
+        if (this.requestFix(runId, problems[0].file, problems[0].problems)) return
+        this.endRun(current)
+        this.stop(this.deps.tickets.get(current.id), 'stuck', `${problems[0].file} isn't valid after one fix request: ${problems[0].problems.join('; ')}`)
+        return
+      }
+      if (stage.doneWhen === 'approval') {
+        this.needsYou(current, 'approval', `${stage.name} is ready for your approval`)
+        return
+      }
+      let ended = this.endRun(current)
+      if (notes?.blockedNote) this.deps.tickets.log(ended.id, 'note', `${crew.name}: ${notes.blockedNote}`)
+      for (const output of [...stage.outputs, ...(previous ? ['fixes.json'] : [])]) await this.keepHistory(ended, output, historyName(output, String(ended.loop)))
+
+      if (environment && access === 'read-only') await this.discardStageChanges(ended, environment, crew)
+      if (environment && access === 'changes' && !(await this.commitAndPush(ended, stage, notes?.summary ?? '', environment))) return
+
+      if (stage.doneWhen === 'command' && stage.doneCommand) {
+        const runner = this.runner(project)
+        const result = await runner.exec(runner.shell(stage.doneCommand), { cwd, timeoutMs: 15 * 60_000 })
+        if (result.code !== 0) {
+          await this.failed(ended, stage, `${stage.doneCommand} failed: ${(result.stderr || result.stdout).trim().slice(-500)}`)
+          return
+        }
+      }
+      if (readsVerdict(stage) && (verdict as Review | null)?.verdict !== 'pass') {
+        await this.failed(ended, stage, `${stage.name} failed`)
+        return
+      }
+      if (ended.returnedFrom === stage.id) ended = this.update(ended.id, { returnedFrom: null })
+      await this.runActions(ended, stage.after)
+      if (stage.doneWhen === 'review-pass') {
+        this.needsYou(ended, 'manual-review', `${stage.name} passed. Your turn to check it.`)
+        return
+      }
+      await this.advance(this.deps.tickets.get(ended.id))
+    })
+  }
+
+  /** A read-only stage changed files: throw the changes away and say so. */
+  private async discardStageChanges(ticket: Ticket, environment: Environment, crew: CrewMember): Promise<void> {
+    const runner = this.runner(this.project(ticket))
+    for (const repo of environment.repos) {
+      const changed = await changedFiles(runner, repo.path)
+      if (changed.length > 0) {
+        await discardChanges(runner, repo.path)
+        this.deps.tickets.log(ticket.id, 'warning', `${crew.name} changed files in ${repo.name} during ${this.stage(ticket)?.name ?? 'a read-only stage'}; Eregion discarded them: ${changed.map((line) => line.replace(/^.. /, '')).join(', ')}`)
+      }
+    }
+  }
+
+  /** Commits and pushes the stage's work when its after-actions say so. Returns false when the ticket stopped. */
+  private async commitAndPush(ticket: Ticket, stage: StageConfig, summary: string, environment: Environment): Promise<boolean> {
+    const runner = this.runner(this.project(ticket))
     if (stage.after.some((action) => action.type === 'commit')) {
+      const commits: string[] = []
       for (const repo of environment.repos.filter((item) => item.branch !== null)) {
-        const sha = await commitAll(runner, repo.path, `${ticket.key}: ${ticket.title} (build pass ${ticket.loop})`, summary)
+        const sha = await commitAll(runner, repo.path, `${ticket.key}: ${ticket.title} (${stage.name.toLowerCase()} pass ${ticket.loop})`, summary)
         if (sha) commits.push(`${repo.name} ${sha}`)
       }
       this.deps.tickets.log(ticket.id, 'git', commits.length ? `Committed ${commits.join(', ')}` : 'Nothing to commit')
@@ -559,12 +648,32 @@ export class PipelineEngine {
           this.deps.tickets.log(ticket.id, 'git', `Pushed ${repo.branch} in ${repo.name}`)
         } catch (error) {
           this.stop(ticket, 'stuck', `Couldn't push ${repo.name}: ${(error as Error).message}`)
-          return
+          return false
         }
       }
     }
-    await this.runActions(ticket, stage.after.filter((action) => action.type === 'run' || action.type === 'notify'))
-    await this.advance(this.deps.tickets.get(ticket.id))
+    return true
+  }
+
+  /**
+   * The stage's work failed (a fail verdict, or its done command failing). With an on-fail loop it goes back
+   * to that stage until the limit, then stops at the loop limit; without one it stops and asks you.
+   */
+  private async failed(ticket: Ticket, stage: StageConfig, detail: string): Promise<void> {
+    const returnTo = stage.onFailure ? stageById(this.stages(ticket), stage.onFailure.returnTo) : undefined
+    if (!stage.onFailure || !returnTo) {
+      this.stop(ticket, 'stuck', `${detail}. Fix it and start the stage again, or go back to Plan.`)
+      return
+    }
+    const { failures, allowed } = stageLoops(ticket, stage.id, stage.onFailure.maxLoops)
+    const loops = { ...ticket.loops, [stage.id]: { failures: failures + 1, extra: ticket.loops[stage.id]?.extra ?? 0 } }
+    if (failures + 1 < allowed) {
+      const next = this.update(ticket.id, { loops, returnedFrom: stage.id, loop: ticket.loop + 1 }, `${stage.name} failed (loop ${failures + 1} of ${allowed}). Back to ${returnTo.name}.`)
+      await this.enter(next, returnTo)
+    } else {
+      const stopped = this.update(ticket.id, { loops, returnedFrom: stage.id })
+      this.stop(stopped, 'loop_limit', `${stage.name} failed on loop ${failures + 1} of ${allowed}. Allow one more loop, or go back to Plan.`)
+    }
   }
 
   async runActions(ticket: Ticket, actions: StageConfig['after']): Promise<void> {
@@ -580,139 +689,45 @@ export class PipelineEngine {
     }
   }
 
-  // ---------- Review ----------
-
-  private async runReview(ticket: Ticket, stage: StageConfig): Promise<void> {
-    const environment = await this.ensureEnvironment(ticket)
-    if (!environment) return
-    ticket = this.deps.tickets.get(ticket.id)
-    const project = this.project(ticket)
-    const crew = this.crewFor(stage)
-    const reReview = ticket.reviewFailures > 0
-    const firstAffected = project.repos.find((repo) => ticket.affectedRepos.includes(repo.name)) ?? project.repos[0]
-    const prompt = await this.promptFor(ticket, stage, crew, {
-      'workspace.repos': this.repoLines(project, this.worktreePaths(environment), (repo) => (ticket.affectedRepos.includes(repo.name) ? 'changes' : `read-only, detached at ${repo.defaultBranch}`)),
-      'base.ref': `origin/${firstAffected.defaultBranch}`,
-      'env.summary': this.envSummary(environment),
-      'outputs.plan': (await this.readOutput(ticket, 'plan.md')) ?? '',
-      'outputs.build_notes': (await this.readOutput(ticket, 'build-notes.md')) ?? '',
-      'review.previous': reReview ? ((await this.readOutput(ticket, 'review.json')) ?? '') : '',
-      'fixes.current': reReview ? ((await this.readOutput(ticket, 'fixes.json')) ?? '') : ''
-    })
-    if (reReview) await this.keepHistory(ticket, 'review.json', `review-before-${ticket.loop}.json`)
-    await this.removeOutput(ticket, 'review.json')
-    const cwd = await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)
-    await this.startRun(ticket, stage, { cwd, prompt, profile: 'review', crew }, async (current, runId) => {
-      const text = await this.readOutput(current, 'review.json')
-      const { review, problems } = text === null ? { review: null, problems: ["review.json wasn't written"] } : parseReview(text, project.repos.map((repo) => repo.name))
-      if (!review) {
-        if (this.requestFix(runId, 'review.json', problems)) return
-        this.endRun(current)
-        this.stop(this.deps.tickets.get(current.id), 'stuck', `review.json isn't valid after one fix request: ${problems.join('; ')}`)
-        return
-      }
-      const runner = this.runner(project)
-      for (const repo of environment.repos) {
-        const changed = await changedFiles(runner, repo.path)
-        if (changed.length > 0) {
-          await discardChanges(runner, repo.path)
-          this.deps.tickets.log(current.id, 'warning', `${crew.name} changed files in ${repo.name} during review; Eregion discarded them: ${changed.join(', ')}`)
-        }
-      }
-      const ended = this.endRun(current)
-      await this.keepHistory(ended, 'review.json', `review-${ended.loop}.json`)
-      if (review.verdict === 'pass') {
-        await this.runActions(ended, stage.after)
-        this.needsYou(ended, 'manual-review', 'AI review passed. Your turn to check it.')
-        return
-      }
-      const failures = ended.reviewFailures + 1
-      const allowed = (stage.onFailure?.maxLoops ?? 2) + ended.extraLoops
-      const returnTo = stageById(this.stages(ended), stage.onFailure?.returnTo ?? 'build')
-      if (failures < allowed && returnTo) {
-        const next = this.update(ended.id, { reviewFailures: failures, loop: ended.loop + 1 }, `Review failed (loop ${failures} of ${allowed}). Back to ${returnTo.name}.`)
-        await this.enter(next, returnTo)
-      } else {
-        const stopped = this.update(ended.id, { reviewFailures: failures })
-        this.stop(stopped, 'loop_limit', `Review failed on loop ${failures} of ${allowed}. Allow one more loop, or go back to Plan.`)
-      }
-    })
-  }
-
+  /** You checked a stage whose verdict passed: carry on. */
   approveReview(ticketId: number): Promise<void> {
     return this.serial(ticketId, async () => {
       const ticket = this.deps.tickets.get(ticketId)
-      if (ticket.waitingFor !== 'manual-review') throw new Error(`${ticket.key} isn't waiting for your review`)
-      await this.advance(this.update(ticketId, { status: 'running', waitingFor: null }, 'You approved the review'))
+      if (ticket.waitingFor !== 'manual-review') throw new Error(`${ticket.key} isn't waiting for your check`)
+      await this.advance(this.update(ticketId, { status: 'running', waitingFor: null }, `You approved ${this.stage(ticket)?.name ?? 'the stage'}`))
     })
   }
 
-  sendBackToBuild(ticketId: number, note: string): Promise<void> {
+  /**
+   * You checked a stage and want more work: back to where its failed work would go (or the nearest earlier
+   * stage that changes files), with your note. It doesn't use up a loop.
+   */
+  sendBack(ticketId: number, note: string): Promise<void> {
     return this.serial(ticketId, async () => {
       const ticket = this.deps.tickets.get(ticketId)
-      if (ticket.waitingFor !== 'manual-review') throw new Error(`${ticket.key} isn't waiting for your review`)
-      const build = this.stages(ticket).find((stage) => stage.kind === 'build')
-      if (!build) throw new Error('This pipeline has no Build stage')
-      const next = this.update(ticketId, { loop: ticket.loop + 1 }, 'You sent it back to Build')
-      await this.enter(next, build, note.trim() || undefined)
+      if (ticket.waitingFor !== 'manual-review' && ticket.waitingFor !== 'approval') throw new Error(`${ticket.key} isn't waiting for you to check it`)
+      const target = sendBackTarget(this.stages(ticket), ticket.stage)
+      if (!target) throw new Error('There is no earlier stage that changes files')
+      const next = this.update(this.endRun(ticket).id, { loop: ticket.loop + 1 }, `You sent it back to ${target.name}`)
+      await this.enter(next, target, note.trim() || undefined)
     })
   }
 
-  // ---------- Custom stages ----------
-
-  private async runCustom(ticket: Ticket, stage: StageConfig, note?: string): Promise<void> {
-    const project = this.project(ticket)
-    const crew = this.crewFor(stage)
-    let cwd: string
-    let repos: string
-    let repoPaths: Record<string, string> | undefined
-    if (stage.workspace === 'ticket-worktrees') {
-      const environment = await this.ensureEnvironment(ticket)
-      if (!environment) return
-      cwd = await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)
-      repos = this.repoLines(project, this.worktreePaths(environment), (repo) => (ticket.affectedRepos.includes(repo.name) ? 'changes' : 'read-only'))
-    } else {
-      const checkout = await this.deps.workspaces.refreshPlanCheckout(project)
-      cwd = checkout.path
-      repoPaths = Object.fromEntries(checkout.repos.map((repo) => [repo.name, repo.path]))
-      repos = this.repoLines(project, repoPaths, () => 'read-only')
-    }
-    const prompt = await this.promptFor(ticket, stage, crew, { 'workspace.repos': repos, 'outputs.plan': (await this.readOutput(ticket, 'plan.md')) ?? '' })
-    await this.startRun(ticket, stage, { cwd, prompt, profile: 'build', crew, note, repoPaths }, async (current, runId) => {
-      const missing: string[] = []
-      for (const output of stage.outputs) {
-        if ((await this.readOutput(current, output)) === null) missing.push(output)
-      }
-      if (missing.length > 0) {
-        if (this.requestFix(runId, missing[0], [`${missing.join(', ')} wasn't written`])) return
-        this.endRun(current)
-        this.stop(this.deps.tickets.get(current.id), 'stuck', `${missing.join(', ')} still missing after one request`)
-        return
-      }
-      if (stage.doneWhen === 'approval') {
-        this.needsYou(current, 'approval', `${stage.name} is ready for your approval`)
-        return
-      }
-      const ended = this.endRun(current)
-      if (stage.doneWhen === 'command' && stage.doneCommand) {
-        const runner = this.runner(project)
-        const result = await runner.exec(runner.shell(stage.doneCommand), { cwd, timeoutMs: 15 * 60_000 })
-        if (result.code !== 0) {
-          this.stop(ended, 'stuck', `${stage.doneCommand} failed: ${(result.stderr || result.stdout).trim().slice(-500)}`)
-          return
-        }
-      }
-      await this.runActions(ended, stage.after)
-      await this.advance(ended)
-    })
-  }
-
-  /** Approves a custom stage that waits for your approval. */
+  /** Approves a stage that waits for your approval, then commits and pushes its work as its after-actions say. */
   approveStage(ticketId: number): Promise<void> {
     return this.serial(ticketId, async () => {
       const ticket = this.deps.tickets.get(ticketId)
-      if (ticket.waitingFor !== 'approval' || this.stage(ticket)?.kind !== 'custom') throw new Error('Nothing is waiting for approval')
-      await this.advance(this.endRun(ticket))
+      const stage = this.stage(ticket)
+      if (ticket.waitingFor !== 'approval' || !stage || !isGenericStage(stage)) throw new Error('Nothing is waiting for approval')
+      const ended = this.endRun(ticket)
+      const environment = stage.workspace === 'ticket-worktrees' ? this.deps.workspaces.get(this.environmentKey(ended)) : undefined
+      if (environment && stageAccess(stage) === 'read-only') await this.discardStageChanges(ended, environment, this.crewFor(stage))
+      if (environment && stageAccess(stage) === 'changes') {
+        const notes = stage.outputs.includes('build-notes.md') ? await this.readOutput(ended, 'build-notes.md') : null
+        if (!(await this.commitAndPush(ended, stage, notes ? parseBuildNotes(notes).summary : '', environment))) return
+      }
+      await this.runActions(ended, stage.after)
+      await this.advance(this.update(ticketId, { status: 'running', waitingFor: null }, `You approved ${stage.name}`))
     })
   }
 
@@ -749,10 +764,12 @@ export class PipelineEngine {
     return this.serial(ticketId, async () => {
       const ticket = this.deps.tickets.get(ticketId)
       if (ticket.stopReason !== 'loop_limit') throw new Error(`${ticket.key} hasn't hit the loop limit`)
-      const review = this.stage(ticket)
-      const returnTo = stageById(this.stages(ticket), review?.onFailure?.returnTo ?? 'build')
-      if (!returnTo) throw new Error('This pipeline has no Build stage')
-      await this.enter(this.update(ticketId, { extraLoops: ticket.extraLoops + 1, loop: ticket.loop + 1 }, 'You allowed one more loop'), returnTo)
+      const stage = this.stage(ticket)
+      const returnTo = stage?.onFailure ? stageById(this.stages(ticket), stage.onFailure.returnTo) : undefined
+      if (!stage || !returnTo) throw new Error(`${stage?.name ?? 'This stage'} has nowhere to go back to`)
+      const entry = ticket.loops[stage.id] ?? { failures: 0, extra: 0 }
+      const loops = { ...ticket.loops, [stage.id]: { ...entry, extra: entry.extra + 1 } }
+      await this.enter(this.update(ticketId, { loops, loop: ticket.loop + 1 }, 'You allowed one more loop'), returnTo)
     })
   }
 
@@ -810,7 +827,7 @@ export class PipelineEngine {
       await this.teardown(ticket)
       this.update(
         ticketId,
-        { stage: 'backlog', status: 'idle', stopReason: null, stopDetail: null, waitingFor: null, loop: 1, reviewFailures: 0, extraLoops: 0, affectedRepos: [], planApprovedAt: null, pipelineVersion: null },
+        { stage: 'backlog', status: 'idle', stopReason: null, stopDetail: null, waitingFor: null, loop: 1, loops: {}, returnedFrom: null, affectedRepos: [], planApprovedAt: null, pipelineVersion: null },
         'Moved back to Backlog'
       )
     })

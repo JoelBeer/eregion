@@ -82,12 +82,24 @@ export function PlanPanel({ ticket, outputs, builder, nextStage }: { ticket: Tic
   )
 }
 
-/** After the AI review passes: check it yourself, then approve or send it back. */
-export function ReviewDecision({ ticket, outputs, nextStage }: { ticket: Ticket; outputs: TicketOutputs | undefined; nextStage: StageConfig | null }): ReactElement {
+/** After a stage's verdict passes (the AI review, say): check it yourself, then approve or send it back. */
+export function ReviewDecision({
+  ticket,
+  outputs,
+  stage,
+  sendBackTo,
+  nextStage
+}: {
+  ticket: Ticket
+  outputs: TicketOutputs | undefined
+  stage: StageConfig
+  sendBackTo: StageConfig | null
+  nextStage: StageConfig | null
+}): ReactElement {
   const [note, setNote] = useState('')
   const [ticked, setTicked] = useState<Set<number>>(new Set())
   const approve = useAction(() => window.eregion.approveReview(ticket.id))
-  const sendBack = useAction(() => window.eregion.sendBackToBuild(ticket.id, note))
+  const sendBack = useAction(() => window.eregion.sendBack(ticket.id, note))
   const doneWhen = outputs?.plan?.parsed.doneWhen ?? []
   const lows = outputs?.review?.review?.issues.filter((issue) => issue.severity === 'low') ?? []
   return (
@@ -116,7 +128,7 @@ export function ReviewDecision({ ticket, outputs, nextStage }: { ticket: Ticket;
         </span>
         {lows.length > 0 && (
           <>
-            <span className="label">Low issues from the review</span>
+            <span className="label">Low issues from {stage.name}</span>
             {lows.map((issue) => (
               <div key={issue.id} style={{ display: 'flex', gap: 8, fontSize: 14 }}>
                 <Severity severity="low" />
@@ -139,16 +151,20 @@ export function ReviewDecision({ ticket, outputs, nextStage }: { ticket: Ticket;
         <span className="muted" style={{ fontSize: 13 }}>
           The environment keeps running until the ticket is done.
         </span>
-        <label className="label" htmlFor="send-back" style={{ marginTop: 6 }}>
-          Or send it back to Build
-        </label>
-        <textarea id="send-back" className="textarea" rows={3} placeholder="What needs changing? Low issues to fix can be named here too." value={note} onChange={(event) => setNote(event.target.value)} />
-        <button type="button" className="er-btn" onClick={() => void sendBack.run()} disabled={!note.trim() || sendBack.pending}>
-          Send back to Build
-        </button>
-        <span className="muted" style={{ fontSize: 13 }}>
-          Your note goes to the builder as a message from you at the start of the next Build pass, then the review runs again. It doesn't use up an AI review loop.
-        </span>
+        {sendBackTo && (
+          <>
+            <label className="label" htmlFor="send-back" style={{ marginTop: 6 }}>
+              Or send it back to {sendBackTo.name}
+            </label>
+            <textarea id="send-back" className="textarea" rows={3} placeholder="What needs changing? Low issues to fix can be named here too." value={note} onChange={(event) => setNote(event.target.value)} />
+            <button type="button" className="er-btn" onClick={() => void sendBack.run()} disabled={!note.trim() || sendBack.pending}>
+              Send back to {sendBackTo.name}
+            </button>
+            <span className="muted" style={{ fontSize: 13 }}>
+              Your note goes to {sendBackTo.name} as a message from you at the start of its next pass, then {stage.name} runs again. It doesn't use up a loop.
+            </span>
+          </>
+        )}
         {(approve.error || sendBack.error) && <span className="error-text">{approve.error ?? sendBack.error}</span>}
       </section>
     </div>

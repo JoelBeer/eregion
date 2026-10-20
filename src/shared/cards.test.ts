@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ticketCard, type CardInputs } from './cards'
-import { defaultPipeline } from './pipeline'
+import { defaultPipeline, stageFromTemplate } from './pipeline'
 import type { Ticket } from './tickets'
 
 const base: Ticket = {
@@ -19,8 +19,8 @@ const base: Ticket = {
   stopDetail: null,
   waitingFor: null,
   loop: 1,
-  reviewFailures: 0,
-  extraLoops: 0,
+  loops: {},
+  returnedFrom: null,
   slot: 1,
   branch: 'wm-1-hints',
   affectedRepos: ['app'],
@@ -49,17 +49,23 @@ describe('ticketCard', () => {
       mood: 'stuck',
       bubble: "Blocked: web needs a change the plan doesn't include."
     })
-    expect(card({ stage: 'review', status: 'needs_you', stopReason: 'loop_limit', reviewFailures: 2 }).bubble).toBe('Review failed 2 times. Your call: one more loop, or back to Plan.')
+    expect(card({ stage: 'review', status: 'needs_you', stopReason: 'loop_limit', loops: { review: { failures: 2, extra: 0 } }, returnedFrom: 'review' }).bubble).toBe('Review failed 2 times. Your call: one more loop, or back to Plan.')
     expect(card({ status: 'needs_you', stopReason: 'setup_failed', stopDetail: 'A setup step failed' }).pill).toEqual({ status: 'failed', label: 'Setup failed' })
   })
 
   it('tags a Build that came back from review', () => {
-    expect(card({ reviewFailures: 1, loop: 2 }).tags).toEqual(['Back from review · loop 1 of 2'])
+    expect(card({ loops: { review: { failures: 1, extra: 0 } }, returnedFrom: 'review', loop: 2 }).tags).toEqual(['Back from review · loop 1 of 2'])
     expect(card({ loop: 2 }).tags).toEqual(['Build · pass 2'])
   })
 
+  it('tags whichever stage a custom verdict stage sent the work back to, counting its own loops', () => {
+    const check = { ...stageFromTemplate('review', defaultPipeline(), 3), id: 'security', name: 'Security check', onFailure: { returnTo: 'build', maxLoops: 3 } }
+    const stages = [...defaultPipeline().slice(0, 3), check, ...defaultPipeline().slice(3)]
+    expect(card({ loops: { security: { failures: 2, extra: 1 } }, returnedFrom: 'security', loop: 3 }, { stages }).tags).toEqual(['Back from security check · loop 2 of 4'])
+  })
+
   it('says it is your turn after the AI review passes', () => {
-    expect(card({ stage: 'review', status: 'needs_you', waitingFor: 'manual-review' })).toMatchObject({ pill: { label: 'Your turn' }, bubble: 'AI review passed. Your turn to click around.' })
+    expect(card({ stage: 'review', status: 'needs_you', waitingFor: 'manual-review' })).toMatchObject({ pill: { label: 'Your turn' }, bubble: 'Review passed. Your turn to click around.' })
   })
 
   it('shows the setup step that is running, and an Open app link once ready', () => {

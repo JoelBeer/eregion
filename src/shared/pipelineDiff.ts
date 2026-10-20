@@ -1,4 +1,4 @@
-import type { StageAction, StageConfig } from './pipeline'
+import { stageAccess, type StageAction, type StageConfig } from './pipeline'
 
 export interface PipelineVersionSummary {
   version: number
@@ -63,6 +63,7 @@ function describe(stage: StageConfig, crewName: (stage: StageConfig) => string):
     Name: stage.name,
     'Who runs it': crewName(stage),
     'Works in': stage.workspace === 'plan-checkout' ? 'read-only checkout' : "ticket's worktrees",
+    Changes: stageAccess(stage) === 'changes' ? 'can change files' : 'read-only',
     'Done when': stage.doneWhen + (stage.doneCommand ? `: ${stage.doneCommand}` : ''),
     'Files it writes': stage.outputs.join(', ') || 'none',
     'If it fails': stage.onFailure ? `back to ${stage.onFailure.returnTo}, at most ${stage.onFailure.maxLoops} times` : '—',

@@ -185,7 +185,8 @@ export function parseReview(text: string, repoNames: string[]): { review: Review
       problems.push(`${where} should be an object`)
       continue
     }
-    if (typeof raw.id !== 'string' || !/^r\d+-\d+$/.test(raw.id)) problems.push(`${where}: id should look like r1-1`)
+    // Review's ids start with r; a verdict stage you add can use its own letter (c1-1 for a check).
+    if (typeof raw.id !== 'string' || !/^[a-z]+\d+-\d+$/i.test(raw.id)) problems.push(`${where}: id should look like r1-1 (a letter, the loop, a dash and a number)`)
     else if (ids.has(raw.id)) problems.push(`${where}: the id ${raw.id} is used twice`)
     else ids.add(raw.id)
     if (!['high', 'medium', 'low'].includes(raw.severity as string)) problems.push(`${where}: severity must be high, medium or low`)
