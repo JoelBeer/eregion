@@ -53,13 +53,13 @@ Everything runs inside your WSL distribution (Ubuntu here), where your repos and
 
    The window opens on Windows, filling the screen.
 
-4. **Optional, add it to the Start menu** so you can open it like any Windows app:
+4. **Add it to Windows** so it has the anvil in the taskbar and opens from the Start menu like any Windows app:
 
    ```bash
    npm run install-launcher
    ```
 
-   It shows up in the Start menu under Ubuntu, with the anvil icon. If it doesn't appear, run `wsl --shutdown` in Windows and open Ubuntu again.
+   It asks for your Ubuntu password: WSLg only reads app entries from the system folders. Without it the window still works, but the taskbar shows the Linux penguin. If the icon or the Start menu entry doesn't appear, close Eregion, run `wsl --shutdown` in Windows and open it again.
 
 On Linux, steps 2 and 3 are all there is, and `npm run install-launcher` adds it to your desktop's app list.
 

@@ -48,5 +48,15 @@ describe('costReport', () => {
 
     const recent = costReport(db, project.id, '30d')
     expect(recent.tickets.map((ticket) => ticket.key)).toEqual(['WM-2'])
+
+    // A page at a time, and a search, list fewer tickets but never change the totals.
+    const first = costReport(db, project.id, 'all', { limit: 1 })
+    expect(first.tickets.map((ticket) => ticket.key)).toEqual(['WM-2'])
+    expect(first.matching).toBe(2)
+    expect(first.totals).toEqual(all.totals)
+    const found = costReport(db, project.id, 'all', { search: 'cheap' })
+    expect(found.tickets.map((ticket) => ticket.key)).toEqual(['WM-1'])
+    expect(found.matching).toBe(1)
+    expect(found.totals).toEqual(all.totals)
   })
 })

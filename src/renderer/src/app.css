@@ -130,3 +130,194 @@ h3 {
   outline: 2px solid var(--aqua-400, #76e1ef);
   outline-offset: -2px;
 }
+
+/* A board tile opens its ticket from anywhere on it: the title link stretches over the whole card. */
+.er-card-link {
+  position: relative;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+.er-card-link:hover {
+  border-color: var(--primary-600, #0b6594);
+}
+.er-card-link:has(.er-card-title:focus-visible) {
+  outline: 2px solid var(--aqua-400, #76e1ef);
+  outline-offset: 2px;
+}
+.er-card-link .er-card-title::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.er-card-link .er-card-title:focus-visible {
+  outline: none;
+}
+.er-card-link .er-foot a {
+  position: relative;
+  z-index: 1;
+}
+
+/* The pipeline editor's stage strip: cards with a drag handle, and + between them to insert a stage. */
+.er-stage-strip {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.er-stage-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 6px;
+  background: var(--surface-0, #ffffff);
+  border: 1px solid var(--border-200, #d5dce6);
+  border-radius: 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.er-stage-card[draggable="true"] {
+  cursor: grab;
+}
+.er-stage-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+.er-stage-card:hover {
+  border-color: var(--term-user, #8fb3c4);
+}
+.er-stage-card.is-selected {
+  background: #cdeff6;
+  border: 2px solid var(--primary-600, #0b6594);
+  padding: 7px 11px 7px 5px;
+}
+.er-stage-card.is-drop-target {
+  border: 2px dashed var(--primary-600, #0b6594);
+  padding: 7px 11px 7px 5px;
+}
+.er-stage-card.is-dragging,
+.er-stage-card.is-off {
+  opacity: 0.5;
+}
+.er-stage-grip {
+  flex: none;
+  width: 12px;
+}
+.er-stage-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+.er-stage-card button.er-stage-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--ink-900, #12263a);
+  text-align: left;
+  cursor: inherit;
+}
+.er-stage-name span {
+  font-size: 12px;
+  color: var(--ink-600, #4d5b6e);
+}
+.er-stage-insert {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px dashed var(--term-user, #8fb3c4);
+  background: var(--surface-0, #ffffff);
+  color: var(--primary-600, #0b6594);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.er-stage-insert:hover {
+  border-style: solid;
+  border-color: var(--primary-600, #0b6594);
+  background: var(--primary-50, #e4f1f8);
+}
+
+/* Dictation in progress: listening, then transcribing, said in words with a timer. */
+.er-dictation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 13px;
+  border-radius: 8px;
+  background: var(--primary-50, #e4f1f8);
+  color: var(--ink-900, #12263a);
+}
+.er-session .er-dictation {
+  border-radius: 0;
+  background: var(--forge-900, #052e45);
+  color: var(--term-text, #d6ecef);
+  border-top: 1px solid var(--forge-600, #0f86c2);
+}
+.er-dictation-hint {
+  opacity: 0.75;
+}
+.er-dictation-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #e5484d;
+  animation: er-pulse 1.2s ease-in-out infinite;
+}
+.er-dictation-meter {
+  width: 90px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+.er-dictation-meter span {
+  display: block;
+  height: 100%;
+  background: var(--aqua-400, #76e1ef);
+  transition: width 80ms linear;
+}
+.er-dictation .er-dictation-meter span {
+  background: var(--primary-600, #0b6594);
+}
+.er-session .er-dictation .er-dictation-meter span {
+  background: var(--aqua-400, #76e1ef);
+}
+.er-spinner {
+  display: inline-block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: er-spin 0.8s linear infinite;
+}
+@keyframes er-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes er-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .er-spinner {
+    animation-duration: 2.4s;
+  }
+  .er-dictation-dot {
+    animation: none;
+  }
+}

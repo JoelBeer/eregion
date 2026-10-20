@@ -5,7 +5,7 @@ import { NavIcon } from './icons'
 import { CrewAvatar } from './RobotAvatar'
 import { Chip } from './ui'
 import { HOLD_TO_TALK } from '@shared/voice'
-import { useDictation, useVoice } from '../voice/voice'
+import { DictationStatus, useDictation, useVoice } from '../voice/voice'
 
 /** Follows a run: loads it, then applies its events and state changes as they arrive. */
 export function useRun(runId: number | null): RunView | null {
@@ -207,6 +207,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
           </div>
         )}
       </div>
+      <DictationStatus dictation={dictation} finishHint={`Click the mic, or let go of ${HOLD_TO_TALK}, to finish`} />
       <div className="er-session-foot">
         {voice.settings.engine === 'whisper' && (
           <button
@@ -214,12 +215,13 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
             className="er-mic"
             aria-label={dictation.state === 'listening' ? 'Stop dictating' : 'Dictate'}
             aria-pressed={dictation.state === 'listening'}
+            aria-busy={dictation.state === 'transcribing'}
             disabled={!canType || !voice.usable || dictation.state === 'transcribing'}
-            title={voice.usable ? `Click to dictate, or hold ${HOLD_TO_TALK} in the message box` : 'Download a Whisper model in Settings › Voice to dictate'}
+            title={dictation.state === 'transcribing' ? 'Transcribing…' : voice.usable ? `Click to dictate, or hold ${HOLD_TO_TALK} in the message box` : voice.modelState === 'checking' ? 'Getting dictation ready…' : 'Download a Whisper model in Settings › Voice to dictate'}
             onClick={() => void (dictation.state === 'listening' ? dictation.stop() : dictation.start())}
             style={dictation.state === 'listening' ? { boxShadow: `0 0 0 ${2 + Math.round(dictation.level * 6)}px var(--aqua-400)` } : undefined}
           >
-            <NavIcon name="mic" />
+            {dictation.state === 'transcribing' ? <span className="er-spinner" aria-hidden /> : <NavIcon name="mic" />}
           </button>
         )}
         {skills && skills.length > 0 && (
@@ -256,7 +258,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
           onKeyUp={onKeyUp}
           disabled={!canType}
           rows={1}
-          placeholder={dictation.state === 'listening' ? 'Listening… let go or click the mic to finish' : dictation.state === 'transcribing' ? 'Writing down what you said…' : hint}
+          placeholder={dictation.state === 'idle' ? hint : ''}
           style={{ flex: 1, minWidth: 200, resize: 'none', font: 'inherit', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--forge-600)', background: 'var(--forge-900)', color: 'var(--term-text, #D6ECEF)' }}
         />
         {!onSend && live && view?.takesMessagesMidRun && !waiting && (

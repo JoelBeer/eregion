@@ -349,7 +349,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     stopRun: (runId) => agents.stop(runId),
 
     openExternal: (url) => host.openExternal(url),
-    getCosts: async (projectId, period) => costReport(db, projectId, period),
+    getCosts: async (projectId, period, listing) => costReport(db, projectId, period, listing),
     listAgents: () => agentsInfo.list(),
     testAgent: (adapter) => agentsInfo.test(adapter),
     listModels: async (adapter) => agentsInfo.models(adapter),

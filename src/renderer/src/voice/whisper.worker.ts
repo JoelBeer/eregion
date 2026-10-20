@@ -11,18 +11,22 @@ const scope = self as unknown as { postMessage(message: unknown): void; onmessag
 
 type Request = { type: 'load'; model: string } | { type: 'transcribe'; id: number; audio: Float32Array; language: string }
 
-let loaded: { model: string; asr: AutomaticSpeechRecognitionPipeline } | null = null
+/** The model being loaded, or loaded; a transcription asked for while it loads waits for it. */
+let loading: { model: string; asr: Promise<AutomaticSpeechRecognitionPipeline> } | null = null
 
-async function load(model: string): Promise<AutomaticSpeechRecognitionPipeline> {
-  if (loaded?.model === model) return loaded.asr
-  const asr = (await pipeline('automatic-speech-recognition', model, {
+function load(model: string): Promise<AutomaticSpeechRecognitionPipeline> {
+  if (loading?.model === model) return loading.asr
+  const asr = pipeline('automatic-speech-recognition', model, {
     device: 'wasm',
     dtype: 'q8',
     progress_callback: (progress: { status: string; file?: string; loaded?: number; total?: number }) => {
       if (progress.status === 'progress' && progress.total) scope.postMessage({ type: 'progress', file: progress.file, loaded: progress.loaded, total: progress.total })
     }
-  })) as AutomaticSpeechRecognitionPipeline
-  loaded = { model, asr }
+  }) as Promise<AutomaticSpeechRecognitionPipeline>
+  loading = { model, asr }
+  asr.catch(() => {
+    if (loading?.asr === asr) loading = null
+  })
   return asr
 }
 
@@ -33,9 +37,11 @@ scope.onmessage = async (event: MessageEvent<Request>) => {
       await load(request.model)
       scope.postMessage({ type: 'ready', model: request.model })
     } else if (request.type === 'transcribe') {
-      if (!loaded) throw new Error('Load a Whisper model first')
-      const english = loaded.model.endsWith('.en')
-      const output = await loaded.asr(request.audio, english ? {} : { language: request.language, task: 'transcribe' })
+      if (!loading) throw new Error('Load a Whisper model first')
+      const { model } = loading
+      const asr = await loading.asr
+      const english = model.endsWith('.en')
+      const output = await asr(request.audio, english ? {} : { language: request.language, task: 'transcribe' })
       const text = (Array.isArray(output) ? output.map((item) => item.text).join(' ') : output.text).trim()
       scope.postMessage({ type: 'text', id: request.id, text })
     }

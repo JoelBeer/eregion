@@ -44,7 +44,17 @@ https://claude.ai/artifact/4G6q5KWFx7XnjbrH2q3WoR.
 ## Polish list (phase 8)
 
 - Window: open full screen (maximised); remove the File / Edit / View menu bar; one clean title bar with the Eregion name and the window controls on the same row (frameless window with our own drag region, or a hidden title bar with overlay controls). Done: frameless with our own title bar. Inside WSL, `npm start` runs Electron as a Wayland client (`scripts/electron-flags.mjs`), because under X11 WSLg can't drag or minimise a frameless window.
-- App icon: the anvil mark from the design system, for the window, the taskbar and the WSLg launcher, instead of the default Electron / Linux penguin icon.
+- App icon: the anvil mark from the design system, for the window, the taskbar and the WSLg launcher, instead of the default Electron / Linux penguin icon. Done: the window and title bar; the taskbar needs the launcher installed (see V1 fixes).
 - Pipeline versions: restore an older pipeline version (saved as a new version), or pull a single stage's settings from an older version, with a diff of what changes.
 - README (including the Linear app steps), licence, run instructions; then make JoelBeer/eregion public.
 - Packaging: leave onnxruntime-node (about 550 MB, pulled in by transformers.js) out of installers; dictation uses the WebAssembly runtime bundled in the renderer.
+
+## V1 fixes (from using it)
+
+Places where V1 didn't match its own design. New features are in the design doc's V2 tab.
+
+- [x] Board tiles open the ticket from a click anywhere on the tile, not just the title (the title link stretches over the card; the PR and Open app links keep their own action).
+- [x] Taskbar icon: WSLg only reads app entries from the system folders (`/usr/share/applications`, `/usr/local/share/applications`), and matches them to the window's app id (`eregion`). `npm run install-launcher` now installs the entry and icons into `/usr/local/share` inside WSL (it asks for your password), so the taskbar shows the anvil instead of the penguin.
+- [x] Voice: a status line shows listening (level meter and timer) and then transcribing (spinner and timer), so it never looks as if nothing happened. A downloaded model loads in the background and dictation can start while it loads; the words wait for it. The Small model takes about 13 s for a 2 s clip on this machine; Base is quicker.
+- [x] Pipeline editor matches the screens canvas: stage cards with a drag handle, a + between stages to insert one there, Add stage at the end (before Watch CI), the Watch CI switch on its card, and a dashed outline on the drop target.
+- [x] Costs: 25 tickets at a time, more as you scroll, with a search by key or title; a ticket's runs open under its row. The totals always cover the whole period.

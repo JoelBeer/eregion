@@ -1,4 +1,4 @@
-import { runTokens, type CostPeriod, type CostReport, type CostRun, type TicketCost } from '@shared/costs'
+import { COST_PAGE, runTokens, type CostListing, type CostPeriod, type CostReport, type CostRun, type TicketCost } from '@shared/costs'
 import type { Db } from './db'
 
 interface Row {
@@ -24,7 +24,7 @@ interface Row {
 const SINCE: Record<CostPeriod, string | null> = { '7d': '-7 days', '30d': '-30 days', all: null }
 
 /** What a project's tickets and Forge chats cost over a period, from the usage each run reported. */
-export function costReport(db: Db, projectId: number, period: CostPeriod): CostReport {
+export function costReport(db: Db, projectId: number, period: CostPeriod, listing: CostListing = {}): CostReport {
   const since = SINCE[period]
   const rows = db
     .prepare(
@@ -69,6 +69,8 @@ export function costReport(db: Db, projectId: number, period: CostPeriod): CostR
   }
   forge.chats = chats.size
   const list = [...tickets.values()].sort((a, b) => b.costUsd - a.costUsd || b.tokens - a.tokens)
+  const search = listing.search?.trim().toLowerCase() ?? ''
+  const matching = search ? list.filter((ticket) => ticket.key.toLowerCase().includes(search) || ticket.title.toLowerCase().includes(search)) : list
   return {
     period,
     totals: {
@@ -78,7 +80,8 @@ export function costReport(db: Db, projectId: number, period: CostPeriod): CostR
       forgeChats: forge.chats,
       runs: rows.length
     },
-    tickets: list,
+    tickets: matching.slice(0, Math.max(1, listing.limit ?? COST_PAGE)),
+    matching: matching.length,
     forge
   }
 }

@@ -11,7 +11,7 @@ export function BoardCard({ card, crew }: { card: TicketCard; crew: CrewMember |
   const tone = card.pill?.status === 'needsYou' ? 'amber' : card.pill?.status === 'failed' || card.pill?.status === 'fixing' ? 'red' : ticket.stage === 'done' ? 'faded' : 'default'
   const repos = ticket.stage === 'backlog' ? [] : ticket.affectedRepos
   return (
-    <article className={`er-card${tone !== 'default' ? ` er-card-${tone}` : ''}`} aria-label={`${ticket.key} ${ticket.title}`}>
+    <article className={`er-card er-card-link${tone !== 'default' ? ` er-card-${tone}` : ''}`} aria-label={`${ticket.key} ${ticket.title}`}>
       <div className="er-spread">
         <span className="er-key">{ticket.key}</span>
         {card.pill && <StatusPill status={card.pill.status}>{card.pill.label}</StatusPill>}

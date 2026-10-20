@@ -1,7 +1,6 @@
-import { useEffect, useState, type DragEvent, type ReactElement } from 'react'
+import { Fragment, useEffect, useState, type DragEvent, type ReactElement } from 'react'
 import { DEFAULT_CI, defaultPipeline, isPinnedStage, moveStage, validatePipeline, type CiSettings, type DoneWhen, type StageAction, type StageConfig } from '@shared/pipeline'
 import type { CrewMember } from '@shared/runs'
-import { CrewAvatar } from '../../components/RobotAvatar'
 import { Switch } from '../../components/ui'
 import { errorMessage, useAction } from '../../hooks'
 import { useCrew } from '../Board'
@@ -25,6 +24,16 @@ const DONE_LABELS: Record<DoneWhen, string> = {
   'prs-ready': 'The pull requests are open',
   'prs-merged': 'The pull requests are merged',
   'prs-green': 'Every required check is green'
+}
+
+/** The colour beside each stage in the strip, as in the screens canvas. */
+const STAGE_COLOURS: Record<StageConfig['kind'], string> = {
+  plan: '#FFB27A',
+  build: '#5FC4B8',
+  review: '#9DB4F2',
+  pr: '#F2D06B',
+  ci: '#76E1EF',
+  custom: '#C9B8F0'
 }
 
 const ROLES: CrewMember['role'][] = ['Planner', 'Builder', 'Reviewer', 'Shipper']
@@ -267,6 +276,7 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
   const [stages, setStages] = useState<StageConfig[]>([])
   const [selected, setSelected] = useState('plan')
   const [dragging, setDragging] = useState<number | null>(null)
+  const [over, setOver] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [history, setHistory] = useState(false)
 
@@ -305,57 +315,95 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
     event.preventDefault()
     if (dragging !== null) setStages(moveStage(stages, dragging, index))
     setDragging(null)
+    setOver(null)
+  }
+  const dragOver = (event: DragEvent, index: number): void => {
+    event.preventDefault()
+    if (over !== index) setOver(index)
+  }
+  /** Adds a new stage at `index`; past the end means just before Watch CI, which stays last. */
+  const insertAt = (index: number): void => {
+    const added = newCustomStage(stages)
+    const ci = stages.findIndex((item) => item.kind === 'ci')
+    const copy = [...stages]
+    copy.splice(ci >= 0 ? Math.min(index, ci) : index, 0, added)
+    setStages(copy)
+    setSelected(added.id)
   }
   const crewFor = (item: StageConfig): CrewMember | undefined => crew.find((member) => member.id === item.crewId) ?? crew.find((member) => member.role === item.crewRole)
+  const subtitle = (item: StageConfig): string => {
+    const name = crewFor(item)?.name ?? item.crewRole ?? 'Builder'
+    if (item.kind === 'ci') return item.enabled ? `built in · ${name} fixes` : 'built in · off'
+    return `${name} · ${item.mode}`
+  }
   const older = loaded.olderVersions.reduce((sum, item) => sum + item.tickets, 0)
 
   return (
     <>
       <section className="panel" aria-label="Stages">
-        <div role="list" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <ol className="er-stage-strip" aria-label="Stages, drag to reorder">
           {stages.map((item, index) => {
-            const member = crewFor(item)
+            const pinned = isPinnedStage(item)
+            const classes = ['er-stage-card', item.id === stage?.id && 'is-selected', over === index && dragging !== null && dragging !== index && !pinned && 'is-drop-target', dragging === index && 'is-dragging', !item.enabled && 'is-off']
             return (
-              <div
-                key={item.id}
-                role="listitem"
-                draggable={!isPinnedStage(item)}
-                onDragStart={() => setDragging(index)}
-                onDragEnd={() => setDragging(null)}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => drop(event, index)}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: dragging === index ? 0.4 : item.enabled ? 1 : 0.55 }}
-              >
+              <Fragment key={item.id}>
                 {index > 0 && (
-                  <span aria-hidden className="muted" style={{ marginRight: 4 }}>
-                    →
-                  </span>
+                  <li>
+                    <button type="button" className="er-stage-insert" aria-label={`Add a stage before ${item.name}`} title="Add a stage here" onClick={() => insertAt(index)}>
+                      +
+                    </button>
+                  </li>
                 )}
-                <button type="button" aria-pressed={item.id === stage?.id} onClick={() => setSelected(item.id)} className={`er-btn${item.id === stage?.id ? ' er-btn-primary' : ''}`} style={{ cursor: isPinnedStage(item) ? 'pointer' : 'grab', gap: 8 }}>
-                  {member && <CrewAvatar member={member} size={20} />}
-                  {item.name}
-                  {!item.enabled && <span style={{ fontSize: 11 }}>off</span>}
-                </button>
-              </div>
+                <li
+                  className={classes.filter(Boolean).join(' ')}
+                  draggable={!pinned}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    setDragging(index)
+                  }}
+                  onDragEnd={() => {
+                    setDragging(null)
+                    setOver(null)
+                  }}
+                  onDragOver={(event) => dragOver(event, index)}
+                  onDrop={(event) => drop(event, index)}
+                  onClick={() => setSelected(item.id)}
+                  title={pinned ? `${item.name} stays ${item.kind === 'plan' ? 'first' : 'last'}` : 'Drag to move'}
+                >
+                  {pinned ? (
+                    <span className="er-stage-grip" aria-hidden />
+                  ) : (
+                    <svg className="er-stage-grip" width="12" height="20" viewBox="0 0 12 20" aria-hidden>
+                      {[4, 10, 16].map((y) => (
+                        <Fragment key={y}>
+                          <circle cx="3" cy={y} r="1.5" fill="#8FB3C4" />
+                          <circle cx="9" cy={y} r="1.5" fill="#8FB3C4" />
+                        </Fragment>
+                      ))}
+                    </svg>
+                  )}
+                  <span className="er-stage-swatch" style={{ background: STAGE_COLOURS[item.kind] }} aria-hidden />
+                  <button type="button" className="er-stage-name" aria-pressed={item.id === stage?.id}>
+                    <strong>{item.name}</strong>
+                    <span>{subtitle(item)}</span>
+                  </button>
+                  {item.kind === 'ci' && (
+                    <span onClick={(event) => event.stopPropagation()} style={{ marginLeft: 4 }}>
+                      <Switch label={item.enabled ? 'On' : 'Off'} checked={item.enabled} onChange={(enabled) => update({ ...item, enabled })} />
+                    </span>
+                  )}
+                </li>
+              </Fragment>
             )
           })}
-          <button
-            type="button"
-            className="er-btn er-btn-ghost er-btn-sm"
-            onClick={() => {
-              const added = newCustomStage(stages)
-              const at = stages.findIndex((item) => item.kind === 'pr' || item.kind === 'ci')
-              const copy = [...stages]
-              copy.splice(at >= 0 ? at : copy.length, 0, added)
-              setStages(copy)
-              setSelected(added.id)
-            }}
-          >
-            + Add a stage
-          </button>
-        </div>
+          <li onDragOver={(event) => event.preventDefault()} onDrop={(event) => drop(event, stages.length - 1)}>
+            <button type="button" className="er-btn er-btn-dashed er-btn-sm" onClick={() => insertAt(stages.length)}>
+              + Add stage
+            </button>
+          </li>
+        </ol>
         <span className="muted" style={{ fontSize: 13 }}>
-          Drag stages to reorder them. Plan always comes first and Watch CI last. The Board has a column for each stage.
+          Drag stages by the handle to reorder them. Use + between two stages to insert one. Plan always comes first and Watch CI last. The Board has a column for each stage.
         </span>
       </section>
 

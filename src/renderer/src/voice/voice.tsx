@@ -4,7 +4,8 @@ import { DEFAULT_VOICE, whisperModel, type VoiceSettings } from '@shared/voice'
 const CACHE = 'transformers-cache'
 const SAMPLE_RATE = 16_000
 
-export type ModelState = 'checking' | 'missing' | 'downloading' | 'ready' | 'error'
+/** `loading` is a model already downloaded, being read from the cache into the worker. */
+export type ModelState = 'checking' | 'missing' | 'downloading' | 'loading' | 'ready' | 'error'
 
 interface Voice {
   settings: VoiceSettings
@@ -17,7 +18,7 @@ interface Voice {
   download(): void
   remove(): Promise<void>
   transcribe(audio: Float32Array): Promise<string>
-  /** True when the mic button should show: Whisper chosen and its model ready. */
+  /** True when dictation can start: Whisper chosen and its model ready, or loading (the words wait for it). */
   usable: boolean
 }
 
@@ -89,7 +90,7 @@ export function VoiceProvider({ children }: { children: ReactNode }): ReactEleme
     void cached(model).then((present) => {
       if (cancelled) return
       if (present) {
-        setModelState('downloading')
+        setModelState('loading')
         getWorker().postMessage({ type: 'load', model })
       } else setModelState('missing')
     })
@@ -127,7 +128,7 @@ export function VoiceProvider({ children }: { children: ReactNode }): ReactEleme
         pending.current.set(id, { resolve, reject })
         getWorker().postMessage({ type: 'transcribe', id, audio, language: settings.language }, [audio.buffer])
       }),
-    usable: settings.engine === 'whisper' && modelState === 'ready'
+    usable: settings.engine === 'whisper' && (modelState === 'ready' || modelState === 'loading')
   }
   return <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>
 }
@@ -182,16 +183,25 @@ export async function startRecording(deviceId: string | null): Promise<Recording
   }
 }
 
-/** Dictation for one composer: start, stop, and the words that came back. */
-export function useDictation(onText: (text: string, viaShortcut: boolean) => void): {
+export interface Dictation {
   state: 'idle' | 'listening' | 'transcribing'
+  /** When the current state began (ms since the epoch), for a timer. */
+  since: number
   level: number
   error: string | null
   start(viaShortcut?: boolean): Promise<void>
   stop(): Promise<void>
-} {
+}
+
+/** Dictation for one composer: start, stop, and the words that came back. */
+export function useDictation(onText: (text: string, viaShortcut: boolean) => void): Dictation {
   const voice = useVoice()
-  const [state, setState] = useState<'idle' | 'listening' | 'transcribing'>('idle')
+  const [state, setStateOnly] = useState<'idle' | 'listening' | 'transcribing'>('idle')
+  const [since, setSince] = useState(0)
+  const setState = (next: 'idle' | 'listening' | 'transcribing'): void => {
+    setStateOnly(next)
+    setSince(Date.now())
+  }
   const [level, setLevel] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const recording = useRef<Recording | null>(null)
@@ -232,5 +242,49 @@ export function useDictation(onText: (text: string, viaShortcut: boolean) => voi
     }
   }
 
-  return { state, level, error, start, stop }
+  return { state, since, level, error, start, stop }
+}
+
+function useSecondsSince(since: number, running: boolean): number {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!running) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(timer)
+  }, [running, since])
+  return Math.max(0, Math.floor((now - since) / 1000))
+}
+
+/**
+ * What dictation is doing, in words, while it's doing it: listening (with a level meter and a timer),
+ * then transcribing (with a spinner), so it never looks as if nothing happened. Nothing shows when idle.
+ */
+export function DictationStatus({ dictation, finishHint }: { dictation: Dictation; finishHint: string }): ReactElement | null {
+  const voice = useVoice()
+  const seconds = useSecondsSince(dictation.since, dictation.state !== 'idle')
+  if (dictation.state === 'idle') return null
+  const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  return (
+    <div className="er-dictation" role="status" aria-live="polite">
+      {dictation.state === 'listening' ? (
+        <>
+          <span className="er-dictation-dot" aria-hidden />
+          <strong>Listening</strong>
+          <span className="mono">{clock}</span>
+          <span className="er-dictation-meter" aria-hidden>
+            <span style={{ width: `${Math.round(dictation.level * 100)}%` }} />
+          </span>
+          <span className="er-dictation-hint">{finishHint}</span>
+        </>
+      ) : (
+        <>
+          <span className="er-spinner" aria-hidden />
+          <strong>{voice.modelState === 'loading' ? 'Loading the speech model, then transcribing' : 'Transcribing what you said'}</strong>
+          <span className="mono">{seconds}s</span>
+          <span className="er-dictation-hint">Whisper runs on this machine, so a long recording takes a little while.</span>
+        </>
+      )}
+    </div>
+  )
 }

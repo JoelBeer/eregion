@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { HOLD_TO_TALK, LANGUAGES, WHISPER_SIZES, type WhisperSize } from '@shared/voice'
 import { StatusPill, Switch } from '../../components/ui'
-import { useDictation, useVoice } from '../../voice/voice'
+import { DictationStatus, useDictation, useVoice } from '../../voice/voice'
 
 function useMicrophones(): { devices: MediaDeviceInfo[]; refresh: () => void } {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -33,13 +33,10 @@ function TryIt({ onHeard }: { onHeard: () => void }): ReactElement {
             else void dictation.start()
           }}
         >
-          {listening ? 'Stop' : dictation.state === 'transcribing' ? 'Writing it down…' : 'Start talking'}
+          {listening ? 'Stop' : dictation.state === 'transcribing' ? 'Transcribing…' : 'Start talking'}
         </button>
-        <div aria-label="Input level" role="meter" aria-valuemin={0} aria-valuemax={1} aria-valuenow={dictation.level} style={{ width: 220, height: 10, borderRadius: 5, background: 'var(--divider-100)' }}>
-          <div style={{ width: `${Math.round(dictation.level * 100)}%`, height: 10, borderRadius: 5, background: 'var(--primary-600)', transition: 'width 80ms linear' }} />
-        </div>
-        {listening && <span className="muted">Say a sentence, then press Stop.</span>}
       </div>
+      <DictationStatus dictation={dictation} finishHint="Say a sentence, then press Stop." />
       {!voice.usable && <span className="muted">Download a model above first.</span>}
       {heard && (
         <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--surface-25, #F7F8FB)' }}>
@@ -65,6 +62,7 @@ export function VoiceSettings(): ReactElement {
     checking: { status: 'neutral' as const, label: 'Checking…' },
     missing: { status: 'neutral' as const, label: 'Not downloaded' },
     downloading: { status: 'running' as const, label: `Downloading ${Math.round(voice.progress * 100)}%` },
+    loading: { status: 'running' as const, label: 'Loading…' },
     ready: { status: 'passed' as const, label: 'Ready' },
     error: { status: 'failed' as const, label: 'Failed' }
   }[voice.modelState]
