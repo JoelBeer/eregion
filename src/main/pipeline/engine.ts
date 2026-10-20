@@ -20,7 +20,8 @@ import type { PipelineStore, TicketPatch, TicketStore } from './stores'
 
 export interface EngineSettings {
   userName(): string
-  houseRules(): string
+  /** Eregion's rules plus the project's, added to every stage prompt. */
+  houseRules(project: Project): string
 }
 
 /** Hooks into Linear, GitHub and notifications. Every hook is optional and failures are only logged. */
@@ -196,7 +197,7 @@ export class PipelineEngine {
       branch: ticket.branch ?? '',
       ...values
     }
-    return render(composePrompt(stage.goal, this.deps.settings.houseRules()), (name) => all[name] ?? '').text
+    return render(composePrompt(stage.goal, this.deps.settings.houseRules(project)), (name) => all[name] ?? '').text
   }
 
   /**

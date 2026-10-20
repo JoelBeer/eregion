@@ -9,6 +9,7 @@ import type { AppInfo, ToolCheck } from './types'
 import type { CostPeriod, CostReport } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
+import type { RuleFile } from './rules'
 import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
@@ -154,6 +155,12 @@ export interface EregionApi {
   addModel(adapter: AdapterId, id: string): Promise<void>
   removeModel(adapter: AdapterId, id: string): Promise<void>
 
+  listRules(): Promise<RuleFile[]>
+  /** Saves Eregion, project or machine rules in place. */
+  saveRule(id: string, content: string): Promise<void>
+  /** Opens a pull request with a repo rule file's new content; returns its URL. */
+  proposeRuleChange(id: string, content: string, syncAgents: boolean): Promise<string>
+
   getTicketPrs(ticketId: number): Promise<PullRequest[]>
   markPrsReady(ticketId: number): Promise<void>
   updatePrDescription(ticketId: number, repo: string, markdown: string): Promise<void>
@@ -235,6 +242,9 @@ export const API_METHODS = [
   'listModels',
   'addModel',
   'removeModel',
+  'listRules',
+  'saveRule',
+  'proposeRuleChange',
   'getTicketPrs',
   'markPrsReady',
   'updatePrDescription',

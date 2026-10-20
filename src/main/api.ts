@@ -30,7 +30,9 @@ import { CiWatcher } from './pipeline/ciWatch'
 import { PrStage } from './pipeline/prStage'
 import { PrStore } from './pipeline/prs'
 import { costReport } from './costs'
+import { combineRules } from '@shared/rules'
 import { AgentsInfo } from './agentsInfo'
+import { RulesStore } from './rules'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -121,7 +123,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     workspaces,
     settings: {
       userName: () => getSetting(db, 'user.name', host.userName ?? 'you'),
-      houseRules: () => getSetting(db, 'rules.house', '')
+      houseRules: (project) => combineRules(getSetting(db, 'rules.house', ''), getSetting(db, `rules.project.${project.id}`, ''), project.name)
     },
     integrations: linearIntegrations(linearAuth, (title, body) => host.notify?.(title, body)),
     onTicketChanged: ticketChanged
@@ -129,6 +131,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   const prs = new PrStore(db)
   const agentsInfo = new AgentsInfo(db, projects)
   const github = options.github ?? new GhCli()
+  const rules = new RulesStore(db, projects, github)
   const prStage = new PrStage(engine, prs, github)
   const ci = new CiWatcher(engine, prs, github)
   engine.recover()
@@ -313,6 +316,9 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     listModels: async (adapter) => agentsInfo.models(adapter),
     addModel: async (adapter, id) => agentsInfo.addModel(adapter, id),
     removeModel: async (adapter, id) => agentsInfo.removeModel(adapter, id),
+    listRules: () => rules.list(),
+    saveRule: (id, content) => rules.save(id, content),
+    proposeRuleChange: (id, content, syncAgents) => rules.proposeChange(id, content, { syncAgents }),
 
     // After the tickets API: in a project linked to Linear, createTicket makes a Linear issue.
     ...integrationsApi
