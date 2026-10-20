@@ -1,4 +1,5 @@
 import { defaultPipeline, validatePipeline, type StageConfig } from '@shared/pipeline'
+import type { PipelineVersionSummary } from '@shared/pipelineDiff'
 import type { LinearData, StopReason, Ticket, TicketStatus, WaitingFor } from '@shared/tickets'
 import type { Db } from '../db'
 
@@ -7,6 +8,7 @@ export interface PipelineVersion {
   stages: StageConfig[]
   createdAt: string
 }
+
 
 /** Pipelines are versioned: tickets keep the version they started with; edits apply to new tickets. */
 export class PipelineStore {
@@ -34,6 +36,40 @@ export class PipelineStore {
     const next = (this.db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS next FROM pipelines WHERE project_id = ?').get(projectId) as { next: number }).next
     this.db.prepare('INSERT INTO pipelines (project_id, version, stages) VALUES (?, ?, ?)').run(projectId, next, JSON.stringify(stages))
     return this.get(projectId, next)
+  }
+
+  /** Every saved version, newest first, with how many unfinished tickets are on each. */
+  versions(projectId: number): PipelineVersionSummary[] {
+    this.latest(projectId)
+    return (
+      this.db
+        .prepare(
+          `SELECT p.version, p.created_at AS createdAt, p.stages,
+             (SELECT COUNT(*) FROM tickets t WHERE t.project_id = p.project_id AND t.pipeline_version = p.version AND t.stage NOT IN ('done', 'backlog')) AS tickets
+           FROM pipelines p WHERE p.project_id = ? ORDER BY p.version DESC`
+        )
+        .all(projectId) as { version: number; createdAt: string; stages: string; tickets: number }[]
+    ).map((row) => ({ version: row.version, createdAt: row.createdAt, tickets: row.tickets, stageNames: (JSON.parse(row.stages) as StageConfig[]).map((stage) => stage.name) }))
+  }
+
+  /** Brings an older version back by saving it as a new one, so history stays in order and tickets keep theirs. */
+  restore(projectId: number, version: number): PipelineVersion {
+    const older = this.db.prepare('SELECT stages FROM pipelines WHERE project_id = ? AND version = ?').get(projectId, version) as { stages: string } | undefined
+    if (!older) throw new Error(`There's no version ${version}`)
+    return this.save(projectId, JSON.parse(older.stages) as StageConfig[])
+  }
+
+  /** Brings back one stage's settings from an older version into the latest, saved as a new version. */
+  restoreStage(projectId: number, version: number, stageId: string): PipelineVersion {
+    const older = this.db.prepare('SELECT stages FROM pipelines WHERE project_id = ? AND version = ?').get(projectId, version) as { stages: string } | undefined
+    const stage = older ? (JSON.parse(older.stages) as StageConfig[]).find((item) => item.id === stageId) : undefined
+    if (!stage) throw new Error(`Version ${version} has no stage ${stageId}`)
+    const current = this.latest(projectId).stages
+    const index = current.findIndex((item) => item.id === stageId)
+    const stages = [...current]
+    if (index >= 0) stages[index] = stage
+    else stages.splice(Math.min(Math.max(stages.findIndex((item) => item.kind === 'pr' || item.kind === 'ci'), 1), stages.length), 0, stage)
+    return this.save(projectId, stages)
   }
 
   /** How many tickets are still on each older version, for the "2 tickets on version 2" note. */

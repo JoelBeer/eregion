@@ -3,6 +3,7 @@ import type { AgentEvent } from './agent'
 import type { Environment } from './environment'
 import type { CrewMember, RunView } from './runs'
 import type { StageConfig } from './pipeline'
+import type { PipelineVersionSummary } from './pipelineDiff'
 import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
 import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
@@ -123,6 +124,12 @@ export interface EregionApi {
 
   getPipeline(projectId: number): Promise<{ version: number; stages: StageConfig[]; olderVersions: { version: number; tickets: number }[] }>
   savePipeline(projectId: number, stages: StageConfig[]): Promise<number>
+  listPipelineVersions(projectId: number): Promise<PipelineVersionSummary[]>
+  getPipelineVersion(projectId: number, version: number): Promise<{ version: number; stages: StageConfig[]; createdAt: string }>
+  /** Saves an older version as the newest one; returns the new version number. */
+  restorePipelineVersion(projectId: number, version: number): Promise<number>
+  /** Brings back one stage's settings from an older version, saved as a new version. */
+  restorePipelineStage(projectId: number, version: number, stageId: string): Promise<number>
 
   getSetting<T>(key: string, fallback: T): Promise<T>
   setSetting(key: string, value: unknown): Promise<void>
@@ -240,6 +247,10 @@ export const API_METHODS = [
   'updateFromBase',
   'getPipeline',
   'savePipeline',
+  'listPipelineVersions',
+  'getPipelineVersion',
+  'restorePipelineVersion',
+  'restorePipelineStage',
   'getSetting',
   'setSetting',
   'listCrew',

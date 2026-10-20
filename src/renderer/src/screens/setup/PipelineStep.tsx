@@ -5,6 +5,7 @@ import { CrewAvatar } from '../../components/RobotAvatar'
 import { Switch } from '../../components/ui'
 import { errorMessage, useAction } from '../../hooks'
 import { useCrew } from '../Board'
+import { PipelineHistory } from './PipelineHistory'
 import { SetupFooter, type StepProps } from './ProjectSetup'
 
 const KIND_LABELS: Record<StageConfig['kind'], string> = {
@@ -267,8 +268,9 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
   const [selected, setSelected] = useState('plan')
   const [dragging, setDragging] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [history, setHistory] = useState(false)
 
-  useEffect(() => {
+  const reload = (): void => {
     window.eregion.getPipeline(project.id).then(
       (result) => {
         setLoaded(result)
@@ -276,7 +278,8 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
       },
       (caught: unknown) => setLoadError(errorMessage(caught))
     )
-  }, [project.id])
+  }
+  useEffect(reload, [project.id])
 
   const dirty = loaded !== undefined && JSON.stringify(loaded.stages) !== JSON.stringify(stages)
   const problems = validatePipeline(stages)
@@ -374,6 +377,8 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
         />
       )}
 
+      {history && <PipelineHistory key={loaded.version} projectId={project.id} current={loaded.stages} crew={crew} dirty={dirty} onRestored={reload} />}
+
       {problems.length > 0 && <span className="error-text">{problems.join('. ')}</span>}
       {(save.error || saveAndNext.error) && <span className="error-text">{save.error ?? saveAndNext.error}</span>}
 
@@ -389,6 +394,9 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
               {dirty ? ' · saving makes a new version' : ''}
               {older > 0 ? ` · ${older} ticket${older === 1 ? '' : 's'} still on older versions` : ''}
             </span>
+            <button type="button" className="er-btn er-btn-ghost" aria-expanded={history} onClick={() => setHistory(!history)}>
+              {history ? 'Hide history' : 'History'}
+            </button>
             {dirty && (
               <button type="button" className="er-btn" disabled={problems.length > 0 || save.pending} onClick={() => void save.run()}>
                 Save

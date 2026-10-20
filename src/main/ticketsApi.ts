@@ -38,6 +38,10 @@ export type TicketsApi = Pick<
   | 'updateFromBase'
   | 'getPipeline'
   | 'savePipeline'
+  | 'listPipelineVersions'
+  | 'getPipelineVersion'
+  | 'restorePipelineVersion'
+  | 'restorePipelineStage'
 >
 
 export interface TicketsApiDeps {
@@ -249,7 +253,11 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
         if (stage.crewId !== null) crew.get(stage.crewId)
       }
       return pipelines.save(projectId, stages).version
-    }
+    },
+    listPipelineVersions: async (projectId) => pipelines.versions(projectId),
+    getPipelineVersion: async (projectId, version) => pipelines.get(projectId, version),
+    restorePipelineVersion: async (projectId, version) => pipelines.restore(projectId, version).version,
+    restorePipelineStage: async (projectId, version, stageId) => pipelines.restoreStage(projectId, version, stageId).version
   }
 }
 
