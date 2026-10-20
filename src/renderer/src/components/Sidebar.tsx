@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import type { ProjectSummary } from '@shared/model'
 import { href, type Route } from '../router'
 import { Logo, NavIcon, type IconName } from './icons'
+import { hasTitleBar } from './TitleBar'
 import { ProjectBadge } from './ui'
 
 export type NavId = 'board' | 'crew' | 'forge' | 'pipeline' | 'costs' | 'projects' | 'settings'
@@ -66,11 +67,14 @@ export function Sidebar({ projects, currentProjectId, active }: { projects: Proj
   }
 
   return (
-    <nav aria-label="Main" className="er-sidebar" style={{ flex: collapsed ? '0 0 72px' : '0 0 240px', width: collapsed ? 72 : 240, minHeight: '100vh' }}>
-      <div className="er-brand">
-        <Logo />
-        {label('Eregion')}
-      </div>
+    <nav aria-label="Main" className="er-sidebar" style={{ flex: collapsed ? '0 0 72px' : '0 0 240px', width: collapsed ? 72 : 240, height: '100%', overflowY: 'auto' }}>
+      {/* With the app's own title bar, the name sits there instead. */}
+      {!hasTitleBar() && (
+        <div className="er-brand">
+          <Logo />
+          {label('Eregion')}
+        </div>
+      )}
 
       {current && (
         <button

@@ -306,3 +306,12 @@ export type EregionEvent = { type: 'projects-changed' } | { type: 'project-chang
 export interface EregionBridge extends EregionApi {
   onEvent(listener: (event: EregionEvent) => void): () => void
 }
+
+/** The frameless window's own buttons, from the preload script (absent in the web preview). */
+export interface WindowControls {
+  minimize(): Promise<boolean>
+  toggleMaximize(): Promise<boolean>
+  close(): Promise<boolean>
+  isMaximized(): Promise<boolean>
+  onMaximizedChange(listener: (maximized: boolean) => void): () => void
+}

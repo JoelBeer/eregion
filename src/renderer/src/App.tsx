@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
 import { Sidebar, type NavId } from './components/Sidebar'
+import { TitleBar } from './components/TitleBar'
 import { useQuery } from './hooks'
 import { navigate, useRoute, type Route } from './router'
 import { NewProject } from './screens/NewProject'
@@ -69,12 +70,19 @@ export function App(): ReactElement {
   }, [route, currentProjectId])
 
   if (!projects.data) {
-    return projects.error ? <main className="error-text" style={{ padding: 28 }}>{projects.error}</main> : <main />
+    return <Frame>{projects.error ? <main className="error-text" style={{ padding: 28 }}>{projects.error}</main> : <main />}</Frame>
   }
 
+  const welcome = (
+    <Frame>
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        <Welcome onSetUpProject={() => navigate({ name: 'new-project' })} />
+      </div>
+    </Frame>
+  )
   const list = projects.data
   if (list.length === 0 && route.name !== 'new-project') {
-    return <Welcome onSetUpProject={() => navigate({ name: 'new-project' })} />
+    return welcome
   }
 
   const current = list.some((project) => project.id === currentProjectId) ? currentProjectId : (list[0]?.id ?? null)
@@ -113,15 +121,25 @@ export function App(): ReactElement {
       screen = <CrewScreen view={route.view} id={route.id} />
       break
     case 'welcome':
-      return <Welcome onSetUpProject={() => navigate({ name: 'new-project' })} />
+      return welcome
     default:
       screen = <Projects projects={list} currentProjectId={current} />
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
+    <Frame>
       <Sidebar projects={list} currentProjectId={current} active={activeNav(route)} />
-      {screen}
+      <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', display: 'flex' }}>{screen}</div>
+    </Frame>
+  )
+}
+
+/** The whole window: the title bar on top, then the app. Only the content area scrolls. */
+function Frame({ children }: { children: ReactNode }): ReactElement {
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <TitleBar />
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>{children}</div>
     </div>
   )
 }

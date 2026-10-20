@@ -88,3 +88,45 @@ h3 {
   color: var(--red-700, #b42318);
   font-size: 13px;
 }
+
+/* The frameless window's title bar: one row, the same blue as the sidebar. */
+.er-titlebar {
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 16px;
+  background: var(--forge-800, #0b6594);
+  color: var(--ink-on-forge, #ddf3fa);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+.er-titlebar-name {
+  font-family: var(--font-display, 'Space Grotesk', system-ui, sans-serif);
+  font-weight: 600;
+  font-size: 15px;
+}
+.er-titlebar button {
+  -webkit-app-region: no-drag;
+  width: 46px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.er-titlebar button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.er-titlebar button.er-titlebar-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.er-titlebar button:focus-visible {
+  outline: 2px solid var(--aqua-400, #76e1ef);
+  outline-offset: -2px;
+}

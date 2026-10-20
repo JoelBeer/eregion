@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { userInfo } from 'node:os'
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, safeStorage, shell } from 'electron'
 import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
 import { createBackend, type Backend, type Host } from './api'
 import { openDatabase, type Db } from './db'
@@ -14,15 +14,23 @@ function databasePath(): string {
   return join(app.getPath('userData'), 'eregion.db')
 }
 
+/** The anvil, for the window and taskbar. Packaged apps carry their own icon. */
+function iconPath(): string | undefined {
+  return app.isPackaged ? undefined : join(__dirname, '../../build/icon.png')
+}
+
 function createWindow(): void {
+  // Frameless: the app draws one title bar of its own, with the name and the window buttons on one row.
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 640,
     show: false,
-    backgroundColor: '#EAF8FB',
+    frame: false,
+    backgroundColor: '#0B6594',
     title: 'Eregion',
+    icon: iconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -30,10 +38,16 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.maximize()
+    mainWindow?.show()
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+  const sendMaximized = (): void => mainWindow?.webContents.send('window', { maximized: mainWindow.isMaximized() })
+  mainWindow.on('maximize', sendMaximized)
+  mainWindow.on('unmaximize', sendMaximized)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void openUrl(url, (link) => shell.openExternal(link))
     return { action: 'deny' }
@@ -91,9 +105,22 @@ function registerIpc(api: EregionApi): void {
     const handler = api[method as keyof EregionApi] as (...params: unknown[]) => Promise<unknown>
     return handler(...args)
   })
+  // The title bar's buttons.
+  ipcMain.handle('window', (_event, action: 'minimize' | 'toggle-maximize' | 'close' | 'is-maximized') => {
+    if (!mainWindow) return false
+    if (action === 'minimize') mainWindow.minimize()
+    if (action === 'toggle-maximize') {
+      if (mainWindow.isMaximized()) mainWindow.unmaximize()
+      else mainWindow.maximize()
+    }
+    if (action === 'close') mainWindow.close()
+    return mainWindow.isMaximized()
+  })
 }
 
 app.whenReady().then(() => {
+  // No File / Edit / View menu: everything lives in the app itself.
+  Menu.setApplicationMenu(null)
   db = openDatabase(databasePath())
   backend = createBackend(db, host, { timers: true })
   registerIpc(backend.api)
