@@ -107,7 +107,9 @@ export class PipelineEngine {
 
   crewFor(stage: StageConfig): CrewMember {
     const { crew } = this.deps
-    const member = stage.crewId ? crew.get(stage.crewId) : stage.crewRole ? crew.byRole(stage.crewRole) : undefined
+    // A stage pinned to someone who has since left the crew falls back to its role.
+    const pinned = stage.crewId ? crew.list().find((item) => item.id === stage.crewId) : undefined
+    const member = pinned ?? (stage.crewRole ? crew.byRole(stage.crewRole) : undefined)
     const fallback = member ?? crew.list()[0]
     if (!fallback) throw new Error(`Nobody can run ${stage.name}: add a crew member first`)
     return fallback

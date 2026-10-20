@@ -3,7 +3,7 @@ import type { AgentEvent } from '@shared/agent'
 import { dayLabel, visitor, type Chat } from '@shared/forge'
 import type { ModelOption } from '@shared/agents'
 import type { CrewMember } from '@shared/runs'
-import { RobotAvatar } from '../components/RobotAvatar'
+import { CrewAvatar, RobotAvatar } from '../components/RobotAvatar'
 import { SessionPanel, useRun } from '../components/SessionPanel'
 import { Chip } from '../components/ui'
 import { useAction, useQuery } from '../hooks'
@@ -37,7 +37,7 @@ function NewChat({ projectId, onCreated }: { projectId: number; onCreated: (chat
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {crew.map((member) => (
             <button key={member.id} type="button" aria-pressed={crewId === member.id} className={`er-btn${crewId === member.id ? ' er-btn-primary' : ''}`} onClick={() => setCrewId(member.id)} style={{ gap: 8 }}>
-              <RobotAvatar seed={member.seed} size={22} />
+              <CrewAvatar member={member} size={22} />
               {member.name}
               <span style={{ fontSize: 12, opacity: 0.8 }}>{member.model.replace('claude-', '')}</span>
             </button>
@@ -241,7 +241,7 @@ export function Forge({ projectId, chatId }: { projectId: number; chatId: number
                     }}
                     style={{ display: 'flex', gap: 8, alignItems: 'center', textAlign: 'left', border: 'none', borderRadius: 8, padding: '6px 8px', cursor: 'pointer', font: 'inherit', background: item.id === chatId ? 'var(--aqua-50)' : 'transparent' }}
                   >
-                    <RobotAvatar seed={member.seed} size={22} />
+                    <CrewAvatar member={member} size={22} />
                     <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                       <span style={{ fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</span>
                       <span className="muted" style={{ fontSize: 12 }}>

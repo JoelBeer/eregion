@@ -1,5 +1,6 @@
 import type { AdapterId } from '@shared/agent'
-import { robotFromSeed, type Palette } from '@shared/robot'
+import { robotFromSeed, type Palette, type RobotParts } from '@shared/robot'
+import type { CrewStats } from '@shared/crew'
 import type { CrewMember } from '@shared/runs'
 import type { Db } from '../db'
 
@@ -25,10 +26,12 @@ interface CrewRow {
   adapter: AdapterId
   model: string
   seed: number
+  parts: string
 }
 
 function toMember(row: CrewRow): CrewMember {
-  return { id: row.id, name: row.name, role: row.role, adapter: row.adapter, model: row.model, seed: row.seed }
+  const parts = JSON.parse(row.parts || '{}') as Partial<RobotParts>
+  return { id: row.id, name: row.name, role: row.role, adapter: row.adapter, model: row.model, seed: row.seed, ...(Object.keys(parts).length ? { parts } : {}) }
 }
 
 export class CrewStore {
@@ -60,17 +63,29 @@ export class CrewStore {
   }
 
   create(member: Omit<CrewMember, 'id'>): CrewMember {
-    const result = this.db.prepare('INSERT INTO crew (name, role, adapter, model, seed) VALUES (?, ?, ?, ?, ?)').run(member.name.trim(), member.role, member.adapter, member.model, member.seed >>> 0)
+    const result = this.db.prepare('INSERT INTO crew (name, role, adapter, model, seed, parts) VALUES (?, ?, ?, ?, ?, ?)').run(member.name.trim(), member.role, member.adapter, member.model, member.seed >>> 0, JSON.stringify(member.parts ?? {}))
     return this.get(Number(result.lastInsertRowid))
   }
 
   update(id: number, patch: Partial<Omit<CrewMember, 'id'>>): CrewMember {
     const next = { ...this.get(id), ...patch }
-    this.db.prepare('UPDATE crew SET name = ?, role = ?, adapter = ?, model = ?, seed = ? WHERE id = ?').run(next.name.trim(), next.role, next.adapter, next.model, next.seed >>> 0, id)
+    this.db.prepare('UPDATE crew SET name = ?, role = ?, adapter = ?, model = ?, seed = ?, parts = ? WHERE id = ?').run(next.name.trim(), next.role, next.adapter, next.model, next.seed >>> 0, JSON.stringify(next.parts ?? {}), id)
     return this.get(id)
   }
 
   delete(id: number): void {
     this.db.prepare('DELETE FROM crew WHERE id = ?').run(id)
   }
+}
+
+/** What each crew member has done: tickets shipped (now Done), runs and spend. */
+export function crewStats(db: Db): CrewStats[] {
+  return db
+    .prepare(
+      `SELECT r.crew_id AS crewId, COUNT(DISTINCT CASE WHEN t.stage = 'done' THEN t.id END) AS shipped, COUNT(r.id) AS runs, COALESCE(SUM(r.cost_usd), 0) AS costUsd
+       FROM runs r LEFT JOIN tickets t ON t.id = r.ticket_id
+       WHERE r.crew_id IS NOT NULL
+       GROUP BY r.crew_id`
+    )
+    .all() as CrewStats[]
 }

@@ -11,7 +11,7 @@ import { ticketBuiltins } from './recipe/context'
 import { ServiceManager } from './recipe/services'
 import { checkTools } from './tools'
 import { Workspaces, type WorkspaceTicket } from './workspace/workspaces'
-import { CrewStore } from './agents/crew'
+import { CrewStore, crewStats } from './agents/crew'
 import { AgentManager } from './agents/manager'
 import { RunStore } from './agents/runs'
 import type { CrewMember } from '@shared/runs'
@@ -111,6 +111,11 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
 
   const tickets = new TicketStore(db)
   const pipelines = new PipelineStore(db)
+  // A desktop notification, plus a notice for the window (the needs-you chime).
+  const notify = (title: string, body: string): void => {
+    host.notify?.(title, body)
+    host.emit({ type: 'notice', title, body })
+  }
   const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
   const tooling = new Tooling(db, projects)
   const ticketChanged = (ticket: Ticket): void => {
@@ -128,7 +133,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       userName: () => getSetting(db, 'user.name', host.userName ?? 'you'),
       houseRules: (project) => combineRules(getSetting(db, 'rules.house', ''), getSetting(db, `rules.project.${project.id}`, ''), project.name)
     },
-    integrations: linearIntegrations(linearAuth, (title, body) => host.notify?.(title, body)),
+    integrations: linearIntegrations(linearAuth, notify),
     onTicketChanged: ticketChanged,
     tooling: (project, repoPaths, values) => tooling.forRun(project, repoPaths, values)
   })
@@ -158,7 +163,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       host.emit({ type: 'project-changed', projectId })
       host.emit({ type: 'projects-changed' })
     },
-    notify: (title, body) => host.notify?.(title, body),
+    notify,
     statusChanged: () => host.emit({ type: 'linear-changed' })
   })
   if (options.timers) {
@@ -322,6 +327,23 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     setSetting: async (key, value) => setSetting(db, key, value),
 
     listCrew: async () => crew.list(),
+    crewStats: async () => crewStats(db),
+    createCrew: async (member) => {
+      if (crew.list().some((item) => item.name.toLowerCase() === member.name.trim().toLowerCase())) throw new Error(`There's already a crew member called ${member.name.trim()}`)
+      const created = crew.create(member)
+      host.emit({ type: 'crew-changed' })
+      return created
+    },
+    updateCrew: async (id, patch) => {
+      const updated = crew.update(id, patch)
+      host.emit({ type: 'crew-changed' })
+      return updated
+    },
+    deleteCrew: async (id) => {
+      if (crew.list().length <= 1) throw new Error('Keep at least one crew member')
+      crew.delete(id)
+      host.emit({ type: 'crew-changed' })
+    },
     getRun: async (runId) => agents.view(runId),
     sendToRun: async (runId, text, delivery, dictated) => agents.send(runId, text, delivery, dictated),
     stopRun: (runId) => agents.stop(runId),

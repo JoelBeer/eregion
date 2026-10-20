@@ -15,6 +15,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { id: 'board', label: 'Board', icon: 'board', route: (id) => (id ? { name: 'board', projectId: id } : null) },
+  { id: 'crew', label: 'Crew', icon: 'crew', route: () => ({ name: 'crew', view: 'list', id: null }) },
   { id: 'forge', label: 'Forge', icon: 'forge', route: (id) => (id ? { name: 'forge', projectId: id, chatId: null } : null) },
   { id: 'pipeline', label: 'Pipeline', icon: 'pipeline', route: (id) => (id ? { name: 'setup', projectId: id, step: 'pipeline' } : null) },
   { id: 'costs', label: 'Costs', icon: 'costs', route: (id) => (id ? { name: 'costs', projectId: id } : null) },

@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import { COST_PERIODS, type CostPeriod, type TicketCost } from '@shared/costs'
-import { RobotAvatar } from '../components/RobotAvatar'
+import { CrewAvatar } from '../components/RobotAvatar'
 import { useQuery } from '../hooks'
 import { href } from '../router'
 import { useCrew } from './Board'
@@ -60,7 +60,7 @@ function Runs({ projectId, ticket }: { projectId: number; ticket: TicketCost }):
                 </td>
                 <td>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    {member && <RobotAvatar seed={member.seed} size={18} />}
+                    {member && <CrewAvatar member={member} size={18} />}
                     {member?.name ?? 'Visitor'}
                   </span>
                 </td>

@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactElement, ReactNode } from 'react'
-import type { Mood, Palette } from '@shared/robot'
+import type { Mood, Palette, RobotParts } from '@shared/robot'
 import { RobotAvatar } from './RobotAvatar'
 
 function cx(...names: (string | false | undefined | null)[]): string {
@@ -65,14 +65,14 @@ export function ProjectBadge({ initials, color, size = 26, label }: { initials: 
   )
 }
 
-export function SpeechBubble({ palette, seed, mood, children }: { palette?: Palette; seed?: number; mood?: Mood; children: ReactNode }): ReactElement {
+export function SpeechBubble({ palette, seed, parts, mood, children }: { palette?: Palette; seed?: number; parts?: Partial<RobotParts>; mood?: Mood; children: ReactNode }): ReactElement {
   const bubble = <span className="er-bubble">{children}</span>
   if (!palette && seed === undefined) {
     return bubble
   }
   return (
     <div className="er-said">
-      <RobotAvatar palette={palette} seed={seed} mood={mood} size={30} />
+      <RobotAvatar palette={palette} seed={seed} {...parts} mood={mood} size={30} />
       {bubble}
     </div>
   )

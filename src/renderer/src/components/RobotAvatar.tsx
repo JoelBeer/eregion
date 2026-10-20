@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactElement } from 'react'
 import { PALETTES, robotFromSeed, type Mood, type Palette, type RobotParts } from '@shared/robot'
+import type { CrewMember } from '@shared/runs'
 
 const HEADS = {
   rounded: { x: 5, y: 9, w: 22, h: 18, rx: 6, face: [9, 14, 14, 7] },
@@ -151,4 +152,9 @@ export function RobotAvatar(props: RobotAvatarProps): ReactElement {
       {parts}
     </svg>
   )
+}
+
+/** A crew member's robot: their seed, with any parts they picked by hand. */
+export function CrewAvatar({ member, ...rest }: { member: Pick<CrewMember, 'seed' | 'parts'> | undefined } & Omit<RobotAvatarProps, 'seed'>): ReactElement {
+  return <RobotAvatar seed={member?.seed} {...member?.parts} {...rest} />
 }

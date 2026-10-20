@@ -26,6 +26,7 @@ export type Route =
   | { name: 'settings'; tab: string }
   | { name: 'costs'; projectId: number }
   | { name: 'forge'; projectId: number; chatId: number | null }
+  | { name: 'crew'; view: 'list' | 'new' | 'catalogue' | 'edit'; id: number | null }
 
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean)
@@ -47,6 +48,11 @@ export function parseRoute(hash: string): Route {
       return { name: 'projects' }
     case 'settings':
       return { name: 'settings', tab: parts[1] ?? 'integrations' }
+    case 'crew':
+      if (parts[1] === 'new') return { name: 'crew', view: 'new', id: null }
+      if (parts[1] === 'catalogue') return { name: 'crew', view: 'catalogue', id: null }
+      if (Number.isInteger(id) && parts[1]) return { name: 'crew', view: 'edit', id }
+      return { name: 'crew', view: 'list', id: null }
     case 'welcome':
       return { name: 'welcome' }
     default:
@@ -74,6 +80,8 @@ export function href(route: Route): string {
       return `#/projects/${route.projectId}/costs`
     case 'forge':
       return `#/projects/${route.projectId}/forge${route.chatId ? `/${route.chatId}` : ''}`
+    case 'crew':
+      return route.view === 'edit' ? `#/crew/${route.id}` : route.view === 'list' ? '#/crew' : `#/crew/${route.view}`
   }
 }
 

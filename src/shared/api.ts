@@ -12,6 +12,7 @@ import type { AdapterId } from './agent'
 import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
+import type { CrewStats } from './crew'
 import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
@@ -127,6 +128,10 @@ export interface EregionApi {
   setSetting(key: string, value: unknown): Promise<void>
 
   listCrew(): Promise<CrewMember[]>
+  crewStats(): Promise<CrewStats[]>
+  createCrew(member: Omit<CrewMember, 'id'>): Promise<CrewMember>
+  updateCrew(id: number, patch: Partial<Omit<CrewMember, 'id'>>): Promise<CrewMember>
+  deleteCrew(id: number): Promise<void>
   getRun(runId: number): Promise<RunView>
   sendToRun(runId: number, text: string, delivery: 'now' | 'queue', dictated: boolean): Promise<'delivered' | 'queued'>
   stopRun(runId: number): Promise<void>
@@ -238,6 +243,10 @@ export const API_METHODS = [
   'getSetting',
   'setSetting',
   'listCrew',
+  'crewStats',
+  'createCrew',
+  'updateCrew',
+  'deleteCrew',
   'getRun',
   'sendToRun',
   'stopRun',
@@ -292,6 +301,7 @@ export type EregionEvent = { type: 'projects-changed' } | { type: 'project-chang
   | { type: 'ticket-changed'; ticketId: number; projectId: number }
   | { type: 'linear-changed' }
   | { type: 'forge-changed'; projectId: number }
+  | { type: 'notice'; title: string; body: string }
 
 export interface EregionBridge extends EregionApi {
   onEvent(listener: (event: EregionEvent) => void): () => void

@@ -3,9 +3,10 @@ import type { StageConfig } from '@shared/pipeline'
 import type { CrewMember } from '@shared/runs'
 import type { TicketCard } from '@shared/tickets'
 import { BoardCard } from '../components/BoardCard'
-import { RobotAvatar } from '../components/RobotAvatar'
+import { CrewAvatar } from '../components/RobotAvatar'
 import { useAction, useQuery } from '../hooks'
 import { navigate } from '../router'
+import { useQuiet } from '../quiet'
 import type { Project } from '@shared/model'
 import { timeAgo, useLinearStatus } from './settings/IntegrationsSettings'
 
@@ -126,6 +127,7 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
   const crew = useCrew()
   const { cards, reload } = useBoard(projectId)
   const [adding, setAdding] = useState(false)
+  const { quiet } = useQuiet()
   const { status: linearStatus } = useLinearStatus()
   const [search, setSearch] = useState('')
 
@@ -170,7 +172,7 @@ export function Board({ projectId }: { projectId: number }): ReactElement {
             return (
               <section key={column.id} aria-label={column.name} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 2px 4px', borderTop: '3px solid var(--aqua-400)' }}>
-                  {member && <RobotAvatar seed={member.seed} size={22} />}
+                  {member && !quiet && <CrewAvatar member={member} size={22} />}
                   <h2 style={{ fontSize: 15 }}>{column.name}</h2>
                   <span className="muted" style={{ fontSize: 12 }}>
                     {member ? `${member.name} · ${columnCards.length}` : columnCards.length}

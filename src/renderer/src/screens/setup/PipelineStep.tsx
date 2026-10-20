@@ -1,7 +1,7 @@
 import { useEffect, useState, type DragEvent, type ReactElement } from 'react'
 import { DEFAULT_CI, defaultPipeline, isPinnedStage, moveStage, validatePipeline, type CiSettings, type DoneWhen, type StageAction, type StageConfig } from '@shared/pipeline'
 import type { CrewMember } from '@shared/runs'
-import { RobotAvatar } from '../../components/RobotAvatar'
+import { CrewAvatar } from '../../components/RobotAvatar'
 import { Switch } from '../../components/ui'
 import { errorMessage, useAction } from '../../hooks'
 import { useCrew } from '../Board'
@@ -329,7 +329,7 @@ export function PipelineStep({ project, next }: StepProps): ReactElement {
                   </span>
                 )}
                 <button type="button" aria-pressed={item.id === stage?.id} onClick={() => setSelected(item.id)} className={`er-btn${item.id === stage?.id ? ' er-btn-primary' : ''}`} style={{ cursor: isPinnedStage(item) ? 'pointer' : 'grab', gap: 8 }}>
-                  {member && <RobotAvatar seed={member.seed} size={20} />}
+                  {member && <CrewAvatar member={member} size={20} />}
                   {item.name}
                   {!item.enabled && <span style={{ fontSize: 11 }}>off</span>}
                 </button>

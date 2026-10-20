@@ -1,11 +1,13 @@
 import type { ReactElement } from 'react'
 import type { CrewMember } from '@shared/runs'
 import type { TicketCard } from '@shared/tickets'
+import { useQuiet } from '../quiet'
 import { href } from '../router'
 import { Chip, SpeechBubble, StatusPill } from './ui'
 
 export function BoardCard({ card, crew }: { card: TicketCard; crew: CrewMember | undefined }): ReactElement {
   const { ticket } = card
+  const { quiet } = useQuiet()
   const tone = card.pill?.status === 'needsYou' ? 'amber' : card.pill?.status === 'failed' || card.pill?.status === 'fixing' ? 'red' : ticket.stage === 'done' ? 'faded' : 'default'
   const repos = ticket.stage === 'backlog' ? [] : ticket.affectedRepos
   return (
@@ -30,7 +32,7 @@ export function BoardCard({ card, crew }: { card: TicketCard; crew: CrewMember |
         </div>
       )}
       {card.bubble && (
-        <SpeechBubble seed={crew?.seed} mood={card.mood}>
+        <SpeechBubble seed={quiet ? undefined : crew?.seed} parts={quiet ? undefined : crew?.parts} mood={card.mood}>
           {card.bubble}
         </SpeechBubble>
       )}

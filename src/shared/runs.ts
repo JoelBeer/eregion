@@ -1,3 +1,4 @@
+import type { RobotParts } from './robot'
 import type { AdapterId, AgentEvent } from './agent'
 
 export interface RunSummary {
@@ -39,4 +40,6 @@ export interface CrewMember {
   adapter: AdapterId
   model: string
   seed: number
+  /** Parts picked by hand, over the seed's (the avatar catalogue). Empty means the seed decides everything. */
+  parts?: Partial<RobotParts>
 }

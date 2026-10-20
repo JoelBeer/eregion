@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement, typ
 import { ADAPTER_LABELS, type AgentEvent } from '@shared/agent'
 import type { CrewMember, RunView } from '@shared/runs'
 import { NavIcon } from './icons'
-import { RobotAvatar } from './RobotAvatar'
+import { CrewAvatar } from './RobotAvatar'
 import { Chip } from './ui'
 
 /** Follows a run: loads it, then applies its events and state changes as they arrive. */
@@ -168,7 +168,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
   return (
     <section className="er-session" aria-label={`${name}'s session`} style={{ width: '100%' }}>
       <div className="er-session-head">
-        <RobotAvatar seed={crew?.seed} size={26} onDark />
+        <CrewAvatar member={crew} size={26} onDark />
         <span className="er-session-name">{name}</span>
         <span>{[crew ? ADAPTER_LABELS[crew.adapter] : null, view?.run.model ?? crew?.model].filter(Boolean).join(' · ')}</span>
         <Chip tone="forge">{stageLabel}</Chip>
