@@ -35,7 +35,14 @@ export interface AgentStartOptions {
   profile: PermissionProfile
   /** Folders outside cwd the agent may use, such as the outputs folder. */
   addDirs?: string[]
+  /** The run's MCP servers as JSON. With it, Claude Code loads only these (--strict-mcp-config). */
   mcpConfig?: string
+  /** Extra tools the run may not use, such as Skill(deploy) for skills you haven't allowed. */
+  deniedTools?: string[]
+  /** Extra tools the run may use, such as mcp__laravel-boost for an allowed server. */
+  allowedTools?: string[]
+  /** Per-run settings JSON, such as skillOverrides. */
+  settings?: string
   /** Keep the session open after a turn, waiting for the next message (Plan, the Forge). */
   conversational?: boolean
   /** Replaces the CLI command, for tests. */
@@ -57,11 +64,13 @@ export function claudeArgs(options: AgentStartOptions): string[] {
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--model', options.model, '--permission-prompts', 'none']
   if (options.profile === 'chat') {
     args.push('--permission-mode', 'plan')
+    if (options.deniedTools?.length) args.push('--disallowedTools', ...options.deniedTools)
   } else {
-    args.push('--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'TodoWrite', '--disallowedTools', ...BLOCKED_COMMANDS)
+    args.push('--permission-mode', 'acceptEdits', '--allowedTools', 'Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'TodoWrite', ...(options.allowedTools ?? []), '--disallowedTools', ...BLOCKED_COMMANDS, ...(options.deniedTools ?? []))
   }
   for (const dir of options.addDirs ?? []) args.push('--add-dir', dir)
-  if (options.mcpConfig) args.push('--mcp-config', options.mcpConfig)
+  if (options.mcpConfig) args.push('--mcp-config', options.mcpConfig, '--strict-mcp-config')
+  if (options.settings) args.push('--settings', options.settings)
   return args
 }
 

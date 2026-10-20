@@ -10,6 +10,7 @@ import type { CostPeriod, CostReport } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
 import type { RuleFile } from './rules'
+import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
@@ -161,6 +162,16 @@ export interface EregionApi {
   /** Opens a pull request with a repo rule file's new content; returns its URL. */
   proposeRuleChange(id: string, content: string, syncAgents: boolean): Promise<string>
 
+  listSkills(): Promise<{ skills: SkillInfo[]; defaultForNew: 'on' | 'off' }>
+  setSkillAllowed(name: string, allowed: boolean): Promise<void>
+  setSkillDefault(value: 'on' | 'off'): Promise<void>
+  /** Clears the New flag from every skill found so far. */
+  markSkillsSeen(names: string[]): Promise<void>
+  listMcpServers(): Promise<McpServerInfo[]>
+  setMcpServerAllowed(key: string, allowed: boolean): Promise<void>
+  addMcpServer(name: string, spec: McpServerSpec): Promise<void>
+  removeMcpServer(name: string): Promise<void>
+
   getTicketPrs(ticketId: number): Promise<PullRequest[]>
   markPrsReady(ticketId: number): Promise<void>
   updatePrDescription(ticketId: number, repo: string, markdown: string): Promise<void>
@@ -245,6 +256,14 @@ export const API_METHODS = [
   'listRules',
   'saveRule',
   'proposeRuleChange',
+  'listSkills',
+  'setSkillAllowed',
+  'setSkillDefault',
+  'markSkillsSeen',
+  'listMcpServers',
+  'setMcpServerAllowed',
+  'addMcpServer',
+  'removeMcpServer',
   'getTicketPrs',
   'markPrsReady',
   'updatePrDescription',

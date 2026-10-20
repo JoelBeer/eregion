@@ -33,6 +33,7 @@ import { costReport } from './costs'
 import { combineRules } from '@shared/rules'
 import { AgentsInfo } from './agentsInfo'
 import { RulesStore } from './rules'
+import { Tooling } from './tooling'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -110,6 +111,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   const tickets = new TicketStore(db)
   const pipelines = new PipelineStore(db)
   const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
+  const tooling = new Tooling(db, projects)
   const ticketChanged = (ticket: Ticket): void => {
     host.emit({ type: 'ticket-changed', ticketId: ticket.id, projectId: ticket.projectId })
     host.emit({ type: 'projects-changed' })
@@ -126,7 +128,8 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       houseRules: (project) => combineRules(getSetting(db, 'rules.house', ''), getSetting(db, `rules.project.${project.id}`, ''), project.name)
     },
     integrations: linearIntegrations(linearAuth, (title, body) => host.notify?.(title, body)),
-    onTicketChanged: ticketChanged
+    onTicketChanged: ticketChanged,
+    tooling: (project, repoPaths, values) => tooling.forRun(project, repoPaths, values)
   })
   const prs = new PrStore(db)
   const agentsInfo = new AgentsInfo(db, projects)
@@ -319,6 +322,14 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     listRules: () => rules.list(),
     saveRule: (id, content) => rules.save(id, content),
     proposeRuleChange: (id, content, syncAgents) => rules.proposeChange(id, content, { syncAgents }),
+    listSkills: async () => ({ skills: await tooling.skills(), defaultForNew: tooling.skillDefault() }),
+    setSkillAllowed: async (name, allowed) => tooling.setSkillAllowed(name, allowed),
+    setSkillDefault: async (value) => tooling.setSkillDefault(value),
+    markSkillsSeen: async (names) => tooling.markSkillsSeen(names),
+    listMcpServers: () => tooling.servers(),
+    setMcpServerAllowed: async (key, allowed) => tooling.setServerAllowed(key, allowed),
+    addMcpServer: async (name, spec) => tooling.addServer(name, spec),
+    removeMcpServer: async (name) => tooling.removeServer(name),
 
     // After the tickets API: in a project linked to Linear, createTicket makes a Linear issue.
     ...integrationsApi

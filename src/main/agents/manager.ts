@@ -16,6 +16,9 @@ export interface StartRun {
   profile: PermissionProfile
   addDirs?: string[]
   mcpConfig?: string
+  allowedTools?: string[]
+  deniedTools?: string[]
+  settings?: string
   conversational?: boolean
   /** Replaces the agent CLI, for tests and the web preview. */
   command?: string[]
@@ -62,6 +65,9 @@ export class AgentManager {
       profile: request.profile,
       addDirs: request.addDirs,
       mcpConfig: request.mcpConfig,
+      allowedTools: request.allowedTools,
+      deniedTools: request.deniedTools,
+      settings: request.settings,
       conversational: request.conversational,
       command: request.command ?? this.commandFor?.(request.crew)
     }

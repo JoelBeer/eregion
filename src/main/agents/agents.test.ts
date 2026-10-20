@@ -64,6 +64,14 @@ describe('shared helpers', () => {
     expect(build).toEqual(expect.arrayContaining(['--permission-mode', 'acceptEdits', '--permission-prompts', 'none', '--add-dir', '/out', ...BLOCKED_COMMANDS]))
     expect(claudeArgs({ ...base, profile: 'chat' })).toEqual(expect.arrayContaining(['--permission-mode', 'plan']))
   })
+
+  it("passes a run's MCP servers strictly, its allowed MCP tools, and turns off skills you haven't allowed", () => {
+    const base = { adapter: 'claude-code', runner: new NativeRunner(), cwd: '/tmp', model: 'sonnet', prompt: 'x', profile: 'build' } as const
+    const args = claudeArgs({ ...base, mcpConfig: '{"mcpServers":{}}', allowedTools: ['mcp__laravel-boost', 'Skill'], deniedTools: ['Skill(deploy)'], settings: '{"skillOverrides":{"deploy":"off"}}' })
+    expect(args.join(' ')).toContain("--allowedTools Bash Read Edit Write Glob Grep WebFetch WebSearch TodoWrite mcp__laravel-boost Skill --disallowedTools")
+    expect(args.slice(args.indexOf('--disallowedTools')).join(' ')).toContain('Skill(deploy)')
+    expect(args.slice(args.indexOf('--mcp-config'))).toEqual(['--mcp-config', '{"mcpServers":{}}', '--strict-mcp-config', '--settings', '{"skillOverrides":{"deploy":"off"}}'])
+  })
 })
 
 describe.skipIf(process.platform === 'win32')('AgentSession with a fake Claude Code', () => {

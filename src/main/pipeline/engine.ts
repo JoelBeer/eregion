@@ -8,6 +8,7 @@ import type { CrewMember } from '@shared/runs'
 import { nextFreeSlot } from '@shared/slots'
 import { render } from '@shared/template'
 import type { StopReason, Ticket, WaitingFor } from '@shared/tickets'
+import type { RunTooling } from '@shared/tooling'
 import type { CrewStore } from '../agents/crew'
 import type { AgentManager, RunNotice } from '../agents/manager'
 import type { PermissionProfile, SessionOutcome } from '../agents/session'
@@ -46,6 +47,8 @@ export interface EngineDeps {
   integrations?: Integrations
   onTicketChanged(ticket: Ticket): void
   runnerFor?: (runtime: string) => Runner
+  /** The MCP servers and skill rules each run gets (Settings › MCP servers and Skills). */
+  tooling?: (project: Project, repoPaths: Record<string, string>, values: Record<string, string>) => Promise<RunTooling>
 }
 
 /** The message Eregion sends when a stage's output file doesn't pass its checks. */
@@ -207,13 +210,17 @@ export class PipelineEngine {
   async startRun(
     ticket: Ticket,
     stage: StageConfig,
-    options: { cwd: string; prompt: string; profile: PermissionProfile; crew: CrewMember; note?: string },
+    options: { cwd: string; prompt: string; profile: PermissionProfile; crew: CrewMember; note?: string; repoPaths?: Record<string, string> },
     onTurnEnd: (ticket: Ticket, runId: number) => Promise<void>
   ): Promise<number> {
     const project = this.project(ticket)
     const outputs = await this.outputsDir(ticket)
     const runner = this.runner(project)
     await runner.exec(['mkdir', '-p', outputs])
+    // A repo's MCP servers run against this run's own copy of the repo: the ticket's worktrees, or the plan checkout.
+    const environment = this.deps.workspaces.get(this.environmentKey(ticket))
+    const repoPaths = options.repoPaths ?? (environment ? this.worktreePaths(environment) : {})
+    const tooling = this.deps.tooling ? await this.deps.tooling(project, repoPaths, { ...(environment?.values ?? {}), 'ticket.key': ticket.key }) : null
     const { runId, done } = this.deps.agents.start({
       ticketId: ticket.id,
       stage: stage.id,
@@ -224,6 +231,10 @@ export class PipelineEngine {
       prompt: options.prompt,
       profile: options.profile,
       addDirs: [outputs],
+      mcpConfig: tooling?.mcpConfig,
+      allowedTools: tooling?.allowedTools,
+      deniedTools: tooling?.deniedTools,
+      settings: tooling?.settings,
       conversational: true
     })
     this.update(ticket.id, { currentRunId: runId, status: 'running', waitingFor: null, stopReason: null, stopDetail: null }, `${stage.name} started with ${options.crew.name} (run ${runId})`)
@@ -421,7 +432,7 @@ export class PipelineEngine {
     const prompt = await this.promptFor(ticket, stage, crew, {
       'workspace.repos': this.repoLines(project, paths, (repo) => `read-only plan checkout of ${base[repo.name]}`)
     })
-    await this.startRun(ticket, stage, { cwd: checkout.path, prompt, profile: 'plan', crew, note }, async (current, runId) => {
+    await this.startRun(ticket, stage, { cwd: checkout.path, prompt, profile: 'plan', crew, note, repoPaths: paths }, async (current, runId) => {
       // Out of usage, the planner can't answer you: stop and say so rather than wait for a reply.
       const limit = this.limitReached(runId)
       if (limit) throw new Error(usageLimitDetail(limit))
@@ -652,6 +663,7 @@ export class PipelineEngine {
     const crew = this.crewFor(stage)
     let cwd: string
     let repos: string
+    let repoPaths: Record<string, string> | undefined
     if (stage.workspace === 'ticket-worktrees') {
       const environment = await this.ensureEnvironment(ticket)
       if (!environment) return
@@ -660,10 +672,11 @@ export class PipelineEngine {
     } else {
       const checkout = await this.deps.workspaces.refreshPlanCheckout(project)
       cwd = checkout.path
-      repos = this.repoLines(project, Object.fromEntries(checkout.repos.map((repo) => [repo.name, repo.path])), () => 'read-only')
+      repoPaths = Object.fromEntries(checkout.repos.map((repo) => [repo.name, repo.path]))
+      repos = this.repoLines(project, repoPaths, () => 'read-only')
     }
     const prompt = await this.promptFor(ticket, stage, crew, { 'workspace.repos': repos, 'outputs.plan': (await this.readOutput(ticket, 'plan.md')) ?? '' })
-    await this.startRun(ticket, stage, { cwd, prompt, profile: 'build', crew, note }, async (current, runId) => {
+    await this.startRun(ticket, stage, { cwd, prompt, profile: 'build', crew, note, repoPaths }, async (current, runId) => {
       const missing: string[] = []
       for (const output of stage.outputs) {
         if ((await this.readOutput(current, output)) === null) missing.push(output)
