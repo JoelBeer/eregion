@@ -186,8 +186,8 @@ function ChatView({ chat }: { chat: Chat }): ReactElement {
         history={history}
         stageLabel="Forge"
         skills={skills}
-        onSend={async (text) => {
-          await window.eregion.sendToChat(chat.id, text, false)
+        onSend={async (text, dictated) => {
+          await window.eregion.sendToChat(chat.id, text, dictated)
         }}
         placeholder={<span>Ask {member.name} anything. Nothing here touches a ticket or changes files.</span>}
       />

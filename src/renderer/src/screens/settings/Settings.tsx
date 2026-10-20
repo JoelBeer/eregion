@@ -4,16 +4,18 @@ import { AgentsSettings } from './AgentsSettings'
 import { IntegrationsSettings } from './IntegrationsSettings'
 import { RulesSettings } from './RulesSettings'
 import { McpSettings, SkillsSettings } from './ToolingSettings'
+import { VoiceSettings } from './VoiceSettings'
 
 const TABS = [
   { id: 'skills', label: 'Skills' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'rules', label: 'AI rules' },
   { id: 'integrations', label: 'Integrations' },
-  { id: 'agents', label: 'Agents' }
+  { id: 'agents', label: 'Agents' },
+  { id: 'voice', label: 'Voice' }
 ] as const
 
-/** Settings shared across projects. Voice joins these in phase 7. */
+/** Settings shared across projects. */
 export function Settings({ tab }: { tab: string }): ReactElement {
   const current = TABS.find((item) => item.id === tab) ?? TABS[0]
   return (
@@ -30,6 +32,7 @@ export function Settings({ tab }: { tab: string }): ReactElement {
       {current.id === 'mcp' && <McpSettings />}
       {current.id === 'rules' && <RulesSettings />}
       {current.id === 'agents' && <AgentsSettings />}
+      {current.id === 'voice' && <VoiceSettings />}
       {current.id === 'integrations' && <IntegrationsSettings />}
     </main>
   )

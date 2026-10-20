@@ -4,6 +4,8 @@ import type { CrewMember, RunView } from '@shared/runs'
 import { NavIcon } from './icons'
 import { CrewAvatar } from './RobotAvatar'
 import { Chip } from './ui'
+import { HOLD_TO_TALK } from '@shared/voice'
+import { useDictation, useVoice } from '../voice/voice'
 
 /** Follows a run: loads it, then applies its events and state changes as they arrive. */
 export function useRun(runId: number | null): RunView | null {
@@ -107,7 +109,7 @@ export interface SessionPanelProps {
   /** Events from earlier runs of the same conversation (a Forge chat that was resumed). */
   history?: AgentEvent[]
   /** Takes over sending, so the composer stays open between runs (the Forge starts one on demand). */
-  onSend?: (text: string) => Promise<void>
+  onSend?: (text: string, dictated: boolean) => Promise<void>
   /** Skills you've allowed, offered by the / button. */
   skills?: string[]
 }
@@ -126,14 +128,17 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
     body.current?.scrollTo({ top: body.current.scrollHeight })
   }, [events.length])
 
-  const send = async (delivery: 'now' | 'queue'): Promise<void> => {
-    const text = draft.trim()
+  const [dictated, setDictated] = useState(false)
+  const voice = useVoice()
+
+  const send = async (delivery: 'now' | 'queue', text = draft.trim(), byVoice = dictated): Promise<void> => {
     if (!text || (!view && !onSend)) return
     setSending(true)
     try {
-      if (onSend) await onSend(text)
-      else if (view) await window.eregion.sendToRun(view.run.id, text, delivery, false)
+      if (onSend) await onSend(text, byVoice)
+      else if (view) await window.eregion.sendToRun(view.run.id, text, delivery, byVoice)
       setDraft('')
+      setDictated(false)
       setError(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(caught))
@@ -142,11 +147,31 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
     }
   }
 
+  const dictation = useDictation((text, viaShortcut) => {
+    const next = draft.trim() ? `${draft.trimEnd()} ${text}` : text
+    if (viaShortcut && voice.settings.sendOnRelease) {
+      void send('now', next, true)
+    } else {
+      setDraft(next)
+      setDictated(true)
+    }
+  })
+
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key === ' ' && event.ctrlKey) {
+      // Hold Ctrl+Space to talk.
+      event.preventDefault()
+      if (!event.repeat && voice.usable) void dictation.start(true)
+      return
+    }
     if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
       event.preventDefault()
       void send(event.shiftKey ? 'queue' : 'now')
     }
+  }
+
+  const onKeyUp = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if ((event.key === ' ' || event.key === 'Control') && dictation.state === 'listening') void dictation.stop()
   }
 
   const waiting = view?.state === 'waiting'
@@ -183,9 +208,20 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
         )}
       </div>
       <div className="er-session-foot">
-        <button type="button" className="er-mic" aria-label="Dictate" disabled title="Voice dictation is set up in Settings › Voice">
-          <NavIcon name="mic" />
-        </button>
+        {voice.settings.engine === 'whisper' && (
+          <button
+            type="button"
+            className="er-mic"
+            aria-label={dictation.state === 'listening' ? 'Stop dictating' : 'Dictate'}
+            aria-pressed={dictation.state === 'listening'}
+            disabled={!canType || !voice.usable || dictation.state === 'transcribing'}
+            title={voice.usable ? `Click to dictate, or hold ${HOLD_TO_TALK} in the message box` : 'Download a Whisper model in Settings › Voice to dictate'}
+            onClick={() => void (dictation.state === 'listening' ? dictation.stop() : dictation.start())}
+            style={dictation.state === 'listening' ? { boxShadow: `0 0 0 ${2 + Math.round(dictation.level * 6)}px var(--aqua-400)` } : undefined}
+          >
+            <NavIcon name="mic" />
+          </button>
+        )}
         {skills && skills.length > 0 && (
           <span style={{ position: 'relative' }}>
             <button type="button" className="er-btn er-btn-onforge er-btn-sm" aria-label="Use a skill" aria-expanded={picking} onClick={() => setPicking(!picking)} disabled={!canType}>
@@ -217,9 +253,10 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKey}
+          onKeyUp={onKeyUp}
           disabled={!canType}
           rows={1}
-          placeholder={hint}
+          placeholder={dictation.state === 'listening' ? 'Listening… let go or click the mic to finish' : dictation.state === 'transcribing' ? 'Writing down what you said…' : hint}
           style={{ flex: 1, minWidth: 200, resize: 'none', font: 'inherit', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--forge-600)', background: 'var(--forge-900)', color: 'var(--term-text, #D6ECEF)' }}
         />
         {!onSend && live && view?.takesMessagesMidRun && !waiting && (
@@ -234,9 +271,9 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
           Queued for {name}: {view?.queued ?? 0}
         </span>
       </div>
-      {error && (
+      {(error || dictation.error) && (
         <div className="error-text" style={{ padding: '6px 16px', background: 'var(--surface-0)' }}>
-          {error}
+          {error ?? dictation.error}
         </div>
       )}
     </section>

@@ -14,6 +14,7 @@
     "preview:web": "electron-vite build && vite build --config vite.web.config.mts && node out/web/server.cjs"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
     "better-sqlite3": "^13.0.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
