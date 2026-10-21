@@ -74,7 +74,7 @@ npm install
 npm start
 ```
 
-Start it from a Terminal where `claude`, `gh` and your project's tools (`php`, `composer` and so on) already work: Eregion and its agents inherit that Terminal's `PATH`. The window keeps the usual traffic lights, and Cmd+C, Cmd+V and Cmd+Q work as normal. Closing the window leaves Eregion running in the Dock until you quit it. There's no launcher yet.
+Commands and agents get the same `PATH` and variables as your Terminal: at startup Eregion reads them from your login shell, including `~/.zshrc`. So `claude`, `gh` and your project's tools (`php`, `composer` and so on) need to work in a new Terminal window. The window keeps the usual traffic lights, and Cmd+C, Cmd+V and Cmd+Q work as normal. Closing the window leaves Eregion running in the Dock until you quit it. There's no launcher yet.
 
 ## First run
 

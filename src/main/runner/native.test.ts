@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { NativeRunner } from './native'
 
@@ -11,7 +12,8 @@ describe.skipIf(process.platform === 'win32')('NativeRunner', () => {
 
   it('runs in the given directory with extra environment variables', async () => {
     const result = await runner.exec(['bash', '-c', 'pwd; echo $EREGION_TEST'], { cwd: '/tmp', env: { EREGION_TEST: 'yes' } })
-    expect(result.stdout).toBe('/tmp\nyes\n')
+    // On macOS /tmp is a link to /private/tmp.
+    expect(result.stdout).toBe(`${realpathSync('/tmp')}\nyes\n`)
   })
 
   it('reports a missing executable as exit code 127 instead of throwing', async () => {
