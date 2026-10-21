@@ -138,6 +138,14 @@ export const BADGE_COLORS = [
   { name: 'Lilac', hex: '#C6A6F2' }
 ] as const
 
+/** Badge initials as typed: letters and digits only, capitals, at most three ("w m" → "WM"). They start Eregion's own ticket keys. */
+export function cleanInitials(value: string): string {
+  return value
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 3)
+}
+
 /** "Word Magic" → "WM", "perchpeak" → "PE". */
 export function initialsFor(name: string): string {
   const words = name.trim().split(/[\s_-]+/).filter(Boolean)

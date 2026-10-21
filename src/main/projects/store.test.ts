@@ -37,6 +37,10 @@ describe('ProjectStore', () => {
     const project = store.create('PerchPeak')
     const updated = store.update(project.id, { liveSlots: 0, initials: 'ppx1', color: '#5FC4B8' })
     expect(updated).toMatchObject({ liveSlots: 1, initials: 'PPX', color: '#5FC4B8', name: 'PerchPeak' })
+    expect(store.update(project.id, { initials: ' w m ' }).initials).toBe('WM')
+    expect(store.update(project.id, { initials: 'a-b c d' }).initials).toBe('ABC')
+    expect(() => store.update(project.id, { initials: ' - ' })).toThrow('Initials need at least one letter or digit')
+    expect(store.get(project.id).initials).toBe('ABC')
   })
 
   it('keeps repos in order and can reorder them', () => {

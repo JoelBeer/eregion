@@ -1,6 +1,7 @@
 import type { TicketSourceConfig } from '@shared/sources'
 import type { Db } from '../db'
 import {
+  cleanInitials,
   initialsFor,
   type GithubProjectConfig,
   type LinearProjectConfig,
@@ -164,7 +165,14 @@ export class ProjectStore {
   update(id: number, patch: ProjectPatch): Project {
     const columns: Record<keyof ProjectPatch, [string, (value: never) => unknown]> = {
       name: ['name', (value: string) => value.trim()],
-      initials: ['initials', (value: string) => value.trim().toUpperCase().slice(0, 3)],
+      initials: [
+        'initials',
+        (value: string) => {
+          const initials = cleanInitials(value)
+          if (!initials) throw new Error('Initials need at least one letter or digit')
+          return initials
+        }
+      ],
       color: ['color', (value: string) => value],
       variables: ['variables', (value: Variable[]) => JSON.stringify(value)],
       liveSlots: ['live_slots', (value: number) => Math.max(1, Math.floor(value))],

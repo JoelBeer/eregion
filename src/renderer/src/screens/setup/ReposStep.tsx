@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import type { RepoDetection } from '@shared/api'
-import { BADGE_COLORS, type Repo } from '@shared/model'
+import { BADGE_COLORS, cleanInitials, type Repo } from '@shared/model'
 import { NavIcon } from '../../components/icons'
 import { ProjectBadge } from '../../components/ui'
 import { useAction } from '../../hooks'
@@ -96,6 +96,8 @@ function DetectedRepo({ detection, onAdd, onCancel, pending, error }: { detectio
 
 export function ReposStep({ project, next }: StepProps): ReactElement {
   const [name, setName] = useState(project.name)
+  const [initials, setInitials] = useState(project.initials)
+  const saveInitials = useAction(() => window.eregion.updateProject(project.id, { initials }))
   const [detection, setDetection] = useState<RepoDetection | null>(null)
   useEffect(() => setName(project.name), [project.name])
 
@@ -139,9 +141,20 @@ export function ReposStep({ project, next }: StepProps): ReactElement {
             <input id="project-name" className="input" style={{ width: 280 }} value={name} onChange={(event) => setName(event.target.value)} onBlur={() => name.trim() && name !== project.name && void rename.run()} />
           </div>
           <div className="field">
+            <label htmlFor="project-initials">Initials</label>
+            <input
+              id="project-initials"
+              className="input mono"
+              style={{ width: 80, textTransform: 'uppercase' }}
+              value={initials}
+              onChange={(event) => setInitials(cleanInitials(event.target.value))}
+              onBlur={() => (initials ? initials !== project.initials && void saveInitials.run() : setInitials(project.initials))}
+            />
+          </div>
+          <div className="field">
             <span className="label">Badge colour</span>
             <div role="radiogroup" aria-label="Badge colour" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <ProjectBadge initials={project.initials} color={project.color} size={32} />
+              <ProjectBadge initials={initials || project.initials} color={project.color} size={32} />
               {BADGE_COLORS.map((swatch) => (
                 <button
                   key={swatch.hex}
@@ -156,7 +169,10 @@ export function ReposStep({ project, next }: StepProps): ReactElement {
             </div>
           </div>
         </div>
-        {rename.error && <span className="error-text">{rename.error}</span>}
+        <span className="muted" style={{ fontSize: 13 }}>
+          Up to three letters or digits for the badge. Tickets you add in Eregion take them as their key, like {initials || project.initials}-12; keys already given don't change.
+        </span>
+        {(rename.error || saveInitials.error) && <span className="error-text">{rename.error ?? saveInitials.error}</span>}
       </section>
 
       {project.repos.map((repo, index) => (

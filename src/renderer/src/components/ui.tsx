@@ -58,7 +58,8 @@ export function ProjectBadge({ initials, color, size = 26, label }: { initials: 
       className="er-badge"
       aria-hidden={label ? undefined : true}
       aria-label={label}
-      style={{ width: size, height: size, borderRadius: Math.round(size * 0.27), background: color ?? 'var(--aqua-400, #76E1EF)', fontSize: Math.round(size * 0.42) }}
+      // Three letters get a smaller size so they still fit inside the badge.
+      style={{ width: size, height: size, borderRadius: Math.round(size * 0.27), background: color ?? 'var(--aqua-400, #76E1EF)', fontSize: Math.round(size * (initials.length > 2 ? 0.32 : 0.42)) }}
     >
       {initials}
     </span>
