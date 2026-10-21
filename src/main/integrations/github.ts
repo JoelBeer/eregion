@@ -1,4 +1,4 @@
-import type { CheckBucket, PrCheck } from '@shared/integrations'
+import type { CheckBucket, GitHubAccount, GitHubPermission, GitHubRepo, PrCheck } from '@shared/integrations'
 import type { Runner } from '../runner/types'
 
 /** A PR's checks, and whether they are the required ones or all of them. */
@@ -64,6 +64,52 @@ export function trimJobLog(log: string): string {
   const lastError = lines.map((line) => line.startsWith('##[error]')).lastIndexOf(true)
   const text = (lastError >= 0 ? lines.slice(0, lastError + 1) : lines).join('\n').trim()
   return text.length > LOG_LIMIT ? `…${text.slice(-LOG_LIMIT)}` : text
+}
+
+const REPO_PAGE = 100
+
+interface ApiRepo {
+  full_name: string
+  html_url: string
+  private: boolean
+  pushed_at: string | null
+  permissions?: { admin?: boolean; maintain?: boolean; push?: boolean; triage?: boolean }
+}
+
+function permission(repo: ApiRepo): GitHubPermission {
+  const granted = repo.permissions ?? {}
+  return granted.admin ? 'admin' : granted.maintain ? 'maintain' : granted.push ? 'write' : granted.triage ? 'triage' : 'read'
+}
+
+/** One page of `GET /user/repos`. */
+export function parseRepos(stdout: string): GitHubRepo[] {
+  return (JSON.parse(stdout) as ApiRepo[]).map((repo) => ({ name: repo.full_name, url: repo.html_url, private: repo.private, permission: permission(repo), pushedAt: repo.pushed_at, projects: [] }))
+}
+
+/**
+ * Who gh is signed in as in this runtime, their organisations and the repos they can reach: their own, ones
+ * they collaborate on and their organisations', most recently pushed first, up to `pages` pages of 100.
+ * Null when gh isn't installed or signed in.
+ */
+export async function readGitHubAccount(runner: Runner, pages = 3): Promise<Omit<GitHubAccount, 'runtime'> | null> {
+  const api = (path: string) => runner.exec(['gh', 'api', path], { timeoutMs: 30_000 })
+  const user = await api('user')
+  if (user.code !== 0) return null
+  const viewer = JSON.parse(user.stdout) as { login: string; name: string | null; html_url: string }
+  // Listing organisations needs the read:org scope; without it the list is just empty.
+  const orgs = await api('user/orgs')
+  const organizations = orgs.code === 0 ? (JSON.parse(orgs.stdout) as { login: string }[]).map((org) => org.login) : []
+  const repos: GitHubRepo[] = []
+  let more = false
+  for (let page = 1; page <= pages; page++) {
+    const result = await api(`user/repos?per_page=${REPO_PAGE}&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`)
+    if (result.code !== 0) break
+    const batch = parseRepos(result.stdout)
+    repos.push(...batch)
+    more = batch.length === REPO_PAGE && page === pages
+    if (batch.length < REPO_PAGE) break
+  }
+  return { login: viewer.login, name: viewer.name || null, url: viewer.html_url, organizations, repos, more }
 }
 
 const BUCKETS: CheckBucket[] = ['pass', 'fail', 'pending', 'skipping', 'cancel']

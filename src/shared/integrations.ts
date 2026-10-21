@@ -70,6 +70,31 @@ export const DEFAULT_IMPORT_STATE_TYPES: LinearStateType[] = ['backlog', 'unstar
 
 export type CheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel'
 
+export type GitHubPermission = 'admin' | 'maintain' | 'write' | 'triage' | 'read'
+
+export interface GitHubRepo {
+  /** owner/name */
+  name: string
+  url: string
+  private: boolean
+  permission: GitHubPermission
+  pushedAt: string | null
+  /** The Eregion projects that use it. */
+  projects: string[]
+}
+
+/** The account gh is signed in to, its organisations and the repos it can reach (most recently pushed first). */
+export interface GitHubAccount {
+  runtime: string
+  login: string
+  name: string | null
+  url: string
+  organizations: string[]
+  repos: GitHubRepo[]
+  /** There are more repos than were read. */
+  more: boolean
+}
+
 export interface PrCheck {
   name: string
   workflow: string

@@ -20,7 +20,8 @@ import { getSetting, setSetting } from './db'
 import { PipelineEngine } from './pipeline/engine'
 import { PipelineStore, TicketStore } from './pipeline/stores'
 import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
-import { GhCli, type GitHub } from './integrations/github'
+import { GhCli, readGitHubAccount, type GitHub } from './integrations/github'
+import { availableRuntimes, runnerFor, runtimeLabel } from './runner'
 import { LinearClient, type FetchLike } from './integrations/linear'
 import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
 import { Connections } from './integrations/connections'
@@ -227,6 +228,22 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
         }
       }
       return checks
+    },
+
+    getGitHubAccount: async () => {
+      // The first runtime where gh is signed in: on a Mac or inside WSL that's the only one.
+      for (const runtime of availableRuntimes()) {
+        const account = await readGitHubAccount(runnerFor(runtime))
+        if (!account) continue
+        const usedBy = new Map<string, string[]>()
+        for (const summary of projects.list()) {
+          for (const repo of projects.get(summary.id).repos) {
+            if (repo.githubRepo) usedBy.set(repo.githubRepo.toLowerCase(), [...(usedBy.get(repo.githubRepo.toLowerCase()) ?? []), summary.name])
+          }
+        }
+        return { ...account, runtime: runtimeLabel(runtime), repos: account.repos.map((repo) => ({ ...repo, projects: usedBy.get(repo.name.toLowerCase()) ?? [] })) }
+      }
+      return null
     },
 
     listProjects: async () => projects.list(),

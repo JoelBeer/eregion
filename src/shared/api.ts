@@ -16,7 +16,7 @@ import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
 import type { CrewStats } from './crew'
-import type { ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
+import type { GitHubAccount, ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
   name: string
@@ -76,6 +76,8 @@ export interface ProjectPatch {
 export interface EregionApi {
   appInfo(): Promise<AppInfo>
   checkTools(): Promise<ToolCheck[]>
+  /** Who gh is signed in as, their organisations and the repos they can reach; null when gh isn't signed in anywhere. */
+  getGitHubAccount(): Promise<GitHubAccount | null>
 
   listProjects(): Promise<ProjectSummary[]>
   getProject(id: number): Promise<Project>
@@ -231,6 +233,7 @@ export interface EregionApi {
 export const API_METHODS = [
   'appInfo',
   'checkTools',
+  'getGitHubAccount',
   'listProjects',
   'getProject',
   'createProject',

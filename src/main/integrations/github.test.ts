@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ExecOptions, ExecResult, Runner } from '../runner/types'
-import { GhCli, parseChecks, parsePrUrl, runIdFromLink, trimJobLog } from './github'
+import { GhCli, parseChecks, parsePrUrl, readGitHubAccount, runIdFromLink, trimJobLog } from './github'
 
 function fakeRunner(reply: (argv: string[]) => ExecResult): { runner: Runner; calls: { argv: string[]; options?: ExecOptions }[] } {
   const calls: { argv: string[]; options?: ExecOptions }[] = []
@@ -12,6 +12,55 @@ function fakeRunner(reply: (argv: string[]) => ExecResult): { runner: Runner; ca
   } as unknown as Runner
   return { runner, calls }
 }
+
+describe('readGitHubAccount', () => {
+  const repo = (name: string, extra: object = {}) => ({ full_name: name, html_url: `https://github.com/${name}`, private: true, pushed_at: '2026-10-20T10:00:00Z', ...extra })
+
+  it('reads the signed-in user, their organisations and the repos they can reach', async () => {
+    const { runner, calls } = fakeRunner((argv) => {
+      const path = argv[2]
+      if (path === 'user') return { code: 0, stdout: JSON.stringify({ login: 'JoelBeer', name: 'Joel Beer', html_url: 'https://github.com/JoelBeer' }), stderr: '' }
+      if (path === 'user/orgs') return { code: 0, stdout: JSON.stringify([{ login: 'perchpeek' }]), stderr: '' }
+      return {
+        code: 0,
+        stdout: JSON.stringify([
+          repo('JoelBeer/eregion', { permissions: { admin: true, push: true } }),
+          repo('perchpeek/web-app', { permissions: { push: true } }),
+          repo('someone/docs', { private: false, permissions: { pull: true } })
+        ]),
+        stderr: ''
+      }
+    })
+    const account = await readGitHubAccount(runner)
+    expect(account).toEqual({
+      login: 'JoelBeer',
+      name: 'Joel Beer',
+      url: 'https://github.com/JoelBeer',
+      organizations: ['perchpeek'],
+      repos: [
+        { name: 'JoelBeer/eregion', url: 'https://github.com/JoelBeer/eregion', private: true, permission: 'admin', pushedAt: '2026-10-20T10:00:00Z', projects: [] },
+        { name: 'perchpeek/web-app', url: 'https://github.com/perchpeek/web-app', private: true, permission: 'write', pushedAt: '2026-10-20T10:00:00Z', projects: [] },
+        { name: 'someone/docs', url: 'https://github.com/someone/docs', private: false, permission: 'read', pushedAt: '2026-10-20T10:00:00Z', projects: [] }
+      ],
+      more: false
+    })
+    expect(calls.at(-1)?.argv).toEqual(['gh', 'api', 'user/repos?per_page=100&page=1&sort=pushed&affiliation=owner,collaborator,organization_member'])
+  })
+
+  it('reads up to the page limit and says when there are more', async () => {
+    const full = JSON.stringify(Array.from({ length: 100 }, (_, index) => repo(`me/repo-${index}`)))
+    const { runner, calls } = fakeRunner((argv) => (argv[2] === 'user' ? { code: 0, stdout: '{"login":"me","name":null,"html_url":"https://github.com/me"}', stderr: '' } : argv[2] === 'user/orgs' ? { code: 1, stdout: '', stderr: 'needs read:org' } : { code: 0, stdout: full, stderr: '' }))
+    const account = await readGitHubAccount(runner, 2)
+    expect(account).toMatchObject({ name: null, organizations: [], more: true })
+    expect(account?.repos).toHaveLength(200)
+    expect(calls.filter((call) => call.argv[2].startsWith('user/repos'))).toHaveLength(2)
+  })
+
+  it('is null when gh is not signed in', async () => {
+    const { runner } = fakeRunner(() => ({ code: 4, stdout: '', stderr: 'To get started with GitHub CLI, please run:  gh auth login' }))
+    expect(await readGitHubAccount(runner)).toBeNull()
+  })
+})
 
 describe('GhCli', () => {
   it('opens a draft PR with the body on stdin and returns its URL', async () => {

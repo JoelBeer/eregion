@@ -1,6 +1,6 @@
-import { useState, type ReactElement } from 'react'
-import type { ImportAssignees, LinearStatus, LinearUser } from '@shared/integrations'
-import { StatusPill } from '../../components/ui'
+import { useState, type MouseEvent, type ReactElement } from 'react'
+import type { GitHubPermission, ImportAssignees, LinearStatus, LinearUser } from '@shared/integrations'
+import { Chip, StatusPill } from '../../components/ui'
 import { useAction, useQuery } from '../../hooks'
 import { ConnectionsSection } from './ConnectionsSection'
 
@@ -174,6 +174,87 @@ function ImportPeople({ status }: { status: LinearStatus }): ReactElement {
   )
 }
 
+const PERMISSION_LABELS: Record<GitHubPermission, string> = { admin: 'Admin', maintain: 'Maintain', write: 'Write', triage: 'Triage', read: 'Read' }
+
+const openLink = (url: string) => (event: MouseEvent) => {
+  event.preventDefault()
+  void window.eregion.openExternal(url)
+}
+
+/** Who gh is signed in as, their organisations, and the repos they can reach, with a search. */
+function GitHubAccountDetails(): ReactElement {
+  const account = useQuery(() => window.eregion.getGitHubAccount(), [])
+  const [search, setSearch] = useState('')
+  if (account.loading) return <span className="muted">Reading your GitHub account…</span>
+  if (account.error) return <span className="error-text">Couldn't read your GitHub account: {account.error}</span>
+  if (!account.data) return <></>
+  const { login, name, url, runtime, organizations, repos, more } = account.data
+  const term = search.trim().toLowerCase()
+  const shown = term ? repos.filter((repo) => repo.name.toLowerCase().includes(term) || repo.projects.some((project) => project.toLowerCase().includes(term))) : repos
+  return (
+    <>
+      <span>
+        Signed in as{' '}
+        <a href={url} onClick={openLink(url)}>
+          <strong>{name ?? login}</strong>
+          {name ? ` (@${login})` : ''}
+        </a>{' '}
+        with gh on {runtime}.
+      </span>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Organisations:
+        </span>
+        {organizations.length === 0 && (
+          <span className="muted" style={{ fontSize: 13 }}>
+            none that gh can see
+          </span>
+        )}
+        {organizations.map((org) => (
+          <Chip key={org} tone="neutral">
+            {org}
+          </Chip>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <h3 style={{ fontSize: 15 }}>
+          Repositories you can reach <span className="muted">· {more ? `${repos.length}+` : repos.length}</span>
+        </h3>
+        <div style={{ flex: 1 }} />
+        <input type="search" className="input" aria-label="Search repositories" placeholder="Search by name or project" value={search} onChange={(event) => setSearch(event.target.value)} style={{ width: 240, padding: '6px 10px' }} />
+      </div>
+      <ul aria-label="Repositories" style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border-200)', borderRadius: 8 }}>
+        {shown.map((repo) => (
+          <li key={repo.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border-200)' }}>
+            <a href={repo.url} onClick={openLink(repo.url)} className="mono" style={{ fontSize: 13 }}>
+              {repo.name}
+            </a>
+            {repo.projects.map((project) => (
+              <Chip key={project} tone="forge">
+                In {project}
+              </Chip>
+            ))}
+            <div style={{ flex: 1 }} />
+            <span className="muted" style={{ fontSize: 12 }}>
+              {repo.private ? 'Private' : 'Public'} · {PERMISSION_LABELS[repo.permission]}
+            </span>
+          </li>
+        ))}
+        {shown.length === 0 && (
+          <li className="muted" style={{ padding: '8px 12px' }}>
+            {term ? 'No repositories match.' : 'No repositories yet.'}
+          </li>
+        )}
+      </ul>
+      {more && (
+        <span className="muted" style={{ fontSize: 13 }}>
+          Showing the {repos.length} you pushed to most recently.
+        </span>
+      )}
+    </>
+  )
+}
+
 export function IntegrationsSettings(): ReactElement {
   const { status } = useLinearStatus()
   const tools = useQuery(() => window.eregion.checkTools(), [])
@@ -224,10 +305,11 @@ export function IntegrationsSettings(): ReactElement {
           <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <StatusPill status={gh.detail?.startsWith('signed in') ? 'passed' : 'needsYou'}>{gh.detail?.startsWith('signed in') ? 'Signed in' : 'Not signed in'}</StatusPill>
             <span className="muted">
-              gh {gh.version} {gh.detail ? `· ${gh.detail}` : ''}
+              gh {gh.version}
             </span>
           </span>
         )}
+        {gh?.found && gh.detail?.startsWith('signed in') && <GitHubAccountDetails />}
         {gh?.found && !gh.detail?.startsWith('signed in') && (
           <span>
             Run <code className="mono">gh auth login</code> in a terminal{gh.runtime !== 'Windows' ? ` (${gh.runtime})` : ''}, then come back.
