@@ -1,9 +1,24 @@
 import type { ChildProcess } from 'node:child_process'
 import type { GitHubSignIn, GitHubUser } from '@shared/integrations'
 import type { ExecOptions, Runner } from '../runner/types'
+import { parseVersion } from '../tools'
 
 const HOST = 'github.com'
 const DEVICE_URL = 'https://github.com/login/device'
+/** The first gh that keeps more than one account per host (gh auth switch, and --user on token and logout). */
+export const MIN_GH_VERSION = '2.40.0'
+
+/** Whether a version like 2.32.1 is at least the minimum, comparing each number in turn. */
+export function versionAtLeast(version: string, minimum: string): boolean {
+  const numbers = (text: string): number[] => text.split(/[.+-]/).map((part) => Number.parseInt(part, 10) || 0)
+  const have = numbers(version)
+  const need = numbers(minimum)
+  for (let index = 0; index < Math.max(have.length, need.length); index++) {
+    const difference = (have[index] ?? 0) - (need[index] ?? 0)
+    if (difference !== 0) return difference > 0
+  }
+  return true
+}
 
 /** The accounts `gh auth status` lists for github.com, and which one is active. */
 export function parseAuthStatus(output: string): GitHubUser[] {
@@ -23,9 +38,12 @@ export function parseAuthStatus(output: string): GitHubUser[] {
   return users
 }
 
-/** The one-time code `gh auth login --web` prints, like 6DD2-3ECC. */
+/**
+ * The one-time code `gh auth login --web` prints, like 6DD2-3ECC: "First copy your one-time code: 6DD2-3ECC" in
+ * older gh, "One-time code (6DD2-3ECC) copied to clipboard" in newer ones.
+ */
 export function parseDeviceCode(output: string): string | null {
-  return output.match(/one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})/)?.[1] ?? null
+  return output.match(/one-time code(?::\s*|\s*\()([A-Z0-9]{4}-[A-Z0-9]{4})/i)?.[1] ?? null
 }
 
 /**
@@ -107,9 +125,16 @@ export class GitHubAccounts {
    */
   async startSignIn(): Promise<GitHubSignIn> {
     this.cancelSignIn()
-    const before = (await this.list()).find((user) => user.active)?.login ?? null
     const runner = this.runner()
-    const child = runner.spawn(['gh', 'auth', 'login', '--hostname', HOST, '--web', '--git-protocol', 'https', '--skip-ssh-key'])
+    // An older gh signs in by replacing the account it has, and has no way to switch back.
+    const version = parseVersion((await runner.exec(['gh', '--version'], { timeoutMs: 20_000 })).stdout)
+    if (version && !versionAtLeast(version, MIN_GH_VERSION)) {
+      const update = process.platform === 'darwin' && runner.runtime.kind === 'native' ? 'update it with brew upgrade gh' : 'update it'
+      throw new Error(`Adding a GitHub account needs gh 2.40 or later. This machine has gh ${version}: ${update}, then try again.`)
+    }
+    const before = (await this.list()).find((user) => user.active)?.login ?? null
+    // With https as the git protocol, gh asks nothing about SSH keys.
+    const child = runner.spawn(['gh', 'auth', 'login', '--hostname', HOST, '--web', '--git-protocol', 'https'])
     let output = ''
     const code = new Promise<string>((resolve, reject) => {
       const read = (chunk: Buffer): void => {

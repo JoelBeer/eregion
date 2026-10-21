@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { NativeRunner } from '../runner/native'
 import type { ExecOptions, ExecResult, Runner } from '../runner/types'
-import { accountEnvironment, GitHubAccounts, parseAuthStatus, parseDeviceCode } from './githubAccounts'
+import { EventEmitter } from 'node:events'
+import { accountEnvironment, GitHubAccounts, parseAuthStatus, parseDeviceCode, versionAtLeast } from './githubAccounts'
 
 function fakeRunner(reply: (argv: string[]) => ExecResult): { runner: Runner; calls: { argv: string[]; options?: ExecOptions }[] } {
   const calls: { argv: string[]; options?: ExecOptions }[] = []
@@ -50,6 +51,7 @@ describe('parseAuthStatus', () => {
 describe('parseDeviceCode', () => {
   it("reads the one-time code gh's browser sign-in prints", () => {
     expect(parseDeviceCode('\n! First copy your one-time code: 6DD2-3ECC\nOpen this URL to continue in your web browser: https://github.com/login/device\n')).toBe('6DD2-3ECC')
+    expect(parseDeviceCode('\n! One-time code (3667-F20A) copied to clipboard\nOpen this URL to continue in your web browser: https://github.com/login/device\n')).toBe('3667-F20A')
     expect(parseDeviceCode('Open this URL')).toBeNull()
   })
 })
@@ -95,5 +97,43 @@ describe('GitHubAccounts', () => {
     expect(calls[0].argv).toEqual(['gh', 'auth', 'logout', '--hostname', 'github.com', '--user', 'work-joel'])
     expect(accounts).toEqual([{ login: 'JoelBeer', active: true }])
     expect(changed).toBe(1)
+  })
+})
+
+describe('versionAtLeast', () => {
+  it('compares each number in turn', () => {
+    expect(versionAtLeast('2.32.1', '2.40.0')).toBe(false)
+    expect(versionAtLeast('2.40.0', '2.40.0')).toBe(true)
+    expect(versionAtLeast('2.63.2', '2.40.0')).toBe(true)
+    expect(versionAtLeast('3.0', '2.40.0')).toBe(true)
+    expect(versionAtLeast('2.4.9', '2.40.0')).toBe(false)
+  })
+})
+
+describe('startSignIn', () => {
+  function withSpawn(version: string): { runner: Runner; spawned: string[][]; child: EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => void } } {
+    const { runner } = fakeRunner((argv) => (argv[1] === '--version' ? { code: 0, stdout: `gh version ${version} (2025-01-01)\n`, stderr: '' } : { code: 0, stdout: '', stderr: '' }))
+    const spawned: string[][] = []
+    const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => undefined })
+    runner.spawn = ((argv: string[]) => {
+      spawned.push(argv)
+      return child
+    }) as unknown as Runner['spawn']
+    return { runner, spawned, child }
+  }
+
+  it("says gh is too old to add an account, and doesn't start a sign-in", async () => {
+    const { runner, spawned } = withSpawn('2.32.1')
+    await expect(new GitHubAccounts(() => runner).startSignIn()).rejects.toThrow('Adding a GitHub account needs gh 2.40 or later. This machine has gh 2.32.1')
+    expect(spawned).toEqual([])
+  })
+
+  it('starts the browser sign-in over https and returns the one-time code', async () => {
+    const { runner, spawned, child } = withSpawn('2.63.2')
+    const started = new GitHubAccounts(() => runner).startSignIn()
+    await new Promise((resolve) => setImmediate(resolve))
+    child.stderr.emit('data', Buffer.from('! First copy your one-time code: 6DD2-3ECC\n'))
+    expect(await started).toEqual({ code: '6DD2-3ECC', url: 'https://github.com/login/device' })
+    expect(spawned).toEqual([['gh', 'auth', 'login', '--hostname', 'github.com', '--web', '--git-protocol', 'https']])
   })
 })
