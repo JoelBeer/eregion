@@ -85,6 +85,9 @@ export function ticketCard(inputs: CardInputs): TicketCard {
         pill = { status: 'needsYou', label: 'Needs you' }
         bubble = lastAgentText ? firstSentence(lastAgentText) : 'Waiting for you.'
     }
+  } else if (ticket.status === 'stopped') {
+    pill = { status: 'idle', label: 'Paused' }
+    bubble = `${stage?.name ?? 'The stage'} is paused. Resume when you're ready.`
   } else if (ticket.status === 'idle' && ticket.waitingFor === 'slot') {
     pill = { status: 'neutral', label: 'Waiting for a slot' }
     bubble = 'Waiting for a free slot.'

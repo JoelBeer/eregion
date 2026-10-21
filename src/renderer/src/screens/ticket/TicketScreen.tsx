@@ -1,6 +1,7 @@
 import { usageLimitMessage } from '@shared/agent'
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { noCostLabel } from '@shared/connectors'
+import { SOURCE_NAMES } from '@shared/sources'
 import { isGenericStage, sendBackTarget, type StageConfig } from '@shared/pipeline'
 import { useConnectors } from '../../agents'
 import type { CrewMember, RunSummary } from '@shared/runs'
@@ -252,6 +253,9 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
   const [selectedRun, setSelectedRun] = useState<number | null>(null)
   const start = useAction(() => window.eregion.startTicket(ticketId))
   const stopRun = useAction(() => window.eregion.stopTicketRun(ticketId))
+  const pause = useAction(() => window.eregion.pauseTicket(ticketId))
+  const resume = useAction(() => window.eregion.resumeTicket(ticketId))
+  const restart = useAction(() => window.eregion.retryTicket(ticketId))
   const discard = useAction(async () => {
     if (window.confirm('Move this ticket back to the Backlog? Its environment is torn down; its branch is kept.')) await window.eregion.discardTicket(ticketId)
   })
@@ -301,13 +305,18 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
         <div style={{ flex: '1 1 100px' }} />
         {ticket.url && (
           <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void window.eregion.openExternal(ticket.url as string)}>
-            Open in Linear
+            Open in {SOURCE_NAMES[ticket.linear.source ?? 'linear']}
           </button>
         )}
         {ticket.status === 'running' && ticket.currentRunId !== null && (
-          <button type="button" className="er-btn" onClick={() => void stopRun.run()} disabled={stopRun.pending}>
-            Stop run
-          </button>
+          <>
+            <button type="button" className="er-btn" onClick={() => void pause.run()} disabled={pause.pending} title="Stops the agent but keeps its conversation, so Resume carries on where it was">
+              Pause
+            </button>
+            <button type="button" className="er-btn" onClick={() => void stopRun.run()} disabled={stopRun.pending} title="Ends the run; Start again begins the stage afresh">
+              Stop run
+            </button>
+          </>
         )}
         {ticket.stage !== 'backlog' && ticket.stage !== 'done' && (
           <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void discard.run()} disabled={discard.pending}>
@@ -317,7 +326,23 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
       </header>
 
       {ticket.stage !== 'backlog' && <Stepper steps={steps} />}
-      {(stopRun.error || discard.error) && <span className="error-text">{stopRun.error ?? discard.error}</span>}
+      {(stopRun.error || discard.error || pause.error) && <span className="error-text">{stopRun.error ?? discard.error ?? pause.error}</span>}
+
+      {ticket.status === 'stopped' && stage && (
+        <section className="panel" aria-label="Paused" style={{ border: '2px solid var(--primary-600)' }}>
+          <h2 style={{ fontSize: 17 }}>{stage.name} is paused</h2>
+          <span className="muted">The agent's conversation and what it wrote are kept, and the environment is still running. Resume carries on where it stopped; starting again begins the stage afresh.</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="er-btn er-btn-primary" onClick={() => void resume.run()} disabled={resume.pending}>
+              Resume
+            </button>
+            <button type="button" className="er-btn" onClick={() => void restart.run()} disabled={restart.pending}>
+              Start the stage again
+            </button>
+          </div>
+          {(resume.error || restart.error) && <span className="error-text">{resume.error ?? restart.error}</span>}
+        </section>
+      )}
 
       {ticket.stage === 'backlog' && (
         <section className="panel" aria-label="Start">

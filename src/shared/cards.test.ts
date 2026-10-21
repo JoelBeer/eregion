@@ -64,6 +64,10 @@ describe('ticketCard', () => {
     expect(card({ loops: { security: { failures: 2, extra: 1 } }, returnedFrom: 'security', loop: 3 }, { stages }).tags).toEqual(['Back from security check · loop 2 of 4'])
   })
 
+  it('shows a paused stage, with no stop reason', () => {
+    expect(card({ status: 'stopped', currentRunId: null })).toMatchObject({ pill: { status: 'idle', label: 'Paused' }, bubble: "Build is paused. Resume when you're ready." })
+  })
+
   it('says it is your turn after the AI review passes', () => {
     expect(card({ stage: 'review', status: 'needs_you', waitingFor: 'manual-review' })).toMatchObject({ pill: { label: 'Your turn' }, bubble: 'Review passed. Your turn to click around.' })
   })

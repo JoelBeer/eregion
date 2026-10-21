@@ -57,6 +57,9 @@ function historyName(file: string, suffix: string): string {
   return dot > 0 ? `${file.slice(0, dot)}-${suffix}${file.slice(dot)}` : `${file}-${suffix}`
 }
 
+/** What a resumed run is told: it's the same conversation, so this is all it needs. */
+export const RESUME_MESSAGE = 'You were paused. Carry on from where you stopped: the files you wrote are still there.'
+
 /** The message Eregion sends when a stage's output file doesn't pass its checks. */
 export function formatFixMessage(file: string, problems: string[]): string {
   return `${file} isn't valid: ${problems.join('; ')}. Fix the file and don't change anything else.`
@@ -70,6 +73,8 @@ export function formatFixMessage(file: string, problems: string[]): string {
 export class PipelineEngine {
   private readonly handlers = new Map<StageKind, StageHandler>()
   private readonly fixRequested = new Set<number>()
+  /** Tickets whose next run carries on a paused conversation, by ticket id: the session to resume. */
+  private readonly resuming = new Map<number, string>()
   private readonly locks = new Map<number, Promise<unknown>>()
   private readonly runnerFor: (runtime: string) => Runner
 
@@ -227,6 +232,9 @@ export class PipelineEngine {
     const environment = this.deps.workspaces.get(this.environmentKey(ticket))
     const repoPaths = options.repoPaths ?? (environment ? this.worktreePaths(environment) : {})
     const tooling = this.deps.tooling ? await this.deps.tooling(project, repoPaths, { ...(environment?.values ?? {}), 'ticket.key': ticket.key }) : null
+    // A resumed run is the same conversation: it gets one message saying to carry on, not the stage prompt again.
+    const resume = this.resuming.get(ticket.id)
+    this.resuming.delete(ticket.id)
     const { runId, done } = this.deps.agents.start({
       ticketId: ticket.id,
       stage: stage.id,
@@ -234,7 +242,8 @@ export class PipelineEngine {
       crew: options.crew,
       runner,
       cwd: options.cwd,
-      prompt: options.prompt,
+      prompt: resume ? `${options.note ?? RESUME_MESSAGE}\nOutputs folder: ${outputs}` : options.prompt,
+      resume,
       profile: options.profile,
       addDirs: [outputs],
       mcpConfig: tooling?.mcpConfig,
@@ -243,8 +252,8 @@ export class PipelineEngine {
       settings: tooling?.settings,
       conversational: true
     })
-    this.update(ticket.id, { currentRunId: runId, status: 'running', waitingFor: null, stopReason: null, stopDetail: null }, `${stage.name} started with ${options.crew.name} (run ${runId})`)
-    if (options.note) this.deps.agents.send(runId, options.note, 'now')
+    this.update(ticket.id, { currentRunId: runId, status: 'running', waitingFor: null, stopReason: null, stopDetail: null }, resume ? `${stage.name} resumed with ${options.crew.name} (run ${runId})` : `${stage.name} started with ${options.crew.name} (run ${runId})`)
+    if (options.note && !resume) this.deps.agents.send(runId, options.note, 'now')
 
     const unsubscribe = this.deps.agents.observe(runId, (notice: RunNotice) => {
       if (notice.type !== 'run-state') return
@@ -338,16 +347,23 @@ export class PipelineEngine {
     try {
       await this.deps.integrations?.stageEntered?.(entered, stage, this.project(entered))
     } catch (error) {
-      this.deps.tickets.log(ticket.id, 'warning', `Couldn't update Linear: ${(error as Error).message}`)
+      this.deps.tickets.log(ticket.id, 'warning', `Couldn't update the tracker: ${(error as Error).message}`)
     }
+    await this.runHandler(entered, stage, note)
+  }
+
+  /** Runs the stage's handler: Plan, PR and Watch CI have their own, every other stage runs from its fields. */
+  private async runHandler(ticket: Ticket, stage: StageConfig, note?: string): Promise<void> {
     const handler = this.handlers.get(stage.kind) ?? (isGenericStage(stage) ? (current: Ticket, config: StageConfig, text?: string) => this.runStage(current, config, text) : undefined)
     if (!handler) {
-      this.stop(entered, 'stuck', `${stage.name} can't run yet in this version of Eregion`)
+      this.stop(ticket, 'stuck', `${stage.name} can't run yet in this version of Eregion`)
       return
     }
     try {
-      await handler(entered, stage, note)
+      await handler(ticket, stage, note)
     } catch (error) {
+      // A resume that never got as far as its run mustn't turn a later fresh start into one.
+      this.resuming.delete(ticket.id)
       this.stop(this.deps.tickets.get(ticket.id), 'stuck', (error as Error).message)
     }
   }
@@ -549,9 +565,11 @@ export class PipelineEngine {
       'review.previous': previous?.text ?? (recheck && ownVerdict ? ((await this.readOutput(ticket, ownVerdict)) ?? '') : ''),
       'fixes.current': recheck ? ((await this.readOutput(ticket, 'fixes.json')) ?? '') : ''
     })
-    if (recheck && ownVerdict) await this.keepHistory(ticket, ownVerdict, historyName(ownVerdict, `before-${ticket.loop}`))
-    for (const output of stage.outputs) await this.removeOutput(ticket, output)
-    if (previous) await this.removeOutput(ticket, 'fixes.json')
+    if (!this.isResuming(ticket.id)) {
+      if (recheck && ownVerdict) await this.keepHistory(ticket, ownVerdict, historyName(ownVerdict, `before-${ticket.loop}`))
+      for (const output of stage.outputs) await this.removeOutput(ticket, output)
+      if (previous) await this.removeOutput(ticket, 'fixes.json')
+    }
 
     await this.startRun(ticket, stage, { cwd, prompt, profile: access === 'changes' ? 'build' : 'review', crew, note, repoPaths }, async (current, runId) => {
       const problems: { file: string; problems: string[] }[] = []
@@ -809,6 +827,45 @@ export class PipelineEngine {
         this.update(ticketId, {}, 'Environment ready after updating from the base branch')
       }
     })
+  }
+
+  /**
+   * Pauses the running stage: the agent stops, but its conversation and what it wrote are kept, so Resume
+   * carries on where it was. The environment keeps running.
+   */
+  pause(ticketId: number): Promise<void> {
+    return this.serial(ticketId, async () => {
+      const ticket = this.deps.tickets.get(ticketId)
+      const stage = this.stage(ticket)
+      if (ticket.currentRunId === null || !this.deps.agents.liveState(ticket.currentRunId) || !stage) throw new Error(`Nothing is running on ${ticket.key}`)
+      const runId = ticket.currentRunId
+      this.update(ticketId, { currentRunId: null, status: 'stopped', waitingFor: null, stopReason: null, stopDetail: null }, `Paused ${stage.name}`)
+      await this.deps.agents.stop(runId)
+    })
+  }
+
+  /**
+   * Carries on a paused stage in the same conversation, when its agent can carry one on (otherwise the stage
+   * starts again). Plan and the stages that run from their fields resume; PR and Watch CI start again.
+   */
+  resume(ticketId: number): Promise<void> {
+    return this.serial(ticketId, async () => {
+      const ticket = this.deps.tickets.get(ticketId)
+      const stage = this.stage(ticket)
+      if (ticket.status !== 'stopped' || !stage) throw new Error(`${ticket.key} isn't paused`)
+      const session = stage.kind === 'plan' || isGenericStage(stage) ? this.deps.agents.resumable(ticketId, stage.id) : null
+      if (!session) {
+        await this.enter(this.update(ticketId, {}, `Starting ${stage.name} again: its conversation can't be carried on`), stage)
+        return
+      }
+      this.resuming.set(ticketId, session.sessionId)
+      await this.runHandler(this.update(ticketId, { status: 'running', stopDetail: null }, `Resuming ${stage.name}`), stage)
+    })
+  }
+
+  /** Whether the ticket's next run carries on a paused conversation (so the stage keeps what it already wrote). */
+  isResuming(ticketId: number): boolean {
+    return this.resuming.has(ticketId)
   }
 
   stopRun(ticketId: number): Promise<void> {

@@ -118,6 +118,9 @@ export interface EregionApi {
   allowOneMoreLoop(ticketId: number): Promise<void>
   releaseSlot(ticketId: number): Promise<void>
   stopTicketRun(ticketId: number): Promise<void>
+  /** Pauses the running stage, keeping its conversation; Resume carries on where it was. */
+  pauseTicket(ticketId: number): Promise<void>
+  resumeTicket(ticketId: number): Promise<void>
   discardTicket(ticketId: number): Promise<void>
   startServices(ticketId: number): Promise<void>
   stopServices(ticketId: number): Promise<void>
@@ -265,6 +268,8 @@ export const API_METHODS = [
   'allowOneMoreLoop',
   'releaseSlot',
   'stopTicketRun',
+  'pauseTicket',
+  'resumeTicket',
   'discardTicket',
   'startServices',
   'stopServices',

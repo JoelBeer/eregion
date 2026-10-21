@@ -299,6 +299,35 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
     expect(git(repo.clone, 'log', '--format=%s', 'wm-1-hints', '-2').split('\n')).toEqual(['WM-1: Hints (build pass 2)', 'WM-1: Hints (build pass 1)'])
   }, 60_000)
 
+  it('pauses a stage mid-run, keeping its conversation, and resumes it in the same session', async () => {
+    const { engine, tickets, runs, ticket } = await setup([
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Build, pass 1', once: true, delayMs: 4000, write: { '{cwd}/app/half.txt': 'x' }, reply: 'Halfway.' },
+      { when: 'You were paused', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Carried on.' },
+      { when: 'Stage: Review', write: { '{outputs}/review.json': passedReview.replace('"loop":2', '"loop":1') }, reply: 'Pass.' }
+    ])
+    await engine.start(ticket.id)
+    await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    await engine.approvePlan(ticket.id)
+    await until(tickets, ticket.id, (item) => item.stage === 'build' && item.currentRunId !== null)
+    await new Promise((wait) => setTimeout(wait, 800))
+    await engine.pause(ticket.id)
+    const paused = tickets.get(ticket.id)
+    expect(paused).toMatchObject({ stage: 'build', status: 'stopped', stopReason: null, currentRunId: null })
+    await expect(engine.pause(ticket.id)).rejects.toThrow('Nothing is running on WM-1')
+    await until(tickets, ticket.id, () => runs.forTicket(ticket.id).at(-1)?.result === 'stopped')
+
+    await engine.resume(ticket.id)
+    const reviewed = await until(tickets, ticket.id, (item) => item.waitingFor === 'manual-review' || item.stopReason !== null, 30_000)
+    expect(reviewed.stopReason).toBeNull()
+    const builds = runs.forTicket(ticket.id).filter((run) => run.stage === 'build')
+    expect(builds.map((run) => [run.result, run.sessionId])).toEqual([
+      ['stopped', 'fake-session-1'],
+      ['done', 'fake-session-1']
+    ])
+    expect(tickets.logEntries(ticket.id).map((entry) => entry.message)).toEqual(expect.arrayContaining(['Paused Build', 'Resuming Build', expect.stringMatching(/^Build resumed with Rivet/)]))
+  }, 60_000)
+
   it('marks running tickets as stuck after a restart', async () => {
     const { engine, tickets, ticket } = await setup([])
     tickets.update(ticket.id, { status: 'running', stage: 'build' })

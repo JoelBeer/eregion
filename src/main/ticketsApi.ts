@@ -31,6 +31,8 @@ export type TicketsApi = Pick<
   | 'allowOneMoreLoop'
   | 'releaseSlot'
   | 'stopTicketRun'
+  | 'pauseTicket'
+  | 'resumeTicket'
   | 'discardTicket'
   | 'startServices'
   | 'stopServices'
@@ -221,6 +223,8 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     allowOneMoreLoop: (ticketId) => background(deps, ticketId, () => engine.allowOneMoreLoop(ticketId)),
     releaseSlot: (ticketId) => engine.releaseSlot(ticketId),
     stopTicketRun: (ticketId) => engine.stopRun(ticketId),
+    pauseTicket: (ticketId) => engine.pause(ticketId),
+    resumeTicket: (ticketId) => background(deps, ticketId, () => engine.resume(ticketId)),
     discardTicket: (ticketId) => engine.discard(ticketId),
     startServices: async (ticketId) => {
       const ticket = tickets.get(ticketId)

@@ -67,6 +67,16 @@ export class AgentManager {
     return connector
   }
 
+  /** The ticket's last run in a stage that left a conversation to carry on, when its agent can carry one on. */
+  resumable(ticketId: number, stage: string): { runId: number; sessionId: string } | null {
+    const run = this.runs
+      .forTicket(ticketId)
+      .filter((item) => item.stage === stage)
+      .at(-1)
+    if (!run?.sessionId || !this.connectorFor(run.adapter)?.capabilities.followUps) return null
+    return { runId: run.id, sessionId: run.sessionId }
+  }
+
   /** Whether the run can be sent another message after its turn: Eregion's fix requests need this. */
   canFollowUp(runId: number): boolean {
     const run = this.runs.get(runId)
