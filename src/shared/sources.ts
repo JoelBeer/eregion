@@ -83,8 +83,8 @@ export const STAGE_LABEL_PREFIX = 'eregion:'
 export const stageLabel = (stageId: string): string => `${STAGE_LABEL_PREFIX}${stageId}`
 
 /**
- * A Jira or GitLab account Eregion reads issues from (and, for GitLab, opens merge requests in), or another
- * Linear workspace beside the one signed in under Linear, with a personal API key.
+ * A Jira or GitLab account Eregion reads issues from (and, for GitLab, opens merge requests in), or a Linear
+ * account added with a personal API key, beside the one signed in through your Linear app.
  */
 export interface Connection {
   id: string

@@ -2,7 +2,7 @@ import { useRef, useState, type MouseEvent, type ReactElement, type ReactNode } 
 import type { GitHubPermission, GitHubSignIn, LinearStatus } from '@shared/integrations'
 import { Chip, StatusPill } from '../../components/ui'
 import { errorMessage, useAction, useQuery } from '../../hooks'
-import { ConnectionsSection } from './ConnectionsSection'
+import { ConnectionList, ConnectionsSection } from './ConnectionsSection'
 
 export function useLinearStatus(): { status: LinearStatus | undefined; reload: () => void } {
   const query = useQuery(() => window.eregion.getLinearStatus(), [], (event) => event.type === 'linear-changed')
@@ -43,18 +43,12 @@ function CopyRow({ text }: { text: string }): ReactElement {
 function ConnectLinear({ status }: { status: LinearStatus }): ReactElement {
   const [clientId, setClientId] = useState(status.clientId ?? '')
   const [secret, setSecret] = useState('')
-  const [apiKey, setApiKey] = useState('')
   const [showSecret, setShowSecret] = useState(false)
-  const [showKey, setShowKey] = useState(false)
   const saveId = useAction(() => window.eregion.setLinearClientId(clientId))
   const signIn = useAction(async () => {
     if (clientId.trim() !== (status.clientId ?? '')) await window.eregion.setLinearClientId(clientId)
     await window.eregion.signInToLinear(secret || undefined)
     setSecret('')
-  })
-  const useKey = useAction(async () => {
-    await window.eregion.useLinearApiKey(apiKey)
-    setApiKey('')
   })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -89,14 +83,9 @@ function ConnectLinear({ status }: { status: LinearStatus }): ReactElement {
         </li>
       </ol>
       {signIn.error && <span className="error-text">{signIn.error}</span>}
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => setShowSecret(!showSecret)}>
-          Linear asked for a client secret?
-        </button>
-        <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => setShowKey(!showKey)}>
-          Use a personal API key instead
-        </button>
-      </div>
+      <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => setShowSecret(!showSecret)} style={{ alignSelf: 'flex-start' }}>
+        Linear asked for a client secret?
+      </button>
       {showSecret && (
         <div className="field">
           <label htmlFor="linear-secret">Client secret</label>
@@ -104,21 +93,6 @@ function ConnectLinear({ status }: { status: LinearStatus }): ReactElement {
           <span className="muted" style={{ fontSize: 12 }}>
             Only needed if your app refuses sign-in without one. It's sent with the sign-in and kept encrypted with the token.
           </span>
-        </div>
-      )}
-      {showKey && (
-        <div className="field">
-          <label htmlFor="linear-key">Personal API key</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input id="linear-key" className="input mono" type="password" autoComplete="off" placeholder="lin_api_…" value={apiKey} onChange={(event) => setApiKey(event.target.value)} style={{ flex: 1 }} />
-            <button type="button" className="er-btn" disabled={!apiKey.trim() || useKey.pending} onClick={() => void useKey.run()}>
-              Connect
-            </button>
-          </div>
-          <span className="muted" style={{ fontSize: 12 }}>
-            For workspaces that don't let you create apps. Make one in Linear › Settings › Security &amp; access › Personal API keys.
-          </span>
-          {useKey.error && <span className="error-text">{useKey.error}</span>}
         </div>
       )}
     </div>
@@ -323,47 +297,81 @@ function GitHubAccounts(): ReactElement {
   )
 }
 
-export function IntegrationsSettings(): ReactElement {
+/**
+ * The Linear accounts projects can take issues from: one signed in through your own Linear app, and any number
+ * added with personal API keys (other workspaces, or other people).
+ */
+function LinearAccounts(): ReactElement {
   const { status } = useLinearStatus()
-  const tools = useQuery(() => window.eregion.checkTools(), [])
+  const [connecting, setConnecting] = useState(false)
   const sync = useAction(() => window.eregion.syncLinear())
   const signOut = useAction(async () => {
-    if (window.confirm('Disconnect Linear? Tickets already imported stay; nothing new comes in until you connect again.')) await window.eregion.signOutOfLinear()
+    if (window.confirm('Disconnect this Linear account? Tickets already imported stay; projects using it get nothing new until they pick another account.')) await window.eregion.signOutOfLinear()
   })
+  if (!status) return <span className="muted">Loading…</span>
+  const main = status.method ? status.viewer : null
+  return (
+    <>
+      <span className="muted" style={{ fontSize: 13 }}>
+        Accounts projects can take Linear issues from. Each project picks one in its Tickets and code step, and chooses whose issues it imports.
+      </span>
+      {main && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: '1px solid var(--divider-100)', paddingTop: 10 }}>
+          <strong>{main.name}</strong>
+          <span className="muted">{status.method === 'oauth' ? 'Linear app' : 'API key'}</span>
+          <StatusPill status="passed">{main.organization}</StatusPill>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {main.email}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void signOut.run()}>
+            Disconnect
+          </button>
+        </div>
+      )}
+      <ConnectionList
+        kinds={['linear']}
+        addLabel="+ Add an API key"
+        actions={
+          !status.method && !connecting ? (
+            <button type="button" className="er-btn er-btn-sm" onClick={() => setConnecting(true)}>
+              Sign in with your Linear app
+            </button>
+          ) : undefined
+        }
+      />
+      {!status.method && connecting && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, border: '1px solid var(--border-200)', borderRadius: 8 }}>
+          <ConnectLinear status={status} />
+          <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => setConnecting(false)} style={{ alignSelf: 'flex-start' }}>
+            Close
+          </button>
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Last synced {timeAgo(status.lastSyncAt)}. Eregion checks every minute while it's open, and when you come back to it.
+        </span>
+        <div style={{ flex: 1 }} />
+        <button type="button" className="er-btn er-btn-sm" onClick={() => void sync.run()} disabled={sync.pending}>
+          {sync.pending ? 'Syncing…' : 'Sync now'}
+        </button>
+      </div>
+      {status.error && <span className="error-text">Last sync failed: {status.error}</span>}
+      {(sync.error || signOut.error) && <span className="error-text">{sync.error ?? signOut.error}</span>}
+    </>
+  )
+}
+
+export function IntegrationsSettings(): ReactElement {
+  const tools = useQuery(() => window.eregion.checkTools(), [])
   const gh = tools.data?.find((check) => check.tool === 'gh')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 820 }}>
       <section className="panel" aria-label="Linear">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <h2 style={{ fontSize: 18 }}>Linear</h2>
-          {status?.method && <StatusPill status="passed">Connected</StatusPill>}
-        </div>
-        {!status && <span className="muted">Loading…</span>}
-        {status && !status.method && <ConnectLinear status={status} />}
-        {status?.method && status.viewer && (
-          <>
-            <span>
-              Signed in as <strong>{status.viewer.name}</strong> ({status.viewer.email}) in {status.viewer.organization}, {status.method === 'oauth' ? 'through your Linear app' : 'with a personal API key'}.
-            </span>
-            <span className="muted" style={{ fontSize: 13 }}>
-              Each project chooses whose issues it imports, in its Tickets and code step.
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span className="muted" style={{ fontSize: 13 }}>
-                Last synced {timeAgo(status.lastSyncAt)}. Eregion checks every minute while it's open, and when you come back to it.
-              </span>
-              <div style={{ flex: 1 }} />
-              <button type="button" className="er-btn er-btn-sm" onClick={() => void sync.run()} disabled={sync.pending}>
-                {sync.pending ? 'Syncing…' : 'Sync now'}
-              </button>
-              <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void signOut.run()}>
-                Disconnect
-              </button>
-            </div>
-            {status.error && <span className="error-text">Last sync failed: {status.error}</span>}
-          </>
-        )}
+        <h2 style={{ fontSize: 18 }}>Linear</h2>
+        <LinearAccounts />
       </section>
 
       <section className="panel" aria-label="GitHub">

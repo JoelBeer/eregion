@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { DEFAULT_IMPORT_STATE_TYPES, type ImportAssignees, type LinearState, type LinearStateType, type LinearTeam, type LinearUser } from '@shared/integrations'
+import { DEFAULT_IMPORT_STATE_TYPES, type ImportAssignees, type LinearState, type LinearStateType, type LinearStatus, type LinearTeam, type LinearUser } from '@shared/integrations'
 import { DEFAULT_LINEAR_PUSH, type GithubProjectConfig, type LinearProjectConfig } from '@shared/model'
 import { DEFAULT_SOURCE_PUSH, importRules, sourceOf, SOURCE_NAMES, type ImportRules, type TicketSourceConfig, type TicketSourceKind } from '@shared/sources'
 import { Switch } from '../../components/ui'
@@ -97,21 +97,30 @@ function GitHubAccountPicker({ github, save }: { github: GithubProjectConfig; sa
   )
 }
 
-/** Which Linear account a project uses: the one signed in under Linear in Settings, or another workspace's connection. */
-function LinearAccount({ source, saveSource }: { source: TicketSourceConfig; saveSource: (source: TicketSourceConfig) => void }): ReactElement | null {
-  const connections = useQuery(() => window.eregion.listConnections(), []).data?.filter((connection) => connection.kind === 'linear')
-  if (!connections || (connections.length === 0 && !source.connectionId)) return null
+/** Which of the Linear accounts in Settings › Accounts a project takes its issues from. */
+function LinearAccount({ source, saveSource, status }: { source: TicketSourceConfig; saveSource: (source: TicketSourceConfig) => void; status: LinearStatus }): ReactElement | null {
+  const connections = useQuery(() => window.eregion.listConnections(), [], (event) => event.type === 'linear-changed').data?.filter((connection) => connection.kind === 'linear')
+  if (!connections) return null
+  const main = status.method ? status.viewer : null
+  if (!main && connections.length === 0) return null
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
       <label className="muted" htmlFor="linear-account">
         Account
       </label>
       <select id="linear-account" className="select" value={source.connectionId ?? ''} onChange={(event) => saveSource({ ...source, connectionId: event.target.value || null })}>
-        <option value="">The one signed in under Linear in Settings</option>
+        {main ? (
+          <option value="">
+            {main.name} · {main.organization} ({status.method === 'oauth' ? 'Linear app' : 'API key'})
+          </option>
+        ) : (
+          <option value="" disabled>
+            Choose an account
+          </option>
+        )}
         {connections.map((connection) => (
           <option key={connection.id} value={connection.id}>
-            {connection.name}
-            {connection.account ? ` · ${connection.account}` : ''}
+            {connection.account ?? connection.name} ({connection.name})
           </option>
         ))}
       </select>
@@ -143,9 +152,9 @@ function LinearSection({ project, save, source, saveSource }: { project: StepPro
   if (!connected) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <LinearAccount source={source} saveSource={saveSource} />
+        <LinearAccount source={source} saveSource={saveSource} status={status} />
         <span>
-          Linear isn't connected yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Connect it in Settings › Accounts</a>, then come back. Or carry on without it: tickets can be added by hand.
+          Choose the Linear account this project takes its issues from, or <a href={href({ name: 'settings', tab: 'integrations' })}>add one in Settings › Accounts</a>: sign in through your Linear app, or paste an API key. Or carry on without it: tickets can be added by hand.
         </span>
       </div>
     )
@@ -160,7 +169,7 @@ function LinearSection({ project, save, source, saveSource }: { project: StepPro
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <LinearAccount source={source} saveSource={saveSource} />
+      <LinearAccount source={source} saveSource={saveSource} status={status} />
       <LinearWho key={connectionId ?? 'main'} source={source} saveSource={saveSource} connectionId={connectionId} fallback={status.importAssignees} />
       <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
         <label className="muted" htmlFor="linear-team">

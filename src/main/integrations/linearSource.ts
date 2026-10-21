@@ -73,7 +73,7 @@ export class LinearSource implements TicketSource {
   notReady(project: Project): string | null {
     const id = this.connectionId(project)
     if (id && !this.connections?.list().some((connection) => connection.id === id)) return `Choose ${project.name}'s Linear account in its Tickets and code step`
-    if (!id && !this.auth.client()) return 'Connect Linear first, in Settings › Accounts'
+    if (!id && !this.auth.client()) return `Choose ${project.name}'s Linear account in its Tickets and code step`
     if (!project.linear.teamId) return `Choose ${project.name}'s Linear team in its Tickets and code step`
     return null
   }
