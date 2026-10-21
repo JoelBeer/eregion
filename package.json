@@ -9,6 +9,7 @@
   "engines": { "node": ">=22" },
   "main": "./out/main/index.js",
   "scripts": {
+    "postinstall": "install-electron",
     "dev": "electron-vite dev -- $(node scripts/electron-flags.mjs)",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
