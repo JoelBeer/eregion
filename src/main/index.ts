@@ -22,12 +22,15 @@ function iconPath(): string | undefined {
   return app.isPackaged ? undefined : join(__dirname, '../../build/icon.png')
 }
 
+const onMac = process.platform === 'darwin'
+
 function createWindow(): void {
   // Frameless, with the app's own title bar: the name and the window buttons on one row. (Inside WSL this
   // needs Wayland mode, from scripts/electron-flags.mjs; under X11, WSLg covers the top of a frameless window
-  // with an invisible title strip of its own that takes every click.)
+  // with an invisible title strip of its own that takes every click.) On macOS the bar keeps the system's
+  // traffic lights, inset into it, in place of the app's own buttons.
   const customTitleBar = true
-  const query = { frame: customTitleBar ? 'app' : 'native' }
+  const query = { frame: !customTitleBar ? 'native' : onMac ? 'mac' : 'app' }
   // Fill the screen even where a maximise request is ignored.
   const area = screen.getPrimaryDisplay().workAreaSize
   mainWindow = new BrowserWindow({
@@ -35,7 +38,8 @@ function createWindow(): void {
     height: Math.max(640, area.height),
     minWidth: 960,
     minHeight: 640,
-    frame: !customTitleBar,
+    frame: !customTitleBar || onMac,
+    ...(onMac && customTitleBar ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 13 } } : {}),
     backgroundColor: '#0B6594',
     title: 'Eregion',
     icon: iconPath(),
@@ -135,8 +139,11 @@ app.on('second-instance', () => {
 
 app.whenReady().then(() => {
   if (!firstInstance) return
-  // No File / Edit / View menu: everything lives in the app itself.
-  Menu.setApplicationMenu(null)
+  // No File / Edit / View menu: everything lives in the app itself. macOS keeps the app, Edit and Window
+  // menus, which is where Cmd+C, Cmd+V, Cmd+Q and the rest come from.
+  Menu.setApplicationMenu(onMac ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null)
+  const icon = iconPath()
+  if (onMac && icon) app.dock?.setIcon(icon)
   db = openDatabase(databasePath())
   backend = createBackend(db, host, { timers: true })
   registerIpc(backend.api)

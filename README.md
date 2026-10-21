@@ -18,7 +18,7 @@ Eregion runs the agent CLIs you already use (**Claude Code**, or the **Cursor CL
 
 | | |
 | --- | --- |
-| **OS** | Windows 11 with **WSL2** (Eregion runs inside WSL and shows its window on Windows through WSLg), or Linux. macOS should work but hasn't been tried yet |
+| **OS** | Windows 11 with **WSL2** (Eregion runs inside WSL and shows its window on Windows through WSLg), macOS, or Linux |
 | **Node.js** | 22 or later, with npm |
 | **git** | any recent version |
 | **GitHub CLI** | `gh`, signed in with `gh auth login` |
@@ -62,6 +62,19 @@ Everything runs inside your WSL distribution (Ubuntu here), where your repos and
    It asks for your Ubuntu password: WSLg only reads app entries from the system folders. Without it the window still works, but the taskbar shows the Linux penguin. If the icon or the Start menu entry doesn't appear, close Eregion, run `wsl --shutdown` in Windows and open it again.
 
 On Linux, steps 2 and 3 are all there is, and `npm run install-launcher` adds it to your desktop's app list.
+
+## Run it on macOS
+
+Eregion runs from source on a Mac. There's no signed app yet, so start it from Terminal:
+
+```bash
+git clone https://github.com/JoelBeer/eregion.git ~/sites/eregion
+cd ~/sites/eregion
+npm install
+npm start
+```
+
+Start it from a Terminal where `claude`, `gh` and your project's tools (`php`, `composer` and so on) already work: Eregion and its agents inherit that Terminal's `PATH`. The window keeps the usual traffic lights, and Cmd+C, Cmd+V and Cmd+Q work as normal. Closing the window leaves Eregion running in the Dock until you quit it. There's no launcher yet.
 
 ## First run
 

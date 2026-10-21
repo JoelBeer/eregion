@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { Logo } from './icons'
 
-/** Whether the app draws its own title bar: in Electron when the window is frameless (not inside WSL). */
-export const hasTitleBar = (): boolean => Boolean(window.eregionWindow) && new URLSearchParams(window.location.search).get('frame') === 'app'
+const frame = (): string | null => new URLSearchParams(window.location.search).get('frame')
+
+/** Whether the app draws its own title bar: in Electron when the window is frameless, or on macOS with the traffic lights inset. */
+export const hasTitleBar = (): boolean => Boolean(window.eregionWindow) && (frame() === 'app' || frame() === 'mac')
 
 function Glyph({ kind }: { kind: 'minimize' | 'maximize' | 'restore' | 'close' }): ReactElement {
   return (
@@ -30,6 +32,15 @@ export function TitleBar(): ReactElement | null {
     return controls.onMaximizedChange(setMaximized)
   }, [controls])
   if (!controls || !hasTitleBar()) return null
+  // macOS draws its own traffic lights at the left and zooms on a double-click of the bar.
+  if (frame() === 'mac') {
+    return (
+      <header className="er-titlebar er-titlebar-mac">
+        <Logo />
+        <span className="er-titlebar-name">Eregion</span>
+      </header>
+    )
+  }
   return (
     <header className="er-titlebar" onDoubleClick={() => void controls.toggleMaximize()}>
       <Logo />
