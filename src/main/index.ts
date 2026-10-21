@@ -5,6 +5,7 @@ import { API_METHODS, type EregionApi, type EregionEvent } from '@shared/api'
 import { createBackend, type Backend, type Host } from './api'
 import { openDatabase, type Db } from './db'
 import { openUrl } from './openUrl'
+import { useLoginEnvironment } from './runner/environment'
 
 let db: Db
 let backend: Backend | null = null
@@ -137,8 +138,10 @@ app.on('second-instance', () => {
   mainWindow.focus()
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!firstInstance) return
+  // Commands run with the PATH and variables of the user's own terminal, even when the app is opened from the Dock.
+  await useLoginEnvironment()
   // No File / Edit / View menu: everything lives in the app itself. macOS keeps the app, Edit and Window
   // menus, which is where Cmd+C, Cmd+V, Cmd+Q and the rest come from.
   Menu.setApplicationMenu(onMac ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null)

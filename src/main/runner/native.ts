@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process'
 import { access, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, posix, win32 } from 'node:path'
 import type { Runtime } from '@shared/types'
+import { commandEnvironment } from './environment'
 import { collect, start } from './process'
 import { posixKillTree, type ExecOptions, type ExecResult, type Runner } from './types'
 
@@ -13,12 +14,12 @@ export class NativeRunner implements Runner {
 
   exec(argv: string[], options: ExecOptions = {}): Promise<ExecResult> {
     const [file, ...args] = argv
-    return collect(file, args, { cwd: options.cwd, env: { ...process.env, ...options.env }, timeoutMs: options.timeoutMs, input: options.input })
+    return collect(file, args, { cwd: options.cwd, env: commandEnvironment(options.env), timeoutMs: options.timeoutMs, input: options.input })
   }
 
   spawn(argv: string[], options: ExecOptions = {}): ChildProcess {
     const [file, ...args] = argv
-    return start(file, args, { cwd: options.cwd, env: { ...process.env, ...options.env } })
+    return start(file, args, { cwd: options.cwd, env: commandEnvironment(options.env) })
   }
 
   shell(commandLine: string): string[] {
