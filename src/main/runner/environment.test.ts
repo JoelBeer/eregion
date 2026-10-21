@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { commandEnvironment, parseEnvironment, readLoginEnvironment, withoutAppOnly } from './environment'
+import { commandEnvironment, defaultShell, parseEnvironment, readLoginEnvironment, withoutAppOnly } from './environment'
 import { NativeRunner } from './native'
 
 describe('parseEnvironment', () => {
@@ -71,8 +71,22 @@ describe.skipIf(process.platform === 'win32')('readLoginEnvironment', () => {
     expect(env).not.toHaveProperty('NODE_ENV')
   })
 
+  it('gives up on time when a startup file leaves something running in the background', async () => {
+    await writeFile(join(home, '.bash_profile'), 'sleep 20 &\n')
+    const started = Date.now()
+    expect(await readLoginEnvironment('bash', { PATH: process.env.PATH, HOME: home }, 500)).toEqual({})
+    expect(Date.now() - started).toBeLessThan(3_000)
+  })
+
   it('returns nothing when the shell is missing', async () => {
     expect(await readLoginEnvironment('definitely-not-a-shell-eregion', { HOME: home })).toEqual({})
+  })
+})
+
+describe('defaultShell', () => {
+  it('falls back to zsh on macOS and bash elsewhere', () => {
+    expect(defaultShell('darwin')).toBe('/bin/zsh')
+    expect(defaultShell('linux')).toBe('/bin/bash')
   })
 })
 

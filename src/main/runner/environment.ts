@@ -45,17 +45,27 @@ export function parseEnvironment(output: string, marker: string = MARKER): NodeJ
 
 /**
  * The environment the user's own terminal has: their login shell, started interactive so it reads every
- * startup file (on macOS, PATH for nvm, Herd or Homebrew often lives in ~/.zshrc). Empty if it can't be read.
+ * startup file (on macOS, PATH for nvm, Herd or Homebrew often lives in ~/.zshrc). Empty if it can't be read
+ * in time. The timeout doesn't wait for the shell to finish: something a startup file leaves running in the
+ * background (an agent, a sleep) keeps the shell's output open, and Eregion waits on this before its window opens.
  */
 export async function readLoginEnvironment(shell: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = 5_000): Promise<NodeJS.ProcessEnv> {
-  const result = await collect(shell, ['-ilc', `printf '${MARKER}'; env -0; printf '${MARKER}'`], { env: withoutAppOnly(env), timeoutMs })
-  return result.code === 0 ? parseEnvironment(result.stdout) : {}
+  let timer: NodeJS.Timeout | undefined
+  const tooSlow = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), timeoutMs)))
+  const result = await Promise.race([collect(shell, ['-ilc', `printf '${MARKER}'; env -0; printf '${MARKER}'`], { env: withoutAppOnly(env), timeoutMs }), tooSlow])
+  clearTimeout(timer)
+  return result?.code === 0 ? parseEnvironment(result.stdout) : {}
+}
+
+/** The shell to read when $SHELL isn't set: zsh is the Mac's default, bash everywhere else. */
+export function defaultShell(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'darwin' ? '/bin/zsh' : '/bin/bash'
 }
 
 /** Reads the login shell's environment once, at startup, for every command the native runner starts. */
 export async function useLoginEnvironment(platform: NodeJS.Platform = process.platform): Promise<void> {
   if (platform === 'win32') return
-  loginEnvironment = await readLoginEnvironment(process.env.SHELL || '/bin/bash')
+  loginEnvironment = await readLoginEnvironment(process.env.SHELL || defaultShell(platform))
 }
 
 /** What a command starts with: Eregion's environment, the user's login shell on top, then the command's own variables. */
