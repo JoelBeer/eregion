@@ -10,10 +10,20 @@ import type { SourceIssue, TicketSource } from './sources'
 const CLOSED = new Set(['completed', 'canceled', 'duplicate'])
 
 /**
- * Linear as a ticket source: issues in the project's team, assigned to whoever it imports for, in the
- * importable states, with the project's labels. A project uses the account signed in under Linear in
- * Settings › Integrations (whose people are chosen there), or another workspace's connection (a personal
- * API key, whose people are chosen in the project).
+ * Whose Linear issues a project imports: its own choice. Projects on the main account that haven't made one
+ * keep the choice Settings used to hold for every project; with a connection, it's you.
+ */
+export function linearAssignees(project: Project, settingsChoice: () => ImportAssignees): ImportAssignees {
+  const source = sourceOf(project)
+  if (!source.rules?.who) return source.connectionId ? { mode: 'me' } : settingsChoice()
+  const rules = importRules(source)
+  return rules.who === 'people' ? { mode: 'people', people: rules.people } : { mode: rules.who }
+}
+
+/**
+ * Linear as a ticket source: issues in the project's team, assigned to whoever the project imports for, in
+ * the importable states, with the project's labels. A project uses the account signed in under Linear in
+ * Settings › Accounts, or another workspace's connection (a personal API key).
  */
 export class LinearSource implements TicketSource {
   readonly kind = 'linear' as const
@@ -34,7 +44,7 @@ export class LinearSource implements TicketSource {
     const id = this.connectionId(project)
     if (id && this.connections) return new LinearClient({ kind: 'api-key', key: this.connections.token(id) }, this.fetchImpl)
     const client = this.auth.client()
-    if (!client) throw new Error('Connect Linear first, in Settings › Integrations')
+    if (!client) throw new Error('Connect Linear first, in Settings › Accounts')
     return client
   }
 
@@ -52,11 +62,8 @@ export class LinearSource implements TicketSource {
     return this.viewers.get(id) as Promise<string>
   }
 
-  /** Whose issues come in: the main account's choice in Settings, or the project's own rules with a connection. */
   private assignees(project: Project): ImportAssignees {
-    if (!this.connectionId(project)) return this.auth.importAssignees()
-    const rules = importRules(sourceOf(project))
-    return rules.who === 'people' ? { mode: 'people', people: rules.people } : { mode: rules.who }
+    return linearAssignees(project, () => this.auth.importAssignees())
   }
 
   location(project: Project): string | null {
@@ -66,7 +73,7 @@ export class LinearSource implements TicketSource {
   notReady(project: Project): string | null {
     const id = this.connectionId(project)
     if (id && !this.connections?.list().some((connection) => connection.id === id)) return `Choose ${project.name}'s Linear account in its Tickets and code step`
-    if (!id && !this.auth.client()) return 'Connect Linear first, in Settings › Integrations'
+    if (!id && !this.auth.client()) return 'Connect Linear first, in Settings › Accounts'
     if (!project.linear.teamId) return `Choose ${project.name}'s Linear team in its Tickets and code step`
     return null
   }

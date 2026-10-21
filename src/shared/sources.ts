@@ -1,6 +1,6 @@
 /**
  * Where a project's tickets come from: Linear, GitHub Issues, Jira, GitLab issues, or nowhere (tickets made
- * in Eregion). Each project picks one; Settings › Integrations holds the connections.
+ * in Eregion). Each project picks one; Settings › Accounts holds the connections.
  */
 
 export type TicketSourceKind = 'linear' | 'github-issues' | 'jira' | 'gitlab-issues' | 'manual'
@@ -16,7 +16,7 @@ export const SOURCE_NAMES: Record<TicketSourceKind, string> = {
 /** Whose issues come in by themselves, and which labels they need. */
 export interface ImportRules {
   who: 'me' | 'people' | 'everyone'
-  /** The source's own ids (Jira account ids, GitHub or GitLab usernames). Linear keeps its people in Settings › Integrations. */
+  /** The source's own ids (Jira account ids, GitHub or GitLab usernames). Linear keeps its people in Settings › Accounts. */
   people: { id: string; name: string }[]
   /** Only issues with every one of these labels (any case). */
   labels: string[]
@@ -28,7 +28,7 @@ export const DEFAULT_IMPORT_RULES: ImportRules = { who: 'me', people: [], labels
 
 export interface TicketSourceConfig {
   kind: TicketSourceKind
-  /** The Jira or GitLab connection (Settings › Integrations) it reads from. */
+  /** The Jira or GitLab connection (Settings › Accounts) it reads from. */
   connectionId?: string | null
   /** GitHub Issues: owner/name (the first repo's, if empty). GitLab: group/project. Jira: the project key. */
   location?: string

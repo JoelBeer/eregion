@@ -16,7 +16,7 @@ import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
 import type { CrewStats } from './crew'
-import type { GitHubAccount, ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
+import type { GitHubAccount, GitHubSignIn, GitHubUser, ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
   name: string
@@ -76,8 +76,16 @@ export interface ProjectPatch {
 export interface EregionApi {
   appInfo(): Promise<AppInfo>
   checkTools(): Promise<ToolCheck[]>
-  /** Who gh is signed in as, their organisations and the repos they can reach; null when gh isn't signed in anywhere. */
-  getGitHubAccount(): Promise<GitHubAccount | null>
+  /** The GitHub accounts gh is signed in to on this machine. */
+  listGitHubAccounts(): Promise<GitHubUser[]>
+  /** Starts gh's browser sign-in for another account: enter the code it returns at the URL. */
+  startGitHubSignIn(): Promise<GitHubSignIn>
+  /** Resolves once the sign-in is approved in the browser, with the accounts gh now has. */
+  finishGitHubSignIn(): Promise<GitHubUser[]>
+  cancelGitHubSignIn(): Promise<void>
+  signOutOfGitHub(login: string): Promise<GitHubUser[]>
+  /** An account's name, organisations and the repos it can reach (gh's active account when none is given); null when gh isn't signed in. */
+  getGitHubAccount(login?: string | null): Promise<GitHubAccount | null>
 
   listProjects(): Promise<ProjectSummary[]>
   getProject(id: number): Promise<Project>
@@ -181,7 +189,7 @@ export interface EregionApi {
 
   listAgents(): Promise<AgentInfo[]>
   /** Sends a tiny prompt with the cheapest model in every runtime where the CLI is installed. */
-  /** Your Jira and GitLab connections (Settings › Integrations), without their tokens. */
+  /** Your Jira and GitLab connections (Settings › Accounts), without their tokens. */
   listConnections(): Promise<Connection[]>
   /** Adds or edits a connection, then checks who it signs in as. */
   saveConnection(input: ConnectionInput): Promise<Connection>
@@ -233,6 +241,11 @@ export interface EregionApi {
 export const API_METHODS = [
   'appInfo',
   'checkTools',
+  'listGitHubAccounts',
+  'startGitHubSignIn',
+  'finishGitHubSignIn',
+  'cancelGitHubSignIn',
+  'signOutOfGitHub',
   'getGitHubAccount',
   'listProjects',
   'getProject',
@@ -355,6 +368,7 @@ export type EregionEvent = { type: 'projects-changed' } | { type: 'project-chang
   | { type: 'crew-changed' }
   | { type: 'ticket-changed'; ticketId: number; projectId: number }
   | { type: 'linear-changed' }
+  | { type: 'github-changed' }
   | { type: 'forge-changed'; projectId: number }
   | { type: 'notice'; title: string; body: string }
 

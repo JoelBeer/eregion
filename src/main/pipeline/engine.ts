@@ -15,6 +15,7 @@ import type { PermissionProfile, SessionOutcome } from '../agents/session'
 import { runnerForRuntimeId } from '../projects/detect'
 import type { ProjectStore } from '../projects/store'
 import type { Runner } from '../runner'
+import type { RunnerFor } from '../runner/types'
 import { changedFiles, commitAll, discardChanges, hasOrigin, pushBranch } from '../workspace/git'
 import type { Workspaces } from '../workspace/workspaces'
 import type { PipelineStore, TicketPatch, TicketStore } from './stores'
@@ -46,7 +47,7 @@ export interface EngineDeps {
   settings: EngineSettings
   integrations?: Integrations
   onTicketChanged(ticket: Ticket): void
-  runnerFor?: (runtime: string) => Runner
+  runnerFor?: RunnerFor
   /** The MCP servers and skill rules each run gets (Settings › MCP servers and Skills). */
   tooling?: (project: Project, repoPaths: Record<string, string>, values: Record<string, string>) => Promise<RunTooling>
 }
@@ -76,7 +77,7 @@ export class PipelineEngine {
   /** Tickets whose next run carries on a paused conversation, by ticket id: the session to resume. */
   private readonly resuming = new Map<number, string>()
   private readonly locks = new Map<number, Promise<unknown>>()
-  private readonly runnerFor: (runtime: string) => Runner
+  private readonly runnerFor: RunnerFor
 
   constructor(readonly deps: EngineDeps) {
     this.runnerFor = deps.runnerFor ?? runnerForRuntimeId
@@ -124,12 +125,12 @@ export class PipelineEngine {
     return fallback
   }
 
-  /** The runner agents use. A project's repos must share one runtime for agents to see them together. */
+  /** The runner agents, git and gh use, as the project's GitHub account. A project's repos must share one runtime for agents to see them together. */
   runner(project: Project): Runner {
     const runtimes = new Set(project.repos.map((repo) => repo.runtime))
     if (runtimes.size === 0) throw new Error('This project has no repos')
     if (runtimes.size > 1) throw new Error("This project's repos run in different runtimes, so one agent can't work on them together")
-    return this.runnerFor(project.repos[0].runtime)
+    return this.runnerFor(project.repos[0].runtime, project)
   }
 
   async outputsDir(ticket: Ticket): Promise<string> {

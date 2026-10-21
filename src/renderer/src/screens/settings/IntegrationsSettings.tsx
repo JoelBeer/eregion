@@ -1,7 +1,7 @@
-import { useState, type MouseEvent, type ReactElement } from 'react'
-import type { GitHubPermission, ImportAssignees, LinearStatus, LinearUser } from '@shared/integrations'
+import { useRef, useState, type MouseEvent, type ReactElement, type ReactNode } from 'react'
+import type { GitHubPermission, GitHubSignIn, LinearStatus } from '@shared/integrations'
 import { Chip, StatusPill } from '../../components/ui'
-import { useAction, useQuery } from '../../hooks'
+import { errorMessage, useAction, useQuery } from '../../hooks'
 import { ConnectionsSection } from './ConnectionsSection'
 
 export function useLinearStatus(): { status: LinearStatus | undefined; reload: () => void } {
@@ -125,55 +125,6 @@ function ConnectLinear({ status }: { status: LinearStatus }): ReactElement {
   )
 }
 
-function ImportPeople({ status }: { status: LinearStatus }): ReactElement {
-  const [users, setUsers] = useState<LinearUser[] | null>(null)
-  const save = useAction((value: ImportAssignees) => window.eregion.setLinearImportAssignees(value))
-  const load = useAction(async () => setUsers(await window.eregion.listLinearUsers()))
-  const chosen = status.importAssignees.mode === 'people' ? status.importAssignees.people : []
-  const toggle = (user: LinearUser, on: boolean): void => {
-    const people = on ? [...chosen, { id: user.id, name: user.name }] : chosen.filter((person) => person.id !== user.id)
-    void save.run(people.length ? { mode: 'people', people } : { mode: 'me' })
-  }
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span className="label">Import issues assigned to</span>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input type="radio" name="assignees" checked={status.importAssignees.mode === 'me'} onChange={() => void save.run({ mode: 'me' })} />
-        Me{status.viewer ? ` (${status.viewer.name})` : ''}
-      </label>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input type="radio" name="assignees" checked={status.importAssignees.mode === 'people'} onChange={() => void load.run()} />
-        Specific people{chosen.length ? `: ${chosen.map((person) => person.name).join(', ')}` : ''}
-      </label>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input type="radio" name="assignees" checked={status.importAssignees.mode === 'everyone'} onChange={() => void save.run({ mode: 'everyone' })} />
-        Everyone in the team, assigned or not
-      </label>
-      {status.importAssignees.mode === 'everyone' && (
-        <span className="muted" style={{ fontSize: 13, paddingLeft: 24 }}>
-          That can be a lot of tickets: narrow it with labels in each project's Tickets and code step, and with the states it imports from.
-        </span>
-      )}
-      {(users || status.importAssignees.mode === 'people') && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 24, maxHeight: 220, overflowY: 'auto' }}>
-          {!users && (
-            <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void load.run()} style={{ alignSelf: 'flex-start' }}>
-              Choose people
-            </button>
-          )}
-          {users?.map((user) => (
-            <label key={user.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14 }}>
-              <input type="checkbox" checked={chosen.some((person) => person.id === user.id)} onChange={(event) => toggle(user, event.target.checked)} />
-              {user.name} <span className="muted">{user.email}</span>
-            </label>
-          ))}
-        </div>
-      )}
-      {(save.error || load.error) && <span className="error-text">{save.error ?? load.error}</span>}
-    </div>
-  )
-}
-
 const PERMISSION_LABELS: Record<GitHubPermission, string> = { admin: 'Admin', maintain: 'Maintain', write: 'Write', triage: 'Triage', read: 'Read' }
 
 const openLink = (url: string) => (event: MouseEvent) => {
@@ -181,9 +132,9 @@ const openLink = (url: string) => (event: MouseEvent) => {
   void window.eregion.openExternal(url)
 }
 
-/** Who gh is signed in as, their organisations, and the repos they can reach, with a search. */
-function GitHubAccountDetails(): ReactElement {
-  const account = useQuery(() => window.eregion.getGitHubAccount(), [])
+/** One account's name, organisations, and the repos it can reach, with a search. */
+function GitHubAccountDetails({ login: chosen }: { login: string }): ReactElement {
+  const account = useQuery(() => window.eregion.getGitHubAccount(chosen), [chosen])
   const [search, setSearch] = useState('')
   if (account.loading) return <span className="muted">Reading your GitHub account…</span>
   if (account.error) return <span className="error-text">Couldn't read your GitHub account: {account.error}</span>
@@ -194,12 +145,11 @@ function GitHubAccountDetails(): ReactElement {
   return (
     <>
       <span>
-        Signed in as{' '}
         <a href={url} onClick={openLink(url)}>
           <strong>{name ?? login}</strong>
           {name ? ` (@${login})` : ''}
-        </a>{' '}
-        with gh on {runtime}.
+        </a>
+        , with gh on {runtime}.
       </span>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <span className="muted" style={{ fontSize: 13 }}>
@@ -255,6 +205,124 @@ function GitHubAccountDetails(): ReactElement {
   )
 }
 
+/**
+ * Adds an account to gh with its browser sign-in: copy the code, enter it on GitHub signed in as the account
+ * you want. The account your Terminal's gh uses stays the active one.
+ */
+function AddGitHubAccount({ onAdded }: { onAdded: () => void }): ReactElement {
+  const [signIn, setSignIn] = useState<GitHubSignIn | null>(null)
+  const [starting, setStarting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const cancelled = useRef(false)
+  const start = async (): Promise<void> => {
+    cancelled.current = false
+    setError(null)
+    setStarting(true)
+    try {
+      setSignIn(await window.eregion.startGitHubSignIn())
+      setStarting(false)
+      await window.eregion.finishGitHubSignIn()
+      onAdded()
+    } catch (caught) {
+      if (!cancelled.current) setError(errorMessage(caught))
+    } finally {
+      setStarting(false)
+      setSignIn(null)
+    }
+  }
+  const cancel = (): void => {
+    cancelled.current = true
+    void window.eregion.cancelGitHubSignIn()
+  }
+  if (!signIn) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <button type="button" className="er-btn er-btn-sm" onClick={() => void start()} disabled={starting} style={{ alignSelf: 'flex-start' }}>
+          {starting ? 'Starting…' : 'Add an account'}
+        </button>
+        {error && <span className="error-text">{error}</span>}
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, border: '1px solid var(--border-200)', borderRadius: 8 }}>
+      <span>
+        Copy this code, then open GitHub and enter it. Approve it as the account you want to add: if your browser is signed in to GitHub as someone else, sign out there first or use a private window.
+      </span>
+      <CopyRow text={signIn.code} />
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button type="button" className="er-btn er-btn-sm er-btn-primary" onClick={() => void window.eregion.openExternal(signIn.url)}>
+          Open GitHub
+        </button>
+        <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={cancel}>
+          Cancel
+        </button>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Waiting for GitHub…
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/** The GitHub accounts gh is signed in to: add one, sign out of one, or look at the repos one can reach. */
+function GitHubAccounts(): ReactElement {
+  const accounts = useQuery(() => window.eregion.listGitHubAccounts(), [], (event) => event.type === 'github-changed')
+  const [open, setOpen] = useState<string | null>(null)
+  const signOut = useAction(async (login: string) => {
+    if (!window.confirm(`Sign gh out of ${login} on this machine? That signs your Terminal's gh out of it too, and projects that use it stop being able to push until you add it again.`)) return
+    await window.eregion.signOutOfGitHub(login)
+    accounts.reload()
+  })
+  const row = (children: ReactNode, key: string): ReactElement => (
+    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border-200)' }}>
+      {children}
+    </div>
+  )
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {accounts.loading && !accounts.data && <span className="muted">Reading gh's accounts…</span>}
+      {accounts.data?.length === 0 && <span>gh isn't signed in to GitHub yet.</span>}
+      {accounts.data && accounts.data.length > 0 && (
+        <div>
+          {accounts.data.map((account) => (
+            <div key={account.login}>
+              {row(
+                <>
+                  <strong>{account.login}</strong>
+                  {account.active && (
+                    <Chip tone="info">
+                      <span title="The account gh uses in your Terminal, and in projects that don't choose one">Active in gh</span>
+                    </Chip>
+                  )}
+                  <div style={{ flex: 1 }} />
+                  <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => setOpen(open === account.login ? null : account.login)}>
+                    {open === account.login ? 'Hide repositories' : 'Repositories'}
+                  </button>
+                  <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void signOut.run(account.login)} disabled={signOut.pending}>
+                    Sign out
+                  </button>
+                </>,
+                account.login
+              )}
+              {open === account.login && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '10px 0 14px' }}>
+                  <GitHubAccountDetails login={account.login} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {(accounts.error || signOut.error) && <span className="error-text">{accounts.error ?? signOut.error}</span>}
+      <AddGitHubAccount onAdded={accounts.reload} />
+      <span className="muted" style={{ fontSize: 13 }}>
+        gh keeps these sign-ins (in the Keychain on a Mac), not Eregion. Each project chooses which one it works as in its Tickets and code step; projects that don't use the account active in gh.
+      </span>
+    </div>
+  )
+}
+
 export function IntegrationsSettings(): ReactElement {
   const { status } = useLinearStatus()
   const tools = useQuery(() => window.eregion.checkTools(), [])
@@ -278,7 +346,9 @@ export function IntegrationsSettings(): ReactElement {
             <span>
               Signed in as <strong>{status.viewer.name}</strong> ({status.viewer.email}) in {status.viewer.organization}, {status.method === 'oauth' ? 'through your Linear app' : 'with a personal API key'}.
             </span>
-            <ImportPeople status={status} />
+            <span className="muted" style={{ fontSize: 13 }}>
+              Each project chooses whose issues it imports, in its Tickets and code step.
+            </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span className="muted" style={{ fontSize: 13 }}>
                 Last synced {timeAgo(status.lastSyncAt)}. Eregion checks every minute while it's open, and when you come back to it.
@@ -298,7 +368,7 @@ export function IntegrationsSettings(): ReactElement {
 
       <section className="panel" aria-label="GitHub">
         <h2 style={{ fontSize: 18 }}>GitHub</h2>
-        <span>Eregion pushes branches and opens pull requests with the GitHub CLI, signed in as you, inside each repo's runtime. It stores no GitHub token.</span>
+        <span>Eregion fetches, pushes and opens pull requests with the GitHub CLI, as the account each project chooses. It stores no GitHub token.</span>
         {!gh && <span className="muted">Checking gh…</span>}
         {gh && !gh.found && <span className="error-text">gh isn't installed. Install the GitHub CLI, then run gh auth login.</span>}
         {gh?.found && (
@@ -309,12 +379,7 @@ export function IntegrationsSettings(): ReactElement {
             </span>
           </span>
         )}
-        {gh?.found && gh.detail?.startsWith('signed in') && <GitHubAccountDetails />}
-        {gh?.found && !gh.detail?.startsWith('signed in') && (
-          <span>
-            Run <code className="mono">gh auth login</code> in a terminal{gh.runtime !== 'Windows' ? ` (${gh.runtime})` : ''}, then come back.
-          </span>
-        )}
+        {gh?.found && <GitHubAccounts />}
       </section>
 
       <ConnectionsSection />

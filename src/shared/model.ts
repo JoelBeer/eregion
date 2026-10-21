@@ -30,6 +30,8 @@ export interface GithubProjectConfig {
   /** Add links between a ticket's PRs when it changes more than one repo. */
   linkPrs?: boolean
   teardownOnMerge?: boolean
+  /** The gh account its git and gh commands use (Settings › Accounts); gh's active account when unset. */
+  account?: string | null
 }
 
 export interface Repo {

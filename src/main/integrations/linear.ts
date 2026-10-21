@@ -65,10 +65,10 @@ export class LinearClient {
       headers: { 'content-type': 'application/json', authorization },
       body: JSON.stringify({ query, variables })
     })
-    if (response.status === 401) throw new LinearAuthError('Linear rejected the sign-in. Connect Linear again in Settings › Integrations.')
+    if (response.status === 401) throw new LinearAuthError('Linear rejected the sign-in. Connect Linear again in Settings › Accounts.')
     const body = (await response.json().catch(() => null)) as { data?: T; errors?: { message: string; extensions?: { code?: string } }[] } | null
     if (body?.errors?.length) {
-      if (body.errors.some((error) => error.extensions?.code === 'AUTHENTICATION_ERROR')) throw new LinearAuthError('Linear rejected the sign-in. Connect Linear again in Settings › Integrations.')
+      if (body.errors.some((error) => error.extensions?.code === 'AUTHENTICATION_ERROR')) throw new LinearAuthError('Linear rejected the sign-in. Connect Linear again in Settings › Accounts.')
       throw new Error(`Linear: ${body.errors.map((error) => error.message).join('; ')}`)
     }
     if (!response.ok || !body?.data) throw new Error(`Linear answered ${response.status}`)

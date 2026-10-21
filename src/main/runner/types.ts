@@ -1,6 +1,12 @@
 import type { ChildProcess } from 'node:child_process'
 import type { Runtime } from '@shared/types'
 
+/**
+ * The runner for a runtime; given the project, its commands act as the project's GitHub account (its git and
+ * gh calls, and the agents working on it).
+ */
+export type RunnerFor = (runtime: string, project?: { github?: { account?: string | null } }) => Runner
+
 export interface ExecOptions {
   /** Working directory, as a path inside the runner's runtime (a Linux path for WSL). */
   cwd?: string

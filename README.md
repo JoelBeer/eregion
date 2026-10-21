@@ -104,11 +104,11 @@ Eregion ships no shared Linear app. You register a private one in your own works
    http://127.0.0.1:47323/oauth/callback
    ```
 
-3. In Eregion, open **Settings › Integrations**, paste the app's **client ID** and press **Sign in with Linear**. Approve it in the browser and come back.
+3. In Eregion, open **Settings › Accounts**, paste the app's **client ID** and press **Sign in with Linear**. Approve it in the browser and come back.
 
 No client secret is needed: sign-in uses PKCE. If your workspace doesn't let you create apps, use a **personal API key** instead (Linear › Settings › Security & access › Personal API keys) in the same place.
 
-Then choose the Linear team in the project's **Linear and GitHub** step. Issues assigned to you (or to people you choose in Settings › Integrations) in Backlog or Todo come in automatically. An issue assigned to someone else leaves the Backlog, or gets flagged if work has started. A ticket made in Eregion in a linked project becomes a Linear issue.
+Then choose the Linear team in the project's **Tickets and code** step. Issues assigned to you (or to the people, or everyone, the project chooses there) in Backlog or Todo come in automatically. An issue assigned to someone else leaves the Backlog, or gets flagged if work has started. A ticket made in Eregion in a linked project becomes a Linear issue.
 
 ## Connect GitHub
 
@@ -119,6 +119,8 @@ gh auth login
 ```
 
 It pushes branches, opens and links PRs, marks drafts ready, reads checks and job logs, and re-runs failed jobs. It stores no GitHub token.
+
+To use more than one GitHub account (personal and work, say), add them in **Settings › Accounts**: Eregion runs gh's browser sign-in and gives you the code to enter. Then each project picks its account in its **Tickets and code** step. Its fetches, pushes, pull requests and agents act as that account, whatever account your Terminal's gh is using.
 
 ## Where things live
 

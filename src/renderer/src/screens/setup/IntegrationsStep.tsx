@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { DEFAULT_IMPORT_STATE_TYPES, type ImportAssignees, type LinearState, type LinearStateType, type LinearTeam } from '@shared/integrations'
+import { DEFAULT_IMPORT_STATE_TYPES, type ImportAssignees, type LinearState, type LinearStateType, type LinearTeam, type LinearUser } from '@shared/integrations'
 import { DEFAULT_LINEAR_PUSH, type GithubProjectConfig, type LinearProjectConfig } from '@shared/model'
 import { DEFAULT_SOURCE_PUSH, importRules, sourceOf, SOURCE_NAMES, type ImportRules, type TicketSourceConfig, type TicketSourceKind } from '@shared/sources'
 import { Switch } from '../../components/ui'
@@ -13,6 +13,89 @@ const IMPORTABLE: { type: LinearStateType; label: string }[] = [
   { type: 'backlog', label: 'Backlog' },
   { type: 'unstarted', label: 'Todo and other unstarted states' }
 ]
+
+/**
+ * Whose Linear issues come in: you, chosen people, or everyone in the team. Projects that never chose keep the
+ * choice Settings used to make for every project.
+ */
+function LinearWho({ source, saveSource, connectionId, fallback }: { source: TicketSourceConfig; saveSource: (source: TicketSourceConfig) => void; connectionId: string | null; fallback: ImportAssignees }): ReactElement {
+  const rules = importRules(source)
+  const current: ImportAssignees = source.rules?.who ? (rules.who === 'people' ? { mode: 'people', people: rules.people } : { mode: rules.who }) : connectionId ? { mode: 'me' } : fallback
+  const [users, setUsers] = useState<LinearUser[] | null>(null)
+  const load = useAction(async () => setUsers(await window.eregion.listLinearUsers(connectionId)))
+  const chosen = current.mode === 'people' ? current.people : []
+  const save = (who: ImportRules['who'], people = chosen): void => saveSource({ ...source, rules: { ...rules, who, people } })
+  const toggle = (user: LinearUser, on: boolean): void => {
+    const people = on ? [...chosen, { id: user.id, name: user.name }] : chosen.filter((person) => person.id !== user.id)
+    save(people.length ? 'people' : 'me', people)
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span className="label">Whose issues</span>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input type="radio" name="linear-who" checked={current.mode === 'me' && !users} onChange={() => save('me')} />
+        Assigned to me
+      </label>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input type="radio" name="linear-who" checked={current.mode === 'people' || Boolean(users)} onChange={() => void load.run()} />
+        Assigned to specific people{chosen.length ? `: ${chosen.map((person) => person.name).join(', ')}` : ''}
+      </label>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input type="radio" name="linear-who" checked={current.mode === 'everyone' && !users} onChange={() => save('everyone')} />
+        Everyone in the team, assigned or not
+      </label>
+      {(users || current.mode === 'people') && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 24, maxHeight: 220, overflowY: 'auto' }}>
+          {!users && (
+            <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void load.run()} style={{ alignSelf: 'flex-start' }}>
+              Choose people
+            </button>
+          )}
+          {users?.map((user) => (
+            <label key={user.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14 }}>
+              <input type="checkbox" checked={chosen.some((person) => person.id === user.id)} onChange={(event) => toggle(user, event.target.checked)} />
+              {user.name} <span className="muted">{user.email}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {load.error && <span className="error-text">{load.error}</span>}
+    </div>
+  )
+}
+
+/** Which GitHub account a project's pushes, pull requests and agents use: one gh is signed in to, or gh's active one. */
+function GitHubAccountPicker({ github, save }: { github: GithubProjectConfig; save: (github: GithubProjectConfig) => void }): ReactElement {
+  const accounts = useQuery(() => window.eregion.listGitHubAccounts(), [], (event) => event.type === 'github-changed')
+  const active = accounts.data?.find((account) => account.active)
+  const missing = github.account && accounts.data && !accounts.data.some((account) => account.login === github.account)
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '6px 12px', alignItems: 'center' }}>
+      <label className="muted" htmlFor="github-account">
+        GitHub account
+      </label>
+      <select id="github-account" className="select" value={github.account ?? ''} onChange={(event) => save({ ...github, account: event.target.value || null })}>
+        <option value="">gh's active account{active ? ` (${active.login})` : ''}</option>
+        {accounts.data?.map((account) => (
+          <option key={account.login} value={account.login}>
+            {account.login}
+          </option>
+        ))}
+        {missing && <option value={github.account ?? ''}>{github.account} (not signed in)</option>}
+      </select>
+      <span />
+      <span className="muted" style={{ fontSize: 13 }}>
+        Fetching, pushing, pull requests and the agents' gh commands all act as this account. <a href={href({ name: 'settings', tab: 'integrations' })}>Add accounts in Settings › Accounts</a>.
+      </span>
+      {missing && (
+        <>
+          <span />
+          <span className="error-text">gh isn't signed in as {github.account} on this machine. Add it in Settings › Accounts, or choose another.</span>
+        </>
+      )}
+    </div>
+  )
+}
 
 /** Which Linear account a project uses: the one signed in under Linear in Settings, or another workspace's connection. */
 function LinearAccount({ source, saveSource }: { source: TicketSourceConfig; saveSource: (source: TicketSourceConfig) => void }): ReactElement | null {
@@ -62,7 +145,7 @@ function LinearSection({ project, save, source, saveSource }: { project: StepPro
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <LinearAccount source={source} saveSource={saveSource} />
         <span>
-          Linear isn't connected yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Connect it in Settings › Integrations</a>, then come back. Or carry on without it: tickets can be added by hand.
+          Linear isn't connected yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Connect it in Settings › Accounts</a>, then come back. Or carry on without it: tickets can be added by hand.
         </span>
       </div>
     )
@@ -71,25 +154,14 @@ function LinearSection({ project, save, source, saveSource }: { project: StepPro
   const types = linear.importStateTypes?.length ? linear.importStateTypes : DEFAULT_IMPORT_STATE_TYPES
   const push = { ...DEFAULT_LINEAR_PUSH, ...linear.push }
   const stages = (pipeline.data?.stages ?? []).filter((stage) => stage.enabled)
-  // With a connection, whose issues come in is the project's own choice; with the main account, Settings' choice.
   const rules = importRules(source)
-  const assignees: ImportAssignees = connectionId ? (rules.who === 'people' ? { mode: 'people', people: rules.people } : rules.who === 'everyone' ? { mode: 'everyone' } : { mode: 'me' }) : status.importAssignees
+  const assignees: ImportAssignees = source.rules?.who ? (rules.who === 'people' ? { mode: 'people', people: rules.people } : { mode: rules.who }) : connectionId ? { mode: 'me' } : status.importAssignees
   const person = assignees.mode === 'me' ? 'assigned to you' : assignees.mode === 'everyone' ? 'in the team, assigned to anyone' : `assigned to ${assignees.people.map((item) => item.name).join(', ') || 'the people you choose'}`
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <LinearAccount source={source} saveSource={saveSource} />
-      {connectionId && (
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span className="muted">Whose issues</span>
-          {(['me', 'everyone'] as const).map((who) => (
-            <label key={who} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-              <input type="radio" name="linear-who" checked={rules.who === who} onChange={() => saveSource({ ...source, rules: { ...rules, who } })} />
-              {who === 'me' ? 'Assigned to me' : 'Everyone in the team'}
-            </label>
-          ))}
-        </div>
-      )}
+      <LinearWho key={connectionId ?? 'main'} source={source} saveSource={saveSource} connectionId={connectionId} fallback={status.importAssignees} />
       <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr)', gap: '10px 12px', alignItems: 'center' }}>
         <label className="muted" htmlFor="linear-team">
           Team
@@ -194,10 +266,10 @@ function LinearSection({ project, save, source, saveSource }: { project: StepPro
 
 /** The ticket sources this version of Eregion can read, in the order they're offered. */
 const SOURCE_CHOICES: { kind: TicketSourceKind; detail: string }[] = [
-  { kind: 'linear', detail: 'Issues from a Linear team. Connect Linear in Settings › Integrations.' },
+  { kind: 'linear', detail: 'Issues from a Linear team. Connect Linear in Settings › Accounts.' },
   { kind: 'github-issues', detail: "Issues from a GitHub repo, through gh signed in as you. While a ticket is in a stage, its issue carries that stage's eregion: label." },
-  { kind: 'jira', detail: 'Issues from a Jira Cloud project. Add the Jira connection in Settings › Integrations.' },
-  { kind: 'gitlab-issues', detail: 'Issues from a GitLab project, labelled with the stage as for GitHub. Add the GitLab connection in Settings › Integrations.' },
+  { kind: 'jira', detail: 'Issues from a Jira Cloud project. Add the Jira connection in Settings › Accounts.' },
+  { kind: 'gitlab-issues', detail: 'Issues from a GitLab project, labelled with the stage as for GitHub. Add the GitLab connection in Settings › Accounts.' },
   { kind: 'manual', detail: "No tracker: add tickets with New ticket on the Board. Their keys use the project's initials." }
 ]
 
@@ -207,7 +279,7 @@ function ConnectionPicker({ kind, source, save }: { kind: 'jira' | 'gitlab'; sou
   if (connections && connections.length === 0) {
     return (
       <span>
-        No {kind === 'jira' ? 'Jira' : 'GitLab'} connection yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Add one in Settings › Integrations</a>, then come back.
+        No {kind === 'jira' ? 'Jira' : 'GitLab'} connection yet. <a href={href({ name: 'settings', tab: 'integrations' })}>Add one in Settings › Accounts</a>, then come back.
       </span>
     )
   }
@@ -476,6 +548,7 @@ export function IntegrationsStep({ project, next }: StepProps): ReactElement {
         <span className="muted" style={{ fontSize: 13 }}>
           From each repo's git remote. Change them in <a href={href({ name: 'setup', projectId: project.id, step: 'repos' })}>Repos</a>.
         </span>
+        <GitHubAccountPicker github={github} save={(next) => void saveGithub.run(next)} />
         <Switch label="Open pull requests as drafts, and wait for me to mark them ready" checked={github.draft !== false} onChange={(draft) => void saveGithub.run({ ...github, draft })} />
         <Switch label="Link a ticket's pull requests to each other" checked={github.linkPrs !== false} onChange={(linkPrs) => void saveGithub.run({ ...github, linkPrs })} />
         {saveGithub.error && <span className="error-text">{saveGithub.error}</span>}

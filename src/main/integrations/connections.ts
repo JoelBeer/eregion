@@ -12,7 +12,7 @@ interface StoredConnection extends Connection {
 export type WhoAmI = (connection: Connection, token: string) => Promise<string>
 
 /**
- * Jira and GitLab accounts, added in Settings › Integrations. Several of each are fine (two Jira sites, a
+ * Jira and GitLab accounts, added in Settings › Accounts. Several of each are fine (two Jira sites, a
  * gitlab.com account and a company GitLab). Tokens are encrypted at rest and never sent back to the screens.
  */
 export class Connections {
@@ -36,13 +36,13 @@ export class Connections {
 
   get(id: string): Connection {
     const found = this.list().find((connection) => connection.id === id)
-    if (!found) throw new Error("That connection isn't set up any more: pick another in Settings › Integrations")
+    if (!found) throw new Error("That connection isn't set up any more: pick another in Settings › Accounts")
     return found
   }
 
   token(id: string): string {
     const found = this.stored().find((connection) => connection.id === id)
-    if (!found) throw new Error("That connection isn't set up any more: pick another in Settings › Integrations")
+    if (!found) throw new Error("That connection isn't set up any more: pick another in Settings › Accounts")
     return this.codec.decrypt(found.secret)
   }
 
@@ -92,7 +92,7 @@ export async function restJson<T>(fetchImpl: FetchLike, service: string, url: st
     headers: { accept: 'application/json', ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}), ...init.headers },
     body: init.body !== undefined ? JSON.stringify(init.body) : (undefined as unknown as string)
   })
-  if (response.status === 401 || response.status === 403) throw new Error(`${service} rejected the token. Check the connection in Settings › Integrations.`)
+  if (response.status === 401 || response.status === 403) throw new Error(`${service} rejected the token. Check the connection in Settings › Accounts.`)
   if (!response.ok) {
     const text = await response.text().catch(() => '')
     throw new Error(`${service} answered ${response.status}${text ? `: ${text.slice(0, 300)}` : ''}`)

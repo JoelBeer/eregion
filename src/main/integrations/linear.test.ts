@@ -8,7 +8,7 @@ import { ProjectStore } from '../projects/store'
 import { descriptionWithPlan, PLAN_MARKER } from './hooks'
 import { LinearAuthError, LinearClient, type FetchLike } from './linear'
 import { authorizeUrl, LinearAuth, pkcePair, PLAIN_CODEC } from './linearAuth'
-import { LinearSource } from './linearSource'
+import { linearAssignees, LinearSource } from './linearSource'
 import { IssueSync } from './sources'
 import { Connections } from './connections'
 
@@ -228,5 +228,24 @@ describe('Linear hooks', () => {
     expect(sent.map((call) => call.query.match(/(commentCreate|issueUpdate|attachmentLinkURL)/)?.[1])).toEqual(['commentCreate', 'issueUpdate', 'issueUpdate', 'attachmentLinkURL'])
     expect(sent[2].variables).toEqual({ id: 'id-WM-5', input: { stateId: 'state-in-progress' } })
     expect(sent[3].variables).toMatchObject({ url: 'https://github.com/me/app/pull/3', title: 'app #3: WM-5: Hints' })
+  })
+})
+
+describe('linearAssignees', () => {
+  const project = (source: object | null) => ({ source, linear: { teamId: 'team-wm' } }) as unknown as Parameters<typeof linearAssignees>[0]
+  const settings = () => ({ mode: 'everyone' }) as const
+
+  it("uses the project's own choice", () => {
+    expect(linearAssignees(project({ kind: 'linear', rules: { who: 'people', people: [{ id: 'u1', name: 'Sam' }] } }), settings)).toEqual({ mode: 'people', people: [{ id: 'u1', name: 'Sam' }] })
+    expect(linearAssignees(project({ kind: 'linear', rules: { who: 'me' } }), settings)).toEqual({ mode: 'me' })
+  })
+
+  it('keeps the choice Settings used to make for projects on the main account that never chose', () => {
+    expect(linearAssignees(project(null), settings)).toEqual({ mode: 'everyone' })
+    expect(linearAssignees(project({ kind: 'linear', rules: { labels: ['bug'] } }), settings)).toEqual({ mode: 'everyone' })
+  })
+
+  it('imports your own issues through a connection that never chose', () => {
+    expect(linearAssignees(project({ kind: 'linear', connectionId: 'work' }), settings)).toEqual({ mode: 'me' })
   })
 })

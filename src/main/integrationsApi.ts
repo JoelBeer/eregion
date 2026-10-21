@@ -4,6 +4,7 @@ import { importRules, sourceOf, SOURCE_NAMES } from '@shared/sources'
 import type { Ticket } from '@shared/tickets'
 import type { LinearClient } from './integrations/linear'
 import type { LinearAuth } from './integrations/linearAuth'
+import { linearAssignees } from './integrations/linearSource'
 import type { IssueSync } from './integrations/sources'
 import type { CiWatcher } from './pipeline/ciWatch'
 import type { PrStage } from './pipeline/prStage'
@@ -70,7 +71,7 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
   const client = (connectionId?: string | null): LinearClient => {
     if (connectionId) return deps.linearConnection(connectionId)
     const linear = auth.client()
-    if (!linear) throw new Error('Connect Linear first, in Settings › Integrations')
+    if (!linear) throw new Error('Connect Linear first, in Settings › Accounts')
     return linear
   }
   const connected = <T>(task: () => Promise<T>) => async (): Promise<T> => {
@@ -113,7 +114,7 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
       const source = sync.source(project)
       const last = sync.lastSync(config.kind)
       const rules = importRules(config)
-      const assignees = auth.importAssignees()
+      const assignees = linearAssignees(project, () => auth.importAssignees())
       const who = config.kind === 'linear' ? (assignees.mode === 'people' ? 'people' : assignees.mode) : rules.who
       const people = config.kind === 'linear' && assignees.mode === 'people' ? assignees.people : rules.people
       const whose = who === 'me' ? 'assigned to you' : who === 'everyone' ? 'open, assigned to anyone' : `assigned to ${people.map((person) => person.name).join(', ') || 'the people you chose'}`

@@ -8,6 +8,7 @@ import { recipeContext, type TicketValues } from '../recipe/context'
 import type { RunningService, ServiceManager } from '../recipe/services'
 import { runSteps, type StepResult } from '../recipe/steps'
 import type { Runner } from '../runner'
+import type { RunnerFor } from '../runner/types'
 import { baseRef, branchExists, ensureWorktree, gitIn, removeWorktree, updateFromBase as bringInBase } from './git'
 
 export interface WorkspaceTicket extends TicketValues {
@@ -40,7 +41,7 @@ export class Workspaces {
     private readonly projects: ProjectStore,
     private readonly services: ServiceManager,
     private readonly onChange: (environment: Environment) => void,
-    private readonly runnerFor: (runtime: string) => Runner = runnerForRuntimeId,
+    private readonly runnerFor: RunnerFor = runnerForRuntimeId,
     /** Overrides $HOME/.eregion, for tests. */
     private readonly rootOverride?: string
   ) {}
@@ -131,7 +132,7 @@ export class Workspaces {
     const folder = await this.planFolder(project)
     const repos = []
     for (const repo of project.repos) {
-      const runner = this.runnerFor(repo.runtime)
+      const runner = this.runnerFor(repo.runtime, project)
       const path = runner.join(folder, repo.name)
       const base = await this.withRepoLock(repo, async () => {
         const { ref } = await baseRef(runner, repo.path, repo.defaultBranch)
@@ -193,7 +194,7 @@ export class Workspaces {
     }
 
     const setUpRepo = async (repo: Repo, state: EnvironmentRepo): Promise<boolean> => {
-      const runner = this.runnerFor(repo.runtime)
+      const runner = this.runnerFor(repo.runtime, project)
       const worktreeStep: EnvironmentStep = { label: state.branch ? `Create worktree on ${state.branch}` : `Create worktree at ${repo.defaultBranch} (read-only for this ticket)`, status: 'running', output: '' }
       state.steps.push(worktreeStep)
       this.update(environment)
@@ -292,7 +293,7 @@ export class Workspaces {
     await this.stopServices(key)
     try {
       for (const repo of project.repos) {
-        const runner = this.runnerFor(repo.runtime)
+        const runner = this.runnerFor(repo.runtime, project)
         const path = await this.worktreePath(project, repo, ticket.key)
         if (!(await runner.exists(path))) continue
         const outcome = await this.withRepoLock(repo, async () => {

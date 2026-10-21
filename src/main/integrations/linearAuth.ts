@@ -165,7 +165,7 @@ export class LinearAuth {
     const stored = this.stored()
     if (!stored || stored.method !== 'oauth') throw new Error('Linear is not connected with OAuth')
     if (!stored.expiresAt || stored.expiresAt - Date.now() > 5 * 60_000) return stored.accessToken
-    if (!stored.refreshToken) throw new Error('Your Linear sign-in has expired. Connect Linear again in Settings › Integrations.')
+    if (!stored.refreshToken) throw new Error('Your Linear sign-in has expired. Connect Linear again in Settings › Accounts.')
     const params: Record<string, string> = { grant_type: 'refresh_token', refresh_token: stored.refreshToken, client_id: stored.clientId }
     if (stored.clientSecret) params.client_secret = stored.clientSecret
     const token = await this.tokenRequest(params)

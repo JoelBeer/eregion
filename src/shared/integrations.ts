@@ -70,7 +70,19 @@ export const DEFAULT_IMPORT_STATE_TYPES: LinearStateType[] = ['backlog', 'unstar
 
 export type CheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel'
 
-export type GitHubPermission = 'admin' | 'maintain' | 'write' | 'triage' | 'read'
+/** An account gh is signed in to on github.com; the active one is what gh uses unless told otherwise. */
+export interface GitHubUser {
+  login: string
+  active: boolean
+}
+
+/** A sign-in in progress: enter the code at the URL. */
+export interface GitHubSignIn {
+  code: string
+  url: string
+}
+
+export type GitHubPermission ='admin' | 'maintain' | 'write' | 'triage' | 'read'
 
 export interface GitHubRepo {
   /** owner/name */

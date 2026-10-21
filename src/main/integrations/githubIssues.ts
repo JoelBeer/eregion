@@ -1,6 +1,6 @@
 import type { Project } from '@shared/model'
 import { DEFAULT_SOURCE_PUSH, importRules, labelsMatch, sourceOf, STAGE_LABEL_PREFIX, stageLabel } from '@shared/sources'
-import type { Runner } from '../runner/types'
+import type { RunnerFor } from '../runner/types'
 import type { SourceIssue, TicketSource } from './sources'
 
 const FIELDS = 'number,title,body,url,state,labels,assignees,comments'
@@ -32,7 +32,7 @@ export class GitHubIssuesSource implements TicketSource {
   private readonly logins = new Map<string, Promise<string>>()
   private readonly madeLabels = new Set<string>()
 
-  constructor(private readonly runnerFor: (runtime: string) => Runner) {}
+  constructor(private readonly runnerFor: RunnerFor) {}
 
   /** The repo the project's issues are in: the one set in its Tickets and code step, or its first GitHub repo. */
   repo(project: Project): string | null {
@@ -51,20 +51,20 @@ export class GitHubIssuesSource implements TicketSource {
 
   private async gh(project: Project, args: string[], input?: string): Promise<string> {
     const [first] = project.repos
-    const result = await this.runnerFor(first.runtime).exec(['gh', ...args], { cwd: first.path, input, timeoutMs: 60_000 })
+    const result = await this.runnerFor(first.runtime, project).exec(['gh', ...args], { cwd: first.path, input, timeoutMs: 60_000 })
     if (result.code !== 0) throw new Error(`GitHub: ${(result.stderr || result.stdout).trim() || `gh ${args.slice(0, 2).join(' ')} failed`}`)
     return result.stdout
   }
 
-  /** Your GitHub login in the repos' runtime. */
+  /** Your GitHub login in the repos' runtime: the project's account, or gh's active one. */
   private me(project: Project): Promise<string> {
-    const runtime = project.repos[0].runtime
-    if (!this.logins.has(runtime)) {
+    const key = `${project.repos[0].runtime}:${project.github?.account ?? ''}`
+    if (!this.logins.has(key)) {
       const login = this.gh(project, ['api', 'user', '--jq', '.login']).then((out) => out.trim())
-      login.catch(() => this.logins.delete(runtime))
-      this.logins.set(runtime, login)
+      login.catch(() => this.logins.delete(key))
+      this.logins.set(key, login)
     }
-    return this.logins.get(runtime) as Promise<string>
+    return this.logins.get(key) as Promise<string>
   }
 
   private toIssue(raw: RawIssue, repo: string, me: string): SourceIssue {

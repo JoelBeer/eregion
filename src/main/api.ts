@@ -22,6 +22,8 @@ import { PipelineStore, TicketStore } from './pipeline/stores'
 import { backgroundErrorHandler, createTicketsApi } from './ticketsApi'
 import { GhCli, readGitHubAccount, type GitHub } from './integrations/github'
 import { availableRuntimes, runnerFor, runtimeLabel } from './runner'
+import type { RunnerFor } from './runner/types'
+import { GitHubAccounts } from './integrations/githubAccounts'
 import { LinearClient, type FetchLike } from './integrations/linear'
 import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
 import { Connections } from './integrations/connections'
@@ -109,7 +111,10 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   runs.closeAbandoned()
   const crew = new CrewStore(db)
   const agents = new AgentManager(runs, (notice) => host.emit(notice), options.agentCommand, (id) => agentsInfo.connector(id))
-  const workspaces = new Workspaces(projects, services, (environment) => host.emit({ type: 'environment', environment }), undefined, options.workspaceRoot)
+  // The GitHub accounts gh is signed in to (Settings › Accounts). A project can act as one of them; otherwise as gh's active account.
+  const githubAccounts = new GitHubAccounts(() => runnerFor(availableRuntimes()[0]), () => host.emit({ type: 'github-changed' }))
+  const projectRunnerFor: RunnerFor = (runtime, project) => githubAccounts.forProject(runnerForRuntimeId(runtime), project?.github?.account)
+  const workspaces = new Workspaces(projects, services, (environment) => host.emit({ type: 'environment', environment }), projectRunnerFor, options.workspaceRoot)
   const changed = (projectId: number): void => {
     host.emit({ type: 'project-changed', projectId })
     host.emit({ type: 'projects-changed' })
@@ -124,7 +129,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   }
   const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
   const fetchImpl = options.fetch ?? (fetch as unknown as FetchLike)
-  // Jira and GitLab accounts (Settings › Integrations); a test says who each signs in as.
+  // Jira and GitLab accounts (Settings › Accounts); a test says who each signs in as.
   const connections = new Connections(db, host.secrets ?? PLAIN_CODEC, {
     jira: async (connection, token) => (await new JiraClient(connection, token, fetchImpl).myself()).displayName,
     gitlab: (connection, token) => gitlabWhoAmI(connection, token, fetchImpl),
@@ -134,7 +139,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     }
   })
   const linearSource = new LinearSource(linearAuth, connections, fetchImpl)
-  const ticketSources = [linearSource, new GitHubIssuesSource(runnerForRuntimeId), new JiraSource(connections, fetchImpl), new GitLabIssuesSource(connections, fetchImpl)]
+  const ticketSources = [linearSource, new GitHubIssuesSource(projectRunnerFor), new JiraSource(connections, fetchImpl), new GitLabIssuesSource(connections, fetchImpl)]
   const issueSync = new IssueSync(db, ticketSources, projects, tickets, {
     ticketChanged: (ticket) => ticketChanged(ticket),
     ticketRemoved: (projectId) => {
@@ -162,7 +167,8 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     },
     integrations: sourceIntegrations(issueSync, notify),
     onTicketChanged: ticketChanged,
-    tooling: (project, repoPaths, values) => tooling.forRun(project, repoPaths, values)
+    tooling: (project, repoPaths, values) => tooling.forRun(project, repoPaths, values),
+    runnerFor: projectRunnerFor
   })
   const prs = new PrStore(db)
   const agentsInfo = new AgentsInfo(db, projects)
@@ -230,10 +236,15 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       return checks
     },
 
-    getGitHubAccount: async () => {
-      // The first runtime where gh is signed in: on a Mac or inside WSL that's the only one.
+    listGitHubAccounts: () => githubAccounts.list(),
+    startGitHubSignIn: () => githubAccounts.startSignIn(),
+    finishGitHubSignIn: () => githubAccounts.finishSignIn(),
+    cancelGitHubSignIn: async () => githubAccounts.cancelSignIn(),
+    signOutOfGitHub: (login) => githubAccounts.signOut(login),
+    getGitHubAccount: async (login) => {
+      // gh's active account in the first runtime where it's signed in (on a Mac or inside WSL there's only one), or the account asked for.
       for (const runtime of availableRuntimes()) {
-        const account = await readGitHubAccount(runnerFor(runtime))
+        const account = await readGitHubAccount(githubAccounts.forProject(runnerFor(runtime), login))
         if (!account) continue
         const usedBy = new Map<string, string[]>()
         for (const summary of projects.list()) {

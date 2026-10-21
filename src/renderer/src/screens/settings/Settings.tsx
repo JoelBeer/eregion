@@ -10,7 +10,7 @@ const TABS = [
   { id: 'skills', label: 'Skills' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'rules', label: 'AI rules' },
-  { id: 'integrations', label: 'Integrations' },
+  { id: 'integrations', label: 'Accounts' },
   { id: 'agents', label: 'Agents' },
   { id: 'voice', label: 'Voice' }
 ] as const
