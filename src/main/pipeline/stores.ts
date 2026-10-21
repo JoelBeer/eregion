@@ -99,6 +99,7 @@ interface TicketRow {
   loop: number
   loops: string
   returned_from: string | null
+  ignored_checks: string
   slot: number | null
   branch: string | null
   affected_repos: string
@@ -127,6 +128,7 @@ function toTicket(row: TicketRow): Ticket {
     loop: row.loop,
     loops: JSON.parse(row.loops) as StageLoops,
     returnedFrom: row.returned_from,
+    ignoredChecks: JSON.parse(row.ignored_checks) as string[],
     slot: row.slot,
     branch: row.branch,
     affectedRepos: JSON.parse(row.affected_repos) as string[],
@@ -165,6 +167,7 @@ const COLUMNS: Record<keyof TicketPatch, string> = {
   loop: 'loop',
   loops: 'loops',
   returnedFrom: 'returned_from',
+  ignoredChecks: 'ignored_checks',
   slot: 'slot',
   branch: 'branch',
   affectedRepos: 'affected_repos',
@@ -213,7 +216,7 @@ export class TicketStore {
     for (const [key, value] of Object.entries(patch) as [keyof TicketPatch, unknown][]) {
       if (value === undefined) continue
       sets.push(`${COLUMNS[key]} = ?`)
-      values.push(key === 'linear' || key === 'affectedRepos' || key === 'loops' ? JSON.stringify(value) : value)
+      values.push(key === 'linear' || key === 'affectedRepos' || key === 'loops' || key === 'ignoredChecks' ? JSON.stringify(value) : value)
     }
     if (sets.length > 0) {
       this.db.prepare(`UPDATE tickets SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`).run(...values, id)

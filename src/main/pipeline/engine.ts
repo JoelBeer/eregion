@@ -723,12 +723,23 @@ export class PipelineEngine {
    * You checked a stage and want more work: back to where its failed work would go (or the nearest earlier
    * stage that changes files), with your note. It doesn't use up a loop.
    */
+  /**
+   * Sends the ticket back to the nearest earlier stage that changes files (Build), with your note: from a stage
+   * waiting for your check, or from Pull requests or Watch CI, whose fix run stops. From there it comes back
+   * through the stages, and the PR stage updates the PRs it already opened.
+   */
   sendBack(ticketId: number, note: string): Promise<void> {
     return this.serial(ticketId, async () => {
-      const ticket = this.deps.tickets.get(ticketId)
-      if (ticket.waitingFor !== 'manual-review' && ticket.waitingFor !== 'approval') throw new Error(`${ticket.key} isn't waiting for you to check it`)
+      let ticket = this.deps.tickets.get(ticketId)
+      const shipping = ['pr', 'ci'].includes(this.stage(ticket)?.kind ?? '')
+      if (!shipping && ticket.waitingFor !== 'manual-review' && ticket.waitingFor !== 'approval') throw new Error(`${ticket.key} isn't waiting for you to check it`)
       const target = sendBackTarget(this.stages(ticket), ticket.stage)
       if (!target) throw new Error('There is no earlier stage that changes files')
+      if (shipping && ticket.currentRunId !== null) {
+        const runId = ticket.currentRunId
+        ticket = this.deps.tickets.update(ticketId, { currentRunId: null })
+        await this.deps.agents.stop(runId)
+      }
       const next = this.update(this.endRun(ticket).id, { loop: ticket.loop + 1 }, `You sent it back to ${target.name}`)
       await this.enter(next, target, note.trim() || undefined)
     })

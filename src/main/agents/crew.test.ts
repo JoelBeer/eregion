@@ -45,9 +45,9 @@ describe('crew', () => {
     db.pragma('user_version = 9')
     db.prepare("INSERT INTO crew (id, name, role, adapter, model, seed, parts) VALUES (7, 'Rivet', 'Builder', 'claude-code', 'claude-sonnet-5-5', 3, '{}')").run()
     expect(() => db.prepare("INSERT INTO crew (name, role, adapter, model, seed) VALUES ('Codey', 'Builder', 'codex', 'default', 4)").run()).toThrow()
-    // Projects and tickets don't change in migration 10, so today's stores can fill them in.
+    // Projects don't change after migration 9, so today's store can fill them in; tickets gain columns later.
     const project = new ProjectStore(db).create('Word Magic').id
-    const ticket = new TicketStore(db).create({ projectId: project, key: 'WM-1', title: 'Hints' }).id
+    const ticket = Number(db.prepare("INSERT INTO tickets (project_id, key, title) VALUES (?, 'WM-1', 'Hints')").run(project).lastInsertRowid)
     db.prepare("INSERT INTO runs (ticket_id, stage, crew_id, adapter, model) VALUES (?, 'build', 7, 'claude-code', 'm')").run(ticket)
     db.prepare("INSERT INTO chats (project_id, crew_id, model) VALUES (?, 7, 'm')").run(project)
 

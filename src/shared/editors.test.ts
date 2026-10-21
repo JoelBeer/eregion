@@ -6,8 +6,22 @@ describe('editorCommand', () => {
     expect(editorCommand({ id: 'phpstorm' }, { path: '/home/joel/.eregion/wm/WM-1/word-magic' }, 'linux')).toBe("phpstorm '/home/joel/.eregion/wm/WM-1/word-magic'")
   })
 
-  it("opens the preset's app on macOS, so its launcher needn't be installed", () => {
-    expect(editorCommand({ id: 'vscode' }, { path: '/Users/joel/wm' }, 'darwin')).toBe("open -a 'Visual Studio Code' '/Users/joel/wm'")
+  it("uses the launcher on macOS, else the command inside the app, else open", () => {
+    const vscode = editorCommand({ id: 'vscode' }, { path: '/Users/joel/wm' }, 'darwin', [{ path: '/Users/joel/wm/app/a.php' }])
+    expect(vscode).toContain("if command -v code >/dev/null 2>&1; then code '/Users/joel/wm' '/Users/joel/wm/app/a.php'")
+    expect(vscode).toContain(`[ -x "$d/"'Visual Studio Code.app/Contents/Resources/app/bin/code' ]`)
+    expect(vscode).toContain("else open -a 'Visual Studio Code' '/Users/joel/wm' '/Users/joel/wm/app/a.php'; fi")
+  })
+
+  it('opens a JetBrains IDE on macOS with its own arguments, so the files land in the project', () => {
+    expect(editorCommand({ id: 'phpstorm' }, { path: '/Users/joel/wm' }, 'darwin', [{ path: '/Users/joel/wm/app/a.php' }])).toBe(
+      "if command -v phpstorm >/dev/null 2>&1; then phpstorm '/Users/joel/wm' '/Users/joel/wm/app/a.php'; else open -na 'PhpStorm' --args '/Users/joel/wm' '/Users/joel/wm/app/a.php'; fi"
+    )
+  })
+
+  it('puts files where a custom command says, or at the end', () => {
+    expect(editorCommand({ id: 'custom', command: 'idea {{path}} {{files}} --wait' }, { path: '/w' }, 'linux', [{ path: '/w/a' }, { path: '/w/b c' }])).toBe("idea '/w' '/w/a' '/w/b c' --wait")
+    expect(editorCommand({ id: 'custom', command: 'kate' }, { path: '/w' }, 'linux', [{ path: '/w/a' }])).toBe("kate '/w' '/w/a'")
   })
 
   it('puts the folder where a custom command says, as Linux or Windows sees it', () => {
@@ -31,6 +45,11 @@ describe('inside WSL', () => {
     const command = editorCommand({ id: 'phpstorm' }, { path: '/home/joel/wm', windowsPath: '\\\\wsl.localhost\\Ubuntu\\home\\joel\\wm' }, 'wsl')
     expect(command).toContain(`for f in '/mnt/c/''Program Files/JetBrains/PhpStorm'*'/bin/phpstorm64.exe'`)
     expect(command).toContain(`then "$e" '\\\\wsl.localhost\\Ubuntu\\home\\joel\\wm'; else phpstorm '/home/joel/wm'; fi`)
+  })
+
+  it('gives a Windows IDE the files as Windows sees them too', () => {
+    const command = editorCommand({ id: 'phpstorm' }, { path: '/w', windowsPath: 'W:\\w' }, 'wsl', [{ path: '/w/a.php', windowsPath: 'W:\\w\\a.php' }])
+    expect(command).toContain(`then "$e" 'W:\\w' 'W:\\w\\a.php'; else phpstorm '/w' '/w/a.php'; fi`)
   })
 
   it("gives VS Code's Windows launcher the Linux path, which it opens through WSL", () => {

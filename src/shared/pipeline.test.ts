@@ -7,6 +7,15 @@ function custom(id: string): StageConfig {
 
 const ids = (stages: StageConfig[]): string[] => stages.map((stage) => stage.id)
 
+describe('checkIgnored', () => {
+  it('matches a check by name in any case, from the ticket or the stage', async () => {
+    const { checkIgnored } = await import('./pipeline')
+    expect(checkIgnored('codecov/patch', ['Codecov/Patch'])).toBe(true)
+    expect(checkIgnored('coverage', [], ['coverage'])).toBe(true)
+    expect(checkIgnored('tests', ['coverage'], ['lint'])).toBe(false)
+  })
+})
+
 describe('defaultPipeline', () => {
   it('is valid', () => {
     expect(validatePipeline(defaultPipeline())).toEqual([])

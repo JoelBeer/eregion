@@ -60,6 +60,8 @@ export interface Ticket {
   loops: StageLoops
   /** The stage whose failed work sent the ticket back, until that stage passes. */
   returnedFrom: string | null
+  /** Checks Watch CI treats as passing for this ticket, by name: it neither fixes them nor waits for them. */
+  ignoredChecks: string[]
   slot: number | null
   branch: string | null
   affectedRepos: string[]

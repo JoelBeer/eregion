@@ -137,7 +137,7 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     await backend.shutdown()
   }, 120_000)
 
-  it('stops with CI needs you when the fixer says the cause is not in the ticket', async () => {
+  it('stops with CI needs you when the fixer says the cause is not in the ticket, then carries on as you say', async () => {
     const script = join(await mkdtemp(join(tmpdir(), 'eregion-script-')), 'script.json')
     await writeFile(
       script,
@@ -148,8 +148,14 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
         { when: 'Stage: PR', write: { '{outputs}/pr-app.md': pr }, reply: 'Done.' },
         {
           when: 'Stage: Watch CI',
+          once: true,
           write: { '{outputs}/ci-fix.json': JSON.stringify({ pr: 'app #1', check: 'tests', attempt: 1, result: 'needs-you', cause: 'The CI database secret is missing.', files: [], note: '' }) },
           reply: 'Not mine to fix.'
+        },
+        {
+          when: 'skip the database tests',
+          write: { '{cwd}/app/hint.txt': 'H\n', '{outputs}/ci-fix.json': JSON.stringify({ pr: 'app #1', check: 'tests', attempt: 2, result: 'fixed', cause: 'The database tests need a secret CI lacks.', files: ['app/hint.txt'], note: 'Skipped them in CI as asked.' }) },
+          reply: 'Skipped them.'
         }
       ])
     )
@@ -179,6 +185,26 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     await backend.ci.check(ticket.id)
     const stopped = await until(backend, ticket.id, (item) => item.stopReason === 'ci_needs_you')
     expect(stopped.stopDetail).toBe('tests on app #1: The CI database secret is missing.')
+    const [watched] = await api.getTicketPrs(ticket.id)
+
+    // Check now carries on watching, without trying the same commit again.
+    await api.checkCiNow(ticket.id)
+    expect(backend.tickets.get(ticket.id)).toMatchObject({ stage: 'ci', status: 'idle', stopReason: null })
+    expect(backend.prs.attempts(watched.id)).toHaveLength(1)
+
+    // An ignored check leaves nothing to fix; counted again, you can ask for a fix with a note.
+    await api.ignoreCheck(ticket.id, 'tests', true)
+    expect(backend.tickets.get(ticket.id).ignoredChecks).toEqual(['tests'])
+    await expect(api.fixCiNow(ticket.id, 'skip the database tests')).rejects.toThrow('No check is failing right now')
+    await api.ignoreCheck(ticket.id, 'tests', false)
+    await api.fixCiNow(ticket.id, 'skip the database tests')
+    const fixed = await until(backend, ticket.id, (item) => item.currentRunId === null && backend.prs.attempts(watched.id).some((attempt) => attempt.result === 'fixed'))
+    expect(git(repo.origin, 'log', '-1', '--format=%s', `refs/heads/${fixed.branch}`)).toBe('WM-1: fix tests (CI attempt 2)')
+
+    // Something in the PR you don't want: back to Build with a note, from Watch CI.
+    await api.sendBack(ticket.id, 'Drop the hint file, we only need the guess counter')
+    await until(backend, ticket.id, (item) => item.stage === 'build')
+    expect(backend.tickets.logEntries(ticket.id).map((entry) => entry.message)).toEqual(expect.arrayContaining(['Watching CI again', 'You sent it back to Build']))
     await backend.shutdown()
   }, 120_000)
 })

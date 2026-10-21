@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import type { CheckBucket, PullRequest } from '@shared/integrations'
-import { DEFAULT_CI, type StageConfig } from '@shared/pipeline'
+import { checkIgnored, DEFAULT_CI, type StageConfig } from '@shared/pipeline'
 import type { RunSummary } from '@shared/runs'
 import type { Ticket } from '@shared/tickets'
 import { Markdown } from '../../components/Markdown'
@@ -78,8 +78,63 @@ function Description({ ticket, repo, markdown }: { ticket: Ticket; repo: string;
   )
 }
 
+/**
+ * What should change, said to the stage that changes files: send the ticket back there with a note, and from
+ * Watch CI, ask for a fix now with the note instead.
+ */
+function ChangeRequest({ ticket, sendBackTo, canFix }: { ticket: Ticket; sendBackTo: StageConfig | null; canFix?: boolean }): ReactElement | null {
+  const [note, setNote] = useState('')
+  const sendBack = useAction(async () => {
+    await window.eregion.sendBack(ticket.id, note)
+    setNote('')
+  })
+  const fix = useAction(async () => {
+    await window.eregion.fixCiNow(ticket.id, note)
+    setNote('')
+  })
+  if (!sendBackTo && !canFix) return null
+  const busy = ticket.currentRunId !== null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--divider-100)', paddingTop: 10 }}>
+      <label className="label" htmlFor={`change-${ticket.id}`}>
+        What should change?
+      </label>
+      <textarea id={`change-${ticket.id}`} className="textarea" rows={3} placeholder={canFix ? 'Ignore the coverage gate and just make the tests pass' : 'Drop the export button, we only need the PDF'} value={note} onChange={(event) => setNote(event.target.value)} />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {canFix && (
+          <button type="button" className="er-btn er-btn-primary" onClick={() => void fix.run()} disabled={!note.trim() || fix.pending || busy} title={busy ? 'A fix is already running' : undefined}>
+            Fix it with this note
+          </button>
+        )}
+        {sendBackTo && (
+          <button type="button" className="er-btn" onClick={() => void sendBack.run()} disabled={!note.trim() || sendBack.pending}>
+            Send back to {sendBackTo.name}
+          </button>
+        )}
+      </div>
+      <span className="muted" style={{ fontSize: 13 }}>
+        {canFix ? 'Fixing starts an attempt on the failing check now, with your note, even on a commit already tried. ' : ''}
+        {sendBackTo ? `Sending it back gives ${sendBackTo.name} your note as a message from you; then it goes through the stages again, the pull requests are updated rather than opened again, and Watch CI picks them up.` : ''}
+      </span>
+      {(sendBack.error || fix.error) && <span className="error-text">{sendBack.error ?? fix.error}</span>}
+    </div>
+  )
+}
+
 /** The PR stage: the PRs Eregion opened, their descriptions, and Mark ready for review. */
-export function PrPanel({ ticket, prs, descriptions, nextStage }: { ticket: Ticket; prs: PullRequest[]; descriptions: Record<string, string>; nextStage: StageConfig | null }): ReactElement | null {
+export function PrPanel({
+  ticket,
+  prs,
+  descriptions,
+  nextStage,
+  sendBackTo
+}: {
+  ticket: Ticket
+  prs: PullRequest[]
+  descriptions: Record<string, string>
+  nextStage: StageConfig | null
+  sendBackTo: StageConfig | null
+}): ReactElement | null {
   const ready = useAction(() => window.eregion.markPrsReady(ticket.id))
   if (prs.length === 0 && Object.keys(descriptions).length === 0) return null
   const drafts = prs.filter((pr) => pr.state === 'open' && pr.draft)
@@ -97,7 +152,7 @@ export function PrPanel({ ticket, prs, descriptions, nextStage }: { ticket: Tick
       {ticket.waitingFor === 'ready-for-review' && (
         <>
           <span className="muted">Look through the changes before you mark them ready. Marking them ready ends this stage{nextStage ? ` and hands the ticket to ${nextStage.name}` : ''}.</span>
-          <OpenInEditor ticket={ticket} repos={ticket.affectedRepos} />
+          <OpenInEditor ticketId={ticket.id} repos={ticket.affectedRepos} changes />
         </>
       )}
       {ready.error && <span className="error-text">{ready.error}</span>}
@@ -107,6 +162,7 @@ export function PrPanel({ ticket, prs, descriptions, nextStage }: { ticket: Tick
       {Object.entries(descriptions).map(([repo, markdown]) => (
         <Description key={repo} ticket={ticket} repo={repo} markdown={markdown} />
       ))}
+      {ticket.waitingFor === 'ready-for-review' && <ChangeRequest ticket={ticket} sendBackTo={sendBackTo} />}
     </section>
   )
 }
@@ -119,9 +175,25 @@ const CHECK_MARK: Record<CheckBucket, { mark: string; color: string; label: stri
   cancel: { mark: '–', color: 'var(--ink-600)', label: 'cancelled' }
 }
 
-/** A PR's last-seen checks, with how many passed and which checks they are. */
-export function ChecksList({ pr, requiredOnly }: { pr: PullRequest; requiredOnly: boolean }): ReactElement {
-  const passed = pr.checks.filter((check) => check.bucket === 'pass' || check.bucket === 'skipping').length
+/**
+ * A PR's last-seen checks, with how many passed and which checks they are. With `ignored`, checks Watch CI
+ * ignores say so, and `onIgnore` lets a failing check be ignored for the ticket (or counted again).
+ */
+export function ChecksList({
+  pr,
+  requiredOnly,
+  ignored,
+  onIgnore
+}: {
+  pr: PullRequest
+  requiredOnly: boolean
+  ignored?: { ticket: string[]; stage: string[] }
+  onIgnore?: (check: string, ignore: boolean) => void
+}): ReactElement {
+  const byTicket = (name: string): boolean => Boolean(ignored && checkIgnored(name, ignored.ticket))
+  const byStage = (name: string): boolean => Boolean(ignored && checkIgnored(name, [], ignored.stage))
+  const counted = pr.checks.filter((check) => !byTicket(check.name) && !byStage(check.name))
+  const passed = counted.filter((check) => check.bucket === 'pass' || check.bucket === 'skipping').length
   const scope = pr.checksScope === 'all' && requiredOnly ? `all checks: ${pr.repo} has no required ones` : pr.checksScope === 'required' ? 'required checks' : 'all checks'
   if (pr.checks.length === 0) return <span className="muted">{pr.checkedAt ? 'No checks reported yet.' : 'Not checked yet.'}</span>
   return (
@@ -132,7 +204,19 @@ export function ChecksList({ pr, requiredOnly }: { pr: PullRequest; requiredOnly
             <span aria-label={CHECK_MARK[item.bucket].label} style={{ color: CHECK_MARK[item.bucket].color, width: 14, textAlign: 'center' }}>
               {CHECK_MARK[item.bucket].mark}
             </span>
-            <span>{item.workflow ? `${item.workflow} / ${item.name}` : item.name}</span>
+            <span style={{ opacity: byTicket(item.name) || byStage(item.name) ? 0.6 : 1 }}>{item.workflow ? `${item.workflow} / ${item.name}` : item.name}</span>
+            {byStage(item.name) && <Chip tone="neutral">ignored on every ticket</Chip>}
+            {byTicket(item.name) && <Chip tone="neutral">ignored</Chip>}
+            {onIgnore && byTicket(item.name) && (
+              <button type="button" className="er-btn er-btn-sm er-btn-ghost" style={{ padding: '0 6px', minHeight: 0 }} onClick={() => onIgnore(item.name, false)}>
+                Count it again
+              </button>
+            )}
+            {onIgnore && item.bucket === 'fail' && !byTicket(item.name) && !byStage(item.name) && (
+              <button type="button" className="er-btn er-btn-sm er-btn-ghost" style={{ padding: '0 6px', minHeight: 0 }} onClick={() => onIgnore(item.name, true)} title="Watch CI stops fixing and waiting for this check on this ticket">
+                Ignore
+              </button>
+            )}
             {item.link && (
               <button type="button" className="er-btn er-btn-sm er-btn-ghost" style={{ padding: '0 6px', minHeight: 0 }} onClick={() => openLink(item.link)}>
                 Details
@@ -142,17 +226,20 @@ export function ChecksList({ pr, requiredOnly }: { pr: PullRequest; requiredOnly
         ))}
       </ul>
       <span className="muted" style={{ fontSize: 13 }}>
-        {passed} of {pr.checks.length} passed · {scope}
+        {passed} of {counted.length} passed · {scope}
+        {counted.length < pr.checks.length ? ` · ${pr.checks.length - counted.length} ignored` : ''}
       </span>
     </div>
   )
 }
 
 /** Watch CI: each PR's checks, autofix, attempts used and merge state. */
-export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullRequest[]; stage: StageConfig }): ReactElement {
+export function CiPanel({ ticket, prs, stage, sendBackTo }: { ticket: Ticket; prs: PullRequest[]; stage: StageConfig; sendBackTo: StageConfig | null }): ReactElement {
   const settings = { ...DEFAULT_CI, ...stage.ci }
   const autofix = useAction((on: boolean) => window.eregion.setAutofix(ticket.id, on))
   const check = useAction(() => window.eregion.checkCiNow(ticket.id))
+  const ignore = useAction((name: string, on: boolean) => window.eregion.ignoreCheck(ticket.id, name, on))
+  const stopped = ticket.stopReason === 'ci_needs_you'
   const on = prs.some((pr) => pr.autofix)
   const paused = prs.find((pr) => pr.autofixPausedReason)?.autofixPausedReason
   const lastChecked = prs.map((pr) => pr.checkedAt).filter(Boolean).sort().at(-1) ?? null
@@ -161,18 +248,20 @@ export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullReque
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 17 }}>Watch CI</h2>
         <span className="muted" style={{ fontSize: 13 }}>
-          Checking every {settings.intervalSec} seconds
+          {stopped ? 'Stopped watching: CI needs you' : `Checking every ${settings.intervalSec} seconds`}
           {lastChecked ? ` · last checked ${new Date(lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ' · not checked yet'}
         </span>
         <div style={{ flex: 1 }} />
         <button type="button" className="er-btn er-btn-sm" disabled={check.pending || ticket.currentRunId !== null} onClick={() => void check.run()}>
-          {check.pending ? 'Checking…' : 'Check now'}
+          {check.pending ? 'Checking…' : stopped ? 'Watch CI again' : 'Check now'}
         </button>
       </div>
       {prs.map((pr) => (
         <div key={pr.id} style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--divider-100)', paddingTop: 10 }}>
           <PrRow pr={pr} />
-          {pr.state === 'open' && <ChecksList pr={pr} requiredOnly={!settings.includeOptionalChecks} />}
+          {pr.state === 'open' && (
+            <ChecksList pr={pr} requiredOnly={!settings.includeOptionalChecks} ignored={{ ticket: ticket.ignoredChecks, stage: settings.ignoreChecks ?? [] }} onIgnore={(name, on) => void ignore.run(name, on)} />
+          )}
           {pr.state === 'open' && (
             <span className="muted" style={{ fontSize: 13 }}>
               Fix attempts used: {pr.attempts} of {settings.maxAttempts}
@@ -180,6 +269,11 @@ export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullReque
           )}
         </div>
       ))}
+      <ChangeRequest
+        ticket={ticket}
+        sendBackTo={sendBackTo}
+        canFix={prs.some((pr) => pr.state === 'open' && pr.checks.some((item) => item.bucket === 'fail' && !checkIgnored(item.name, ticket.ignoredChecks, settings.ignoreChecks ?? [])))}
+      />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--divider-100)', paddingTop: 10 }}>
         <Switch label="Fix failing checks automatically" checked={on && !paused} onChange={(value) => void autofix.run(value)} />
         {paused && <span className="muted">Paused: {paused}. Turn it back on to let Eregion fix checks again.</span>}
@@ -187,7 +281,7 @@ export function CiPanel({ ticket, prs, stage }: { ticket: Ticket; prs: PullReque
           A failed check is re-run once first, in case it's flaky. Eregion never force-pushes. When every PR merges, the environment is torn down and the ticket is done.
         </span>
       </div>
-      {(autofix.error || check.error) && <span className="error-text">{autofix.error ?? check.error}</span>}
+      {(autofix.error || check.error || ignore.error) && <span className="error-text">{autofix.error ?? check.error ?? ignore.error}</span>}
     </section>
   )
 }

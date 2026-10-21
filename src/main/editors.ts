@@ -1,4 +1,4 @@
-import { DEFAULT_EDITOR, EDITOR_PRESETS, editorCheck, editorCommand, editorName, type EditorChoice, type EditorInfo, type EditorPlatform } from '@shared/editors'
+import { DEFAULT_EDITOR, EDITOR_PRESETS, editorCheck, editorCommand, editorName, MAX_EDITOR_FILES, type EditorChoice, type EditorInfo, type EditorPlatform } from '@shared/editors'
 import { getSetting, setSetting, type Db } from './db'
 import { insideWsl } from './openUrl'
 import type { Runner } from './runner/types'
@@ -65,14 +65,23 @@ export class Editors {
     )
   }
 
-  /** Opens a folder (a ticket's worktree) in the chosen editor. */
-  async open(runner: Runner, path: string, settleMs = 3_000): Promise<void> {
+  /**
+   * Opens a folder (a ticket's worktree) in the chosen editor, with files in it (paths relative to the folder),
+   * at most MAX_EDITOR_FILES of them. Returns how many files it opened.
+   */
+  async open(runner: Runner, path: string, files: string[] = [], settleMs = 3_000): Promise<number> {
     const choice = this.choice()
-    const commandLine = editorCommand(choice, { path, windowsPath: await windowsPath(runner, path) }, platformOf(runner))
+    const folderWindows = await windowsPath(runner, path)
+    const opened = files.slice(0, MAX_EDITOR_FILES).map((file) => ({
+      path: runner.join(path, file),
+      windowsPath: folderWindows ? `${folderWindows.replace(/\\$/, '')}\\${file.replace(/\//g, '\\')}` : undefined
+    }))
+    const commandLine = editorCommand(choice, { path, windowsPath: folderWindows }, platformOf(runner), opened)
     const code = await launch(runner, commandLine, settleMs)
     if (code !== 0) {
       const why = code === 127 ? "it isn't installed, or its command isn't on the PATH" : `it isn't installed, or stopped straight away (exit code ${code})`
       throw new Error(`Couldn't open ${editorName(choice)}: ${why}. Choose your editor in Settings › Editor.`)
     }
+    return opened.length
   }
 }

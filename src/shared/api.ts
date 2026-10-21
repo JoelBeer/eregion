@@ -7,7 +7,7 @@ import type { PipelineVersionSummary } from './pipelineDiff'
 import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
 import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
-import type { EditorChoice, EditorInfo } from './editors'
+import type { EditorChoice, EditorInfo, OpenedInEditor } from './editors'
 import type { CostListing, CostPeriod, CostReport, UsageSummary } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
@@ -135,8 +135,11 @@ export interface EregionApi {
   discardTicket(ticketId: number): Promise<void>
   startServices(ticketId: number): Promise<void>
   stopServices(ticketId: number): Promise<void>
-  /** Opens a repo's worktree for the ticket in the editor chosen in Settings › Editor. */
-  openInEditor(ticketId: number, repoName: string): Promise<void>
+  /**
+   * Opens a repo's worktree for the ticket in the editor chosen in Settings › Editor, with files in it: the
+   * ones given (paths in the repo), or with `changed` every file the ticket added or changed there.
+   */
+  openInEditor(ticketId: number, repoName: string, options?: { files?: string[]; changed?: boolean }): Promise<OpenedInEditor>
   getEditor(): Promise<EditorChoice>
   setEditor(choice: EditorChoice): Promise<EditorChoice>
   /** The editors Eregion knows, and which are on this machine. */
@@ -240,7 +243,14 @@ export interface EregionApi {
   markPrsReady(ticketId: number): Promise<void>
   updatePrDescription(ticketId: number, repo: string, markdown: string): Promise<void>
   setAutofix(ticketId: number, on: boolean): Promise<void>
+  /** Checks CI now; on a ticket that stopped with CI needs you, carries on watching first. */
   checkCiNow(ticketId: number): Promise<void>
+  /** Carries on watching CI after it stopped with CI needs you. */
+  watchCiAgain(ticketId: number): Promise<void>
+  /** Ignores a check for the ticket, or counts it again. */
+  ignoreCheck(ticketId: number, check: string, ignore: boolean): Promise<void>
+  /** Starts a CI fix attempt now on the first failing check, with your note as instructions. */
+  fixCiNow(ticketId: number, note: string): Promise<void>
 }
 
 /** The method names, so the preload script can expose each one explicitly. */
@@ -367,7 +377,10 @@ export const API_METHODS = [
   'markPrsReady',
   'updatePrDescription',
   'setAutofix',
-  'checkCiNow'
+  'checkCiNow',
+  'watchCiAgain',
+  'ignoreCheck',
+  'fixCiNow'
 ] as const satisfies readonly (keyof EregionApi)[]
 
 /** Pushed from the main process when something changes that screens should refresh for. */

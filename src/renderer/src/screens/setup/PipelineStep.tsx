@@ -123,6 +123,7 @@ function CrewPicker({ stage, crew, onChange }: { stage: StageConfig; crew: CrewM
 }
 
 function CiEditor({ ci, onChange }: { ci: CiSettings; onChange: (ci: CiSettings) => void }): ReactElement {
+  const [ignores, setIgnores] = useState((ci.ignoreChecks ?? []).join(', '))
   const number = (key: 'intervalSec' | 'maxAttempts' | 'concurrentFixes', min: number, label: string): ReactElement => (
     <input className="input" type="number" min={min} aria-label={label} style={{ width: 90 }} value={ci[key]} onChange={(event) => onChange({ ...ci, [key]: Math.max(min, Number(event.target.value) || min) })} />
   )
@@ -135,7 +136,30 @@ function CiEditor({ ci, onChange }: { ci: CiSettings; onChange: (ci: CiSettings)
         {number('maxAttempts', 1, 'Fix attempts')}
         <span className="muted">Fixes running at once</span>
         {number('concurrentFixes', 1, 'Concurrent fixes')}
+        <label className="muted" htmlFor="ci-ignore">
+          Checks to ignore
+        </label>
+        <input
+          id="ci-ignore"
+          className="input"
+          placeholder="None, e.g. codecov/patch"
+          style={{ width: 320 }}
+          value={ignores}
+          onChange={(event) => setIgnores(event.target.value)}
+          onBlur={() =>
+            onChange({
+              ...ci,
+              ignoreChecks: ignores
+                .split(',')
+                .map((name) => name.trim())
+                .filter(Boolean)
+            })
+          }
+        />
       </div>
+      <span className="muted" style={{ fontSize: 13 }}>
+        Ignored checks, by name and comma-separated, count as passing on every ticket: Watch CI neither fixes them nor waits for them. A single ticket can ignore a check from its Watch CI panel too.
+      </span>
       <Switch label="Fix failing checks automatically on new tickets" checked={ci.autofixForNewTickets} onChange={(autofixForNewTickets) => onChange({ ...ci, autofixForNewTickets })} />
       <Switch label="Re-run a failed check once before fixing it (catches flaky tests)" checked={ci.rerunFirst} onChange={(rerunFirst) => onChange({ ...ci, rerunFirst })} />
       <Switch label="Pause fixing when someone else pushes to the branch" checked={ci.pauseOnForeignPush} onChange={(pauseOnForeignPush) => onChange({ ...ci, pauseOnForeignPush })} />

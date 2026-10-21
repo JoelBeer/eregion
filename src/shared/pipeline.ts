@@ -31,6 +31,8 @@ export interface CiSettings {
   pauseOnForeignPush: boolean
   rerunFirst: boolean
   onAttemptsExhausted: { flagAndNotify: boolean; commentOnPr: boolean }
+  /** Checks every ticket's Watch CI treats as passing, by name (any case): a coverage gate, say. */
+  ignoreChecks: string[]
 }
 
 export interface StageConfig {
@@ -70,7 +72,14 @@ export const DEFAULT_CI: CiSettings = {
   concurrentFixes: 2,
   pauseOnForeignPush: true,
   rerunFirst: true,
-  onAttemptsExhausted: { flagAndNotify: true, commentOnPr: true }
+  onAttemptsExhausted: { flagAndNotify: true, commentOnPr: true },
+  ignoreChecks: []
+}
+
+/** Whether Watch CI ignores a check: the stage ignores it for every ticket, or this ticket does. */
+export function checkIgnored(name: string, ticketIgnores: string[], stageIgnores: string[] = []): boolean {
+  const wanted = name.trim().toLowerCase()
+  return [...ticketIgnores, ...stageIgnores].some((item) => item.trim().toLowerCase() === wanted)
 }
 
 export function defaultPipeline(): StageConfig[] {

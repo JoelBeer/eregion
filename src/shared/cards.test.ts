@@ -21,6 +21,7 @@ const base: Ticket = {
   loop: 1,
   loops: {},
   returnedFrom: null,
+  ignoredChecks: [],
   slot: 1,
   branch: 'wm-1-hints',
   affectedRepos: ['app'],

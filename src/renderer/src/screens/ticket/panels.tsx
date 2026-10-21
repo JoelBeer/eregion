@@ -1,5 +1,5 @@
 import { useState, type ReactElement } from 'react'
-import { editorName } from '@shared/editors'
+import { editorName, type OpenedInEditor } from '@shared/editors'
 import type { Environment } from '@shared/environment'
 import type { StageConfig } from '@shared/pipeline'
 import type { CrewMember } from '@shared/runs'
@@ -86,23 +86,61 @@ export function PlanPanel({ ticket, outputs, builder, nextStage }: { ticket: Tic
 
 /** After a stage's verdict passes (the AI review, say): check it yourself, then approve or send it back. */
 /** The editor chosen in Settings › Editor, by name. */
-function useEditorName(): string {
+export function useEditorName(): string {
   const choice = useQuery(() => window.eregion.getEditor(), []).data
   return choice ? editorName(choice) : 'your editor'
 }
 
-/** View code in the chosen editor: one button per repo the ticket changes, each opening that repo's worktree. */
-export function OpenInEditor({ ticket, repos }: { ticket: Ticket; repos: string[] }): ReactElement | null {
+/** Opens one file of a repo's worktree in the chosen editor, with the repo around it. */
+export function OpenFileButton({ ticketId, repo, file }: { ticketId: number; repo: string; file: string }): ReactElement {
   const name = useEditorName()
-  const open = useAction((repo: string) => window.eregion.openInEditor(ticket.id, repo))
+  const open = useAction(() => window.eregion.openInEditor(ticketId, repo, { files: [file] }))
+  return (
+    <>
+      <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void open.run()} disabled={open.pending} title={`Opens ${file} in ${name}`}>
+        Open
+      </button>
+      {open.error && <span className="error-text">{open.error}</span>}
+    </>
+  )
+}
+
+/** What opening the changed files did, in words. */
+function openedNote(result: OpenedInEditor): string {
+  if (result.total === 0) return 'No changed files yet, so it opened the repo.'
+  if (result.opened < result.total) return `Opened the first ${result.opened} of ${result.total} changed files.`
+  return `Opened ${result.total} changed file${result.total === 1 ? '' : 's'}.`
+}
+
+/**
+ * View code in the chosen editor: one button per repo the ticket changes, each opening that repo's worktree,
+ * and with `changes` the files the ticket added or changed there too.
+ */
+export function OpenInEditor({ ticketId, repos, changes = false }: { ticketId: number; repos: string[]; changes?: boolean }): ReactElement | null {
+  const name = useEditorName()
+  const [note, setNote] = useState<string | null>(null)
+  const open = useAction(async (repo: string) => {
+    setNote(null)
+    const result = await window.eregion.openInEditor(ticketId, repo, { changed: changes })
+    if (changes) setNote(openedNote(result))
+  })
   if (repos.length === 0) return null
+  const label = (repo: string): string => {
+    const what = changes ? (repos.length === 1 ? 'changes' : `${repo} changes`) : repos.length === 1 ? 'code' : repo
+    return `View ${what} in ${name}`
+  }
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
       {repos.map((repo) => (
-        <button key={repo} type="button" className="er-btn er-btn-sm" onClick={() => void open.run(repo)} disabled={open.pending} title={`Opens ${repo}'s worktree for ${ticket.key}`}>
-          {repos.length === 1 ? `View code in ${name}` : `View ${repo} in ${name}`}
+        <button key={repo} type="button" className="er-btn er-btn-sm" onClick={() => void open.run(repo)} disabled={open.pending} title={changes ? `Opens ${repo}'s worktree with the files this ticket added or changed` : `Opens ${repo}'s worktree`}>
+          {label(repo)}
         </button>
       ))}
+      {note && (
+        <span className="muted" style={{ fontSize: 13 }}>
+          {note}
+        </span>
+      )}
       <a href={href({ name: 'settings', tab: 'editor' })} className="muted" style={{ fontSize: 13 }}>
         Change editor
       </a>
@@ -138,7 +176,7 @@ export function ReviewDecision({
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start' }}>
       <section aria-label="Check it yourself" className="panel" style={{ flex: '3 1 480px', minWidth: 0 }}>
         <h2 style={{ fontSize: 17 }}>Check it yourself</h2>
-        <OpenInEditor ticket={ticket} repos={ticket.affectedRepos} />
+        <OpenInEditor ticketId={ticket.id} repos={ticket.affectedRepos} changes />
         <span className="label">Done when, from the plan</span>
         {doneWhen.map((item, index) => (
           <label key={index} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 14 }}>
@@ -172,6 +210,7 @@ export function ReviewDecision({
                   </span>{' '}
                   · {issue.problem}
                 </span>
+                {issue.file && issue.repo && <OpenFileButton ticketId={ticket.id} repo={issue.repo} file={issue.file} />}
               </div>
             ))}
           </>
@@ -219,8 +258,9 @@ export function StopBanner({ ticket, crew }: { ticket: Ticket; crew: CrewMember 
   const retry = useAction(() => window.eregion.retryTicket(ticket.id))
   const oneMore = useAction(() => window.eregion.allowOneMoreLoop(ticket.id))
   const release = useAction(() => window.eregion.releaseSlot(ticket.id))
+  const watchAgain = useAction(() => window.eregion.watchCiAgain(ticket.id))
   if (!ticket.stopReason) return null
-  const error = backToPlan.error ?? retry.error ?? oneMore.error ?? release.error
+  const error = backToPlan.error ?? retry.error ?? oneMore.error ?? release.error ?? watchAgain.error
   return (
     <section aria-label="Why it stopped" className="panel" style={{ border: '2px solid var(--amber-400, #F2C46D)' }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -247,6 +287,16 @@ export function StopBanner({ ticket, crew }: { ticket: Ticket; crew: CrewMember 
           <button type="button" className="er-btn" onClick={() => void retry.run()} disabled={retry.pending}>
             Start again
           </button>
+        )}
+        {ticket.stopReason === 'ci_needs_you' && (
+          <>
+            <button type="button" className="er-btn er-btn-primary" onClick={() => void watchAgain.run()} disabled={watchAgain.pending}>
+              Watch CI again
+            </button>
+            <span className="muted" style={{ fontSize: 13, flexBasis: '100%' }}>
+              Eregion carries on watching. It won't try to fix the same commit again: push a fix, or ignore a check below that shouldn't count, and it moves on.
+            </span>
+          </>
         )}
         {ticket.stopReason === 'setup_failed' && (
           <>
@@ -318,7 +368,7 @@ export function EnvironmentPanel({ ticket, environment, repoNames }: { ticket: T
         ))}
       {environment?.error && <span className="error-text">{environment.error}</span>}
       {environment ? <ServiceRows environment={environment} /> :<span className="muted">Services aren't running since Eregion started. Start them to use the app.</span>}
-      <OpenInEditor ticket={ticket} repos={repoNames} />
+      <OpenInEditor ticketId={ticket.id} repos={repoNames} />
       {(start.error || stop.error || update.error) && <span className="error-text">{start.error ?? stop.error ?? update.error}</span>}
     </section>
   )

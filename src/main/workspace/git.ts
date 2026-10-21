@@ -130,6 +130,27 @@ export async function updateFromBase(runner: Runner, path: string, ref: string, 
   return `merged ${commits} from ${ref}`
 }
 
+/**
+ * The files a ticket has added or changed in a worktree, to open in an editor: on its branch since the base,
+ * and not yet committed (new files too). Deleted files are left out, since there's nothing to open.
+ */
+export async function filesToReview(runner: Runner, path: string, base: string): Promise<string[]> {
+  const committed = await gitIn(runner, path, ['diff', '--name-only', '--diff-filter=d', `${base}...HEAD`], 60_000)
+  const status = await runner.exec(['git', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd: path, timeoutMs: 60_000 })
+  if (status.code !== 0) throw new GitError(`git status failed: ${(status.stderr || status.stdout).trim()}`)
+  const uncommitted: string[] = []
+  const entries = status.stdout.split('\0')
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]
+    if (entry.length < 4) continue
+    const code = entry.slice(0, 2)
+    // A rename or copy is followed by the path it came from.
+    if (code.includes('R') || code.includes('C')) index++
+    if (!code.includes('D')) uncommitted.push(entry.slice(3))
+  }
+  return [...new Set([...committed.split('\n'), ...uncommitted].map((file) => file.trim()).filter(Boolean))]
+}
+
 /** The diff of the ticket branch against its base, for the Diff tab. */
 export async function branchDiff(runner: Runner, path: string, base: string): Promise<string> {
   return gitIn(runner, path, ['diff', '--no-color', '--find-renames', `${base}...HEAD`], 60_000)

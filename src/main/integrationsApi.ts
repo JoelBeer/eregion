@@ -34,6 +34,9 @@ export type IntegrationsApi = Pick<
   | 'updatePrDescription'
   | 'setAutofix'
   | 'checkCiNow'
+  | 'watchCiAgain'
+  | 'ignoreCheck'
+  | 'fixCiNow'
   | 'createTicket'
 >
 
@@ -142,7 +145,14 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
       deps.ci.setAutofix(ticketId, on)
       deps.ticketChanged(tickets.get(ticketId))
     },
-    checkCiNow: (ticketId) => deps.ci.check(ticketId),
+    // Check now on a ticket that stopped with CI needs you means carry on watching.
+    checkCiNow: (ticketId) => deps.ci.watchAgain(ticketId),
+    watchCiAgain: (ticketId) => deps.ci.watchAgain(ticketId),
+    fixCiNow: (ticketId, note) => deps.ci.fixNow(ticketId, note),
+    ignoreCheck: async (ticketId, check, ignore) => {
+      deps.ci.ignoreCheck(ticketId, check, ignore)
+      deps.ticketChanged(tickets.get(ticketId))
+    },
 
     /** In a project linked to a tracker, a new ticket is a new issue there, assigned to you. */
     createTicket: async (projectId, title, description) => (await sync.create(projects.get(projectId), title, description)) ?? deps.createLocalTicket(projectId, title, description)

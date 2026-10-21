@@ -254,5 +254,9 @@ export const migrations: string[] = [
   // Ticket sources: where a project's tickets come from (Linear, GitHub Issues, Jira, GitLab, or nowhere).
   `
   ALTER TABLE projects ADD COLUMN source TEXT NOT NULL DEFAULT '{}';
+  `,
+  // Checks Watch CI ignores for a ticket (a coverage gate you've decided not to fix, say).
+  `
+  ALTER TABLE tickets ADD COLUMN ignored_checks TEXT NOT NULL DEFAULT '[]';
   `
 ]

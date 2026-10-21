@@ -1,7 +1,7 @@
 import type { PrCheck } from '@shared/integrations'
 import type { Repo } from '@shared/model'
 import { parseCiFix } from '@shared/outputs'
-import { DEFAULT_CI, type CiSettings, type StageConfig } from '@shared/pipeline'
+import { checkIgnored, DEFAULT_CI, type CiSettings, type StageConfig } from '@shared/pipeline'
 import type { Ticket } from '@shared/tickets'
 import type { GitHub } from '../integrations/github'
 import { commitAll, gitIn, pushBranch } from '../workspace/git'
@@ -123,14 +123,16 @@ export class CiWatcher {
           return
         }
         const open = all.filter((pr) => pr.state === 'open')
-        const green = open.every((pr) => pr.checks.length > 0 && pr.checks.every((check) => check.bucket === 'pass' || check.bucket === 'skipping'))
+        const ignores = this.deps.tickets.get(ticketId).ignoredChecks
+        const counted = (pr: StoredPr): PrCheck[] => pr.checks.filter((check) => !checkIgnored(check.name, ignores, settings.ignoreChecks))
+        const green = open.every((pr) => pr.checks.length > 0 && counted(pr).every((check) => check.bucket === 'pass' || check.bucket === 'skipping'))
         if (stage.doneWhen === 'prs-green' && green) {
           this.deps.tickets.log(ticketId, 'github', 'Every check is green')
           await this.engine.advance(this.deps.tickets.get(ticketId))
           return
         }
         for (const pr of open) {
-          const failed = pr.checks.filter((check) => check.bucket === 'fail')
+          const failed = counted(pr).filter((check) => check.bucket === 'fail')
           if (failed.length === 0) continue
           await this.handleFailure(this.deps.tickets.get(ticketId), stage, settings, pr, failed)
           return
@@ -200,7 +202,27 @@ export class CiWatcher {
     else this.prs.update(pr.id, { autofixPausedReason: 'Out of fix attempts' })
   }
 
-  private async fix(ticket: Ticket, stage: StageConfig, settings: CiSettings, pr: StoredPr, repo: Repo, check: PrCheck, attempt: number): Promise<void> {
+  /**
+   * Starts a fix attempt now on the first failing check, with your note as instructions: after CI needs you,
+   * on a commit already tried, or with the attempts used up, since you asked for it.
+   */
+  fixNow(ticketId: number, note: string): Promise<void> {
+    return this.engine.serial(ticketId, async () => {
+      let ticket = this.deps.tickets.get(ticketId)
+      const stage = this.engine.stage(ticket)
+      if (stage?.kind !== 'ci') throw new Error(`${ticket.key} isn't watching CI`)
+      if (ticket.currentRunId !== null) throw new Error('A fix is already running')
+      const settings = this.settings(stage)
+      const failing = (pr: StoredPr): PrCheck[] => pr.checks.filter((check) => check.bucket === 'fail' && !checkIgnored(check.name, ticket.ignoredChecks, settings.ignoreChecks))
+      const pr = this.prs.forTicket(ticketId).find((item) => item.state === 'open' && failing(item).length > 0)
+      if (!pr) throw new Error('No check is failing right now. Check now to look again.')
+      if (ticket.stopReason) ticket = this.engine.update(ticketId, { status: 'idle', stopReason: null, stopDetail: null, waitingFor: null }, 'Watching CI again')
+      const repo = this.engine.project(ticket).repos.find((item) => item.id === pr.repoId) as Repo
+      await this.fix(ticket, stage, settings, pr, repo, failing(pr)[0], this.prs.attempts(pr.id).length + 1, note)
+    })
+  }
+
+  private async fix(ticket: Ticket, stage: StageConfig, settings: CiSettings, pr: StoredPr, repo: Repo, check: PrCheck, attempt: number, note?: string): Promise<void> {
     const environment = await this.engine.ensureEnvironment(ticket)
     if (!environment) return
     ticket = this.deps.tickets.get(ticket.id)
@@ -243,8 +265,10 @@ export class CiWatcher {
       'outputs.plan': (await this.engine.readOutput(ticket, 'plan.md')) ?? ''
     })
     const cwd = await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)
-    this.deps.tickets.log(ticket.id, 'pipeline', `${check.name} failed again on ${label}. Fix attempt ${attempt} of ${settings.maxAttempts}.`)
-    await this.engine.startRun(ticket, stage, { cwd, prompt, profile: 'ci-fix', crew }, async (current, runId) => {
+    const asked = note?.trim()
+    this.deps.tickets.log(ticket.id, 'pipeline', asked ? `You asked for a fix of ${check.name} on ${label} (attempt ${attempt}).` : `${check.name} failed again on ${label}. Fix attempt ${attempt} of ${settings.maxAttempts}.`)
+    const withNote = asked ? `${prompt}\n\nFrom ${this.deps.settings.userName()}, who asked for this attempt:\n${asked}` : prompt
+    await this.engine.startRun(ticket, stage, { cwd, prompt: withNote, profile: 'ci-fix', crew }, async (current, runId) => {
       const text = await this.engine.readOutput(current, 'ci-fix.json')
       const { fix, problems } = text === null ? { fix: null, problems: ["ci-fix.json wasn't written"] } : parseCiFix(text, { pr: label, check: check.name, attempt })
       if (!fix) {
@@ -279,6 +303,25 @@ export class CiWatcher {
       this.prs.finishAttempt(pr.id, attempt, 'fixed', runId)
       this.engine.update(ended.id, { status: 'idle', waitingFor: null }, `Pushed a fix for ${check.name} to ${label} (${sha}). Watching CI again.`)
     })
+  }
+
+  /**
+   * Carries on watching a ticket that stopped with CI needs you, then checks at once. A failure Eregion
+   * already tried to fix on this commit isn't tried again; a new push, or ignoring the check, moves it on.
+   */
+  watchAgain(ticketId: number): Promise<void> {
+    const ticket = this.deps.tickets.get(ticketId)
+    if (ticket.stopReason === 'ci_needs_you' && this.engine.stage(ticket)?.kind === 'ci') {
+      this.engine.update(ticketId, { status: 'idle', stopReason: null, stopDetail: null, waitingFor: null, currentRunId: null }, 'Watching CI again')
+    }
+    return this.check(ticketId)
+  }
+
+  /** Ignores a check for this ticket (or counts it again): Watch CI neither fixes it nor waits for it. */
+  ignoreCheck(ticketId: number, name: string, ignore: boolean): void {
+    const ticket = this.deps.tickets.get(ticketId)
+    const others = ticket.ignoredChecks.filter((item) => item.toLowerCase() !== name.toLowerCase())
+    this.engine.update(ticketId, { ignoredChecks: ignore ? [...others, name] : others }, ignore ? `Ignoring ${name} for this ticket` : `Counting ${name} again`)
   }
 
   /** Turns autofix on or off for a ticket's PRs; turning it on clears a pause. */

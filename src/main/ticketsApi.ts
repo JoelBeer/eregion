@@ -11,7 +11,7 @@ import type { RunStore } from './agents/runs'
 import type { PipelineEngine } from './pipeline/engine'
 import type { PipelineStore, TicketStore } from './pipeline/stores'
 import type { ProjectStore } from './projects/store'
-import { branchDiff } from './workspace/git'
+import { branchDiff, filesToReview } from './workspace/git'
 import type { Workspaces } from './workspace/workspaces'
 import type { Editors } from './editors'
 import type { Runner } from './runner/types'
@@ -246,13 +246,16 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     },
     stopServices: (ticketId) => workspaces.stopServices(`ticket:${ticketId}`),
     updateFromBase: (ticketId) => engine.updateFromBase(ticketId),
-    openInEditor: async (ticketId, repoName) => {
+    openInEditor: async (ticketId, repoName, options = {}) => {
       const ticket = tickets.get(ticketId)
       const project = projects.get(ticket.projectId)
       const repo = project.repos.find((item) => item.name === repoName)
       if (!repo) throw new Error(`No repo called ${repoName}`)
       const path = workspaces.get(`ticket:${ticketId}`)?.repos.find((item) => item.repoId === repo.id)?.path ?? (await workspaces.worktreePath(project, repo, ticket.key))
-      await deps.editors.open(engine.runner(project), path)
+      const runner = engine.runner(project)
+      const files = options.changed ? await filesToReview(runner, path, `origin/${repo.defaultBranch}`) : (options.files ?? [])
+      const opened = await deps.editors.open(runner, path, files)
+      return { opened, total: files.length }
     },
     getEditor: async () => deps.editors.choice(),
     setEditor: async (choice) => deps.editors.setChoice(choice),

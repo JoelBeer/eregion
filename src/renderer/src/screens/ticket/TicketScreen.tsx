@@ -12,7 +12,7 @@ import { Stepper, StatusPill, type Step } from '../../components/ui'
 import { useAction } from '../../hooks'
 import { href, navigate, type TicketTab } from '../../router'
 import { useCrew } from '../Board'
-import { EnvironmentPanel, PlanPanel, ReviewDecision, Severity, StopBanner } from './panels'
+import { EnvironmentPanel, OpenFileButton, OpenInEditor, PlanPanel, ReviewDecision, Severity, StopBanner } from './panels'
 import { CiPanel, DoneSummary, LinearDetails, PrPanel, usePrs } from './shipping'
 
 function crewForStage(stage: StageConfig | undefined, crew: CrewMember[]): CrewMember | undefined {
@@ -76,7 +76,7 @@ function runLabel(run: RunSummary, stages: StageConfig[], crew: CrewMember[]): s
   return `${stage?.name ?? run.stage}${pass} · ${member?.name ?? run.model}`
 }
 
-function OutputsTab({ outputs }: { outputs: TicketOutputs | undefined }): ReactElement {
+function OutputsTab({ ticketId, outputs }: { ticketId: number; outputs: TicketOutputs | undefined }): ReactElement {
   if (!outputs) return <span className="muted">Loading…</span>
   const files = [
     outputs.plan && (
@@ -114,6 +114,7 @@ function OutputsTab({ outputs }: { outputs: TicketOutputs | undefined }): ReactE
               </span>{' '}
               · {issue.problem} <span className="muted">Fix: {issue.fix}</span>
             </span>
+            {issue.file && issue.repo && <OpenFileButton ticketId={ticketId} repo={issue.repo} file={issue.file} />}
           </div>
         ))}
         {outputs.review.problems.length > 0 && <span className="error-text">{outputs.review.problems.join('; ')}</span>}
@@ -170,21 +171,26 @@ function DiffTab({ ticketId }: { ticketId: number }): ReactElement {
             <span className="mono muted">
               {repo.base} … {repo.branch}
             </span>
+            <div style={{ flex: 1 }} />
+            {repo.files.length > 0 && <OpenInEditor ticketId={ticketId} repos={[repo.repo]} changes />}
           </div>
           {repo.error && <span className="error-text">{repo.error}</span>}
           {!repo.error && repo.files.length === 0 && <span className="muted">No changes on the branch yet.</span>}
           {repo.files.map((file) => (
             <div key={file.path} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <button type="button" onClick={() => setOpen(open === `${repo.repo}/${file.path}` ? null : `${repo.repo}/${file.path}`)} style={{ display: 'flex', gap: 10, alignItems: 'center', background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left' }}>
-                <span className="mono">{file.path}</span>
-                <span className="mono" style={{ color: 'var(--primary-700)' }}>+{file.additions}</span>
-                <span className="mono" style={{ color: 'var(--red-700, #B42318)' }}>−{file.deletions}</span>
-                {file.fixes.map((fix) => (
-                  <span key={fix.issueId} style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: 'var(--aqua-50)', color: '#2F6F8F' }}>
-                    Fixes review issue · {fix.severity === 'medium' ? 'MED' : fix.severity.toUpperCase()}
-                  </span>
-                ))}
-              </button>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <button type="button" onClick={() => setOpen(open === `${repo.repo}/${file.path}` ? null : `${repo.repo}/${file.path}`)} style={{ display: 'flex', gap: 10, alignItems: 'center', background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left' }}>
+                  <span className="mono">{file.path}</span>
+                  <span className="mono" style={{ color: 'var(--primary-700)' }}>+{file.additions}</span>
+                  <span className="mono" style={{ color: 'var(--red-700, #B42318)' }}>−{file.deletions}</span>
+                  {file.fixes.map((fix) => (
+                    <span key={fix.issueId} style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: 'var(--aqua-50)', color: '#2F6F8F' }}>
+                      Fixes review issue · {fix.severity === 'medium' ? 'MED' : fix.severity.toUpperCase()}
+                    </span>
+                  ))}
+                </button>
+                {!/^deleted file mode/m.test(file.patch) && <OpenFileButton ticketId={ticketId} repo={repo.repo} file={file.path} />}
+              </div>
               {open === `${repo.repo}/${file.path}` && (
                 <pre className="mono" style={{ margin: 0, padding: '12px 14px', background: 'var(--forge-900)', borderRadius: 10, overflowX: 'auto', fontSize: 12.5, lineHeight: 1.5 }}>
                   {file.patch.split('\n').map((line, index) => (
@@ -402,8 +408,8 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
                 />
               )}
               {stage?.kind === 'plan' && <PlanPanel ticket={ticket} outputs={outputs} builder={builder} nextStage={nextStage} />}
-              {stage?.kind === 'pr' && <PrPanel ticket={ticket} prs={prs} descriptions={outputs?.prDescriptions ?? {}} nextStage={nextStage} />}
-              {stage?.kind === 'ci' && <CiPanel ticket={ticket} prs={prs} stage={stage} />}
+              {stage?.kind === 'pr' && <PrPanel ticket={ticket} prs={prs} descriptions={outputs?.prDescriptions ?? {}} nextStage={nextStage} sendBackTo={sendBackTarget(stages, stage.id) ?? null} />}
+              {stage?.kind === 'ci' && <CiPanel ticket={ticket} prs={prs} stage={stage} sendBackTo={sendBackTarget(stages, stage.id) ?? null} />}
               {ticket.waitingFor === 'manual-review' && stage && <ReviewDecision ticket={ticket} outputs={outputs} stage={stage} sendBackTo={sendBackTarget(stages, stage.id) ?? null} nextStage={nextStage} />}
               {stage && isGenericStage(stage) && ticket.waitingFor === 'approval' && (
                 <button type="button" className="er-btn er-btn-primary" onClick={() => void window.eregion.approveStage(ticketId).then(() => navigate({ name: 'ticket', projectId, ticketId, tab: 'conversation' }))}>
@@ -413,7 +419,7 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
               <EnvironmentPanel ticket={ticket} environment={detail.environment} repoNames={ticket.affectedRepos} />
             </div>
           )}
-          {tab === 'outputs' && <OutputsTab outputs={outputs} />}
+          {tab === 'outputs' && <OutputsTab ticketId={ticketId} outputs={outputs} />}
           {tab === 'diff' && <DiffTab ticketId={ticketId} />}
           {tab === 'log' && <LogTab detail={detail} crew={crew} />}
         </>
