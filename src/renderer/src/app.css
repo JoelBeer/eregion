@@ -14,6 +14,12 @@ body,
   height: 100%;
 }
 
+/* The window never scrolls as a whole: only the content area does (see Frame in App.tsx). */
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--surface-50, #eaf8fb);
