@@ -147,15 +147,14 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
         { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [] }) }, reply: 'Pass.' },
         { when: 'Stage: PR', write: { '{outputs}/pr-app.md': pr }, reply: 'Done.' },
         {
-          when: 'Stage: Watch CI',
-          once: true,
-          write: { '{outputs}/ci-fix.json': JSON.stringify({ pr: 'app #1', check: 'tests', attempt: 1, result: 'needs-you', cause: 'The CI database secret is missing.', files: [], note: '' }) },
-          reply: 'Not mine to fix.'
-        },
-        {
           when: 'skip the database tests',
           write: { '{cwd}/app/hint.txt': 'H\n', '{outputs}/ci-fix.json': JSON.stringify({ pr: 'app #1', check: 'tests', attempt: 2, result: 'fixed', cause: 'The database tests need a secret CI lacks.', files: ['app/hint.txt'], note: 'Skipped them in CI as asked.' }) },
           reply: 'Skipped them.'
+        },
+        {
+          when: 'Stage: Watch CI',
+          write: { '{outputs}/ci-fix.json': JSON.stringify({ pr: 'app #1', check: 'tests', attempt: 1, result: 'needs-you', cause: 'The CI database secret is missing.', files: [], note: '' }) },
+          reply: 'Not mine to fix.'
         }
       ])
     )
