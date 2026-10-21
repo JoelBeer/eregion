@@ -13,6 +13,8 @@ import type { PipelineStore, TicketStore } from './pipeline/stores'
 import type { ProjectStore } from './projects/store'
 import { branchDiff } from './workspace/git'
 import type { Workspaces } from './workspace/workspaces'
+import type { Editors } from './editors'
+import type { Runner } from './runner/types'
 
 export type TicketsApi = Pick<
   EregionApi,
@@ -37,6 +39,9 @@ export type TicketsApi = Pick<
   | 'startServices'
   | 'stopServices'
   | 'openInEditor'
+  | 'getEditor'
+  | 'setEditor'
+  | 'listEditors'
   | 'updateFromBase'
   | 'getPipeline'
   | 'savePipeline'
@@ -48,6 +53,9 @@ export type TicketsApi = Pick<
 
 export interface TicketsApiDeps {
   db: Db
+  editors: Editors
+  /** The runner for this machine's first runtime, where Settings looks for editors. */
+  machineRunner: () => Runner
   projects: ProjectStore
   tickets: TicketStore
   pipelines: PipelineStore
@@ -244,10 +252,11 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
       const repo = project.repos.find((item) => item.name === repoName)
       if (!repo) throw new Error(`No repo called ${repoName}`)
       const path = workspaces.get(`ticket:${ticketId}`)?.repos.find((item) => item.repoId === repo.id)?.path ?? (await workspaces.worktreePath(project, repo, ticket.key))
-      const runner = engine.runner(project)
-      const result = await runner.exec(runner.shell(`code "${path}"`), { timeoutMs: 20_000 })
-      if (result.code !== 0) throw new Error(`Couldn't open VS Code: ${(result.stderr || result.stdout).trim() || 'is the code command installed?'}`)
+      await deps.editors.open(engine.runner(project), path)
     },
+    getEditor: async () => deps.editors.choice(),
+    setEditor: async (choice) => deps.editors.setChoice(choice),
+    listEditors: () => deps.editors.list(deps.machineRunner()),
     getPipeline: async (projectId) => {
       const latest = pipelines.latest(projectId)
       return { version: latest.version, stages: latest.stages, olderVersions: pipelines.ticketsOnOlderVersions(projectId) }

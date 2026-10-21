@@ -24,6 +24,7 @@ import { GhCli, readGitHubAccount, type GitHub } from './integrations/github'
 import { availableRuntimes, runnerFor, runtimeLabel } from './runner'
 import type { RunnerFor } from './runner/types'
 import { GitHubAccounts } from './integrations/githubAccounts'
+import { Editors } from './editors'
 import { LinearClient, type FetchLike } from './integrations/linear'
 import { LinearAuth, PLAIN_CODEC, type SecretCodec } from './integrations/linearAuth'
 import { Connections } from './integrations/connections'
@@ -195,7 +196,21 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     ci.start()
     issueSync.start()
   }
-  const ticketsApi = createTicketsApi({ db, projects, tickets, pipelines, crew, runs, agents, workspaces, engine, prs, onBackgroundError: backgroundErrorHandler(tickets, ticketChanged, agents) })
+  const ticketsApi = createTicketsApi({
+    db,
+    editors: new Editors(db),
+    machineRunner: () => runnerFor(availableRuntimes()[0]),
+    projects,
+    tickets,
+    pipelines,
+    crew,
+    runs,
+    agents,
+    workspaces,
+    engine,
+    prs,
+    onBackgroundError: backgroundErrorHandler(tickets, ticketChanged, agents)
+  })
   const integrationsApi = createIntegrationsApi({
     auth: linearAuth,
     sync: issueSync,

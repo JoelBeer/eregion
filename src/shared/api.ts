@@ -7,6 +7,7 @@ import type { PipelineVersionSummary } from './pipelineDiff'
 import type { RepoDiff, TicketDetail, TicketOutputs } from './ticketDetail'
 import type { Ticket, TicketCard } from './tickets'
 import type { AppInfo, ToolCheck } from './types'
+import type { EditorChoice, EditorInfo } from './editors'
 import type { CostListing, CostPeriod, CostReport, UsageSummary } from './costs'
 import type { AgentInfo, AgentTest, ModelOption } from './agents'
 import type { AdapterId } from './agent'
@@ -134,7 +135,12 @@ export interface EregionApi {
   discardTicket(ticketId: number): Promise<void>
   startServices(ticketId: number): Promise<void>
   stopServices(ticketId: number): Promise<void>
+  /** Opens a repo's worktree for the ticket in the editor chosen in Settings › Editor. */
   openInEditor(ticketId: number, repoName: string): Promise<void>
+  getEditor(): Promise<EditorChoice>
+  setEditor(choice: EditorChoice): Promise<EditorChoice>
+  /** The editors Eregion knows, and which are on this machine. */
+  listEditors(): Promise<EditorInfo[]>
   /** Merges the latest base branch into the ticket's worktrees and sets the environment up again. */
   updateFromBase(ticketId: number): Promise<void>
 
@@ -290,6 +296,9 @@ export const API_METHODS = [
   'startServices',
   'stopServices',
   'openInEditor',
+  'getEditor',
+  'setEditor',
+  'listEditors',
   'updateFromBase',
   'getPipeline',
   'savePipeline',

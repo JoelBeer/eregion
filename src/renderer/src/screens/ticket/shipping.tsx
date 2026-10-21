@@ -6,6 +6,7 @@ import type { Ticket } from '@shared/tickets'
 import { Markdown } from '../../components/Markdown'
 import { Chip, StatusPill, Switch, type PillStatus } from '../../components/ui'
 import { useAction, useQuery } from '../../hooks'
+import { OpenInEditor } from './panels'
 
 export function usePrs(ticketId: number): PullRequest[] {
   return useQuery(() => window.eregion.getTicketPrs(ticketId), [ticketId], (event) => event.type === 'ticket-changed' && event.ticketId === ticketId).data ?? []
@@ -93,7 +94,12 @@ export function PrPanel({ ticket, prs, descriptions, nextStage }: { ticket: Tick
           </button>
         )}
       </div>
-      {ticket.waitingFor === 'ready-for-review' && <span className="muted">Marking them ready ends this stage{nextStage ? ` and hands the ticket to ${nextStage.name}` : ''}.</span>}
+      {ticket.waitingFor === 'ready-for-review' && (
+        <>
+          <span className="muted">Look through the changes before you mark them ready. Marking them ready ends this stage{nextStage ? ` and hands the ticket to ${nextStage.name}` : ''}.</span>
+          <OpenInEditor ticket={ticket} repos={ticket.affectedRepos} />
+        </>
+      )}
       {ready.error && <span className="error-text">{ready.error}</span>}
       {prs.map((pr) => (
         <PrRow key={pr.id} pr={pr} />

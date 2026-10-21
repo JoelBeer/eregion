@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { href } from '../../router'
 import { AgentsSettings } from './AgentsSettings'
+import { EditorSettings } from './EditorSettings'
 import { IntegrationsSettings } from './IntegrationsSettings'
 import { RulesSettings } from './RulesSettings'
 import { McpSettings, SkillsSettings } from './ToolingSettings'
@@ -12,6 +13,7 @@ const TABS = [
   { id: 'rules', label: 'AI rules' },
   { id: 'integrations', label: 'Accounts' },
   { id: 'agents', label: 'Agents' },
+  { id: 'editor', label: 'Editor' },
   { id: 'voice', label: 'Voice' }
 ] as const
 
@@ -32,6 +34,7 @@ export function Settings({ tab }: { tab: string }): ReactElement {
       {current.id === 'mcp' && <McpSettings />}
       {current.id === 'rules' && <RulesSettings />}
       {current.id === 'agents' && <AgentsSettings />}
+      {current.id === 'editor' && <EditorSettings />}
       {current.id === 'voice' && <VoiceSettings />}
       {current.id === 'integrations' && <IntegrationsSettings />}
     </main>

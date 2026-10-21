@@ -1,4 +1,5 @@
 import { useState, type ReactElement } from 'react'
+import { editorName } from '@shared/editors'
 import type { Environment } from '@shared/environment'
 import type { StageConfig } from '@shared/pipeline'
 import type { CrewMember } from '@shared/runs'
@@ -8,6 +9,7 @@ import { ServiceRows, StepRows } from '../../components/EnvironmentView'
 import { Markdown } from '../../components/Markdown'
 import { Chip, StatusPill } from '../../components/ui'
 import { useAction, useQuery } from '../../hooks'
+import { href } from '../../router'
 
 const SEVERITY_STYLE: Record<string, { background: string; color: string; label: string }> = {
   high: { background: 'var(--red-100, #FDECEC)', color: 'var(--red-700, #B42318)', label: 'HIGH' },
@@ -83,6 +85,36 @@ export function PlanPanel({ ticket, outputs, builder, nextStage }: { ticket: Tic
 }
 
 /** After a stage's verdict passes (the AI review, say): check it yourself, then approve or send it back. */
+/** The editor chosen in Settings › Editor, by name. */
+function useEditorName(): string {
+  const choice = useQuery(() => window.eregion.getEditor(), []).data
+  return choice ? editorName(choice) : 'your editor'
+}
+
+/** View code in the chosen editor: one button per repo the ticket changes, each opening that repo's worktree. */
+export function OpenInEditor({ ticket, repos }: { ticket: Ticket; repos: string[] }): ReactElement | null {
+  const name = useEditorName()
+  const open = useAction((repo: string) => window.eregion.openInEditor(ticket.id, repo))
+  if (repos.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      {repos.map((repo) => (
+        <button key={repo} type="button" className="er-btn er-btn-sm" onClick={() => void open.run(repo)} disabled={open.pending} title={`Opens ${repo}'s worktree for ${ticket.key}`}>
+          {repos.length === 1 ? `View code in ${name}` : `View ${repo} in ${name}`}
+        </button>
+      ))}
+      <a href={href({ name: 'settings', tab: 'editor' })} className="muted" style={{ fontSize: 13 }}>
+        Change editor
+      </a>
+      {open.error && (
+        <span className="error-text" style={{ flexBasis: '100%' }}>
+          {open.error}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function ReviewDecision({
   ticket,
   outputs,
@@ -106,6 +138,7 @@ export function ReviewDecision({
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start' }}>
       <section aria-label="Check it yourself" className="panel" style={{ flex: '3 1 480px', minWidth: 0 }}>
         <h2 style={{ fontSize: 17 }}>Check it yourself</h2>
+        <OpenInEditor ticket={ticket} repos={ticket.affectedRepos} />
         <span className="label">Done when, from the plan</span>
         {doneWhen.map((item, index) => (
           <label key={index} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 14 }}>
@@ -236,7 +269,6 @@ export function StopBanner({ ticket, crew }: { ticket: Ticket; crew: CrewMember 
 export function EnvironmentPanel({ ticket, environment, repoNames }: { ticket: Ticket; environment: Environment | null; repoNames: string[] }): ReactElement | null {
   const start = useAction(() => window.eregion.startServices(ticket.id))
   const stop = useAction(() => window.eregion.stopServices(ticket.id))
-  const editor = useAction((repo: string) => window.eregion.openInEditor(ticket.id, repo))
   const update = useAction(() => window.eregion.updateFromBase(ticket.id))
   const project = useQuery(() => window.eregion.getProject(ticket.projectId), [ticket.projectId]).data
   if (ticket.slot === null) return null
@@ -286,14 +318,8 @@ export function EnvironmentPanel({ ticket, environment, repoNames }: { ticket: T
         ))}
       {environment?.error && <span className="error-text">{environment.error}</span>}
       {environment ? <ServiceRows environment={environment} /> :<span className="muted">Services aren't running since Eregion started. Start them to use the app.</span>}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {repoNames.map((repo) => (
-          <button key={repo} type="button" className="er-btn er-btn-sm" onClick={() => void editor.run(repo)}>
-            Open {repo} in editor
-          </button>
-        ))}
-      </div>
-      {(start.error || stop.error || editor.error || update.error) && <span className="error-text">{start.error ?? stop.error ?? editor.error ?? update.error}</span>}
+      <OpenInEditor ticket={ticket} repos={repoNames} />
+      {(start.error || stop.error || update.error) && <span className="error-text">{start.error ?? stop.error ?? update.error}</span>}
     </section>
   )
 }
