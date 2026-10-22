@@ -284,7 +284,8 @@ export class ProjectStore {
         variables: project.variables,
         liveSlots: project.liveSlots,
         linear: { ...project.linear, teamId: undefined, statusByStage: undefined },
-        github: project.github,
+        // The gh account belongs to this machine, like the Linear team: whoever imports picks their own.
+        github: { ...project.github, account: undefined },
         // The connection belongs to this machine's Settings, like the Linear team.
         ...(project.source ? { source: { ...project.source, connectionId: null } } : {}),
         setupInParallel: project.setupInParallel

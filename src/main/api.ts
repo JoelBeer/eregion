@@ -37,6 +37,7 @@ import { createIntegrationsApi } from './integrationsApi'
 import { CiWatcher } from './pipeline/ciWatch'
 import { PrStage } from './pipeline/prStage'
 import { PrStore } from './pipeline/prs'
+import { validatePipeline } from '@shared/pipeline'
 import { costReport, usageSummary } from './costs'
 import { CursorCosts, parseCursorEmail } from './integrations/cursorCosts'
 import { combineRules } from '@shared/rules'
@@ -304,7 +305,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       host.emit({ type: 'projects-changed' })
     },
     exportProject: async (id) => {
-      const file = projects.export(id)
+      const file: ProjectFile = { ...projects.export(id), pipeline: pipelines.latest(id).stages.map((stage) => ({ ...stage, crewId: null })) }
       const path = await host.pickSaveFile(`${file.project.name.replace(/[^\w-]+/g, '-').toLowerCase()}.eregion.json`)
       if (!path) return null
       await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
@@ -313,7 +314,13 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     importProject: async () => {
       const path = await host.pickOpenFile()
       if (!path) return null
-      const project = projects.import(JSON.parse(await readFile(path, 'utf8')) as ProjectFile)
+      const file = JSON.parse(await readFile(path, 'utf8')) as ProjectFile
+      // Checked before anything is made, so a broken pipeline doesn't leave half a project behind.
+      const stages = file.pipeline?.map((stage) => ({ ...stage, crewId: null }))
+      const problems = stages ? validatePipeline(stages) : []
+      if (problems.length > 0) throw new Error(`The pipeline in that file isn't valid: ${problems.join('. ')}`)
+      const project = projects.import(file)
+      if (stages) pipelines.save(project.id, stages)
       changed(project.id)
       return project
     },

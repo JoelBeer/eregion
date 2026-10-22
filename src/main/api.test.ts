@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -62,6 +62,40 @@ describe('createApi', () => {
     const imported = await api.importProject()
     expect(imported?.name).toBe('Word Magic 2')
     expect(imported?.repos[0]).toMatchObject({ name: 'word-magic', path: '' })
+  })
+
+  it("takes the pipeline along, but not this machine's crew or GitHub account", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'eregion-export-'))
+    const file = join(dir, 'word-magic.eregion.json')
+    const api = createApi(openDatabase(':memory:'), fakeHost({ pickSaveFile: async () => file, pickOpenFile: async () => file }))
+    const project = await api.createProject('Word Magic')
+    await api.updateProject(project.id, { github: { draft: true, account: 'me-at-work' } })
+    const bob = await api.createCrew({ name: 'Bob', role: 'Builder', adapter: 'cursor', model: 'auto', seed: 1 })
+    const { stages } = await api.getPipeline(project.id)
+    const custom = stages.map((stage) => (stage.kind === 'build' ? { ...stage, goal: 'Build it with the house skill.', crewId: bob.id } : stage))
+    await api.savePipeline(project.id, custom)
+
+    await api.exportProject(project.id)
+    const written = JSON.parse(await readFile(file, 'utf8'))
+    expect(written.project.github).toEqual({ draft: true })
+    expect(written.pipeline.find((stage: { kind: string }) => stage.kind === 'build')).toMatchObject({ goal: 'Build it with the house skill.', crewId: null })
+
+    const imported = await api.importProject()
+    const pipeline = await api.getPipeline(imported?.id as number)
+    expect(pipeline.stages.find((stage) => stage.kind === 'build')).toMatchObject({ goal: 'Build it with the house skill.', crewId: null })
+    expect(imported?.github).toEqual({ draft: true })
+  })
+
+  it('refuses a file whose pipeline is broken, without making a project', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'eregion-export-'))
+    const file = join(dir, 'broken.eregion.json')
+    const api = createApi(openDatabase(':memory:'), fakeHost({ pickSaveFile: async () => file, pickOpenFile: async () => file }))
+    const project = await api.createProject('Word Magic')
+    await api.exportProject(project.id)
+    const written = JSON.parse(await readFile(file, 'utf8'))
+    await writeFile(file, JSON.stringify({ ...written, pipeline: written.pipeline.filter((stage: { kind: string }) => stage.kind !== 'plan') }))
+    await expect(api.importProject()).rejects.toThrow("The pipeline in that file isn't valid")
+    expect(await api.listProjects()).toHaveLength(1)
   })
 
   it('returns null when the user cancels a file dialog', async () => {

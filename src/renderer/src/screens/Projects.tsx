@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import type { ProjectSummary } from '@shared/model'
 import { Chip, ProjectBadge, StatusPill } from '../components/ui'
 import { errorMessage, useAction } from '../hooks'
@@ -20,6 +20,8 @@ function ProjectCard({ project, current }: { project: ProjectSummary; current: b
   const { status, label } = projectStatus(project)
   const settingUp = project.setupStep < 8
   const step = SETUP_STEPS[Math.min(project.setupStep, 7) - 1]
+  const [saved, setSaved] = useState<string | null>(null)
+  const exporter = useAction(async () => setSaved(await window.eregion.exportProject(project.id)))
   return (
     <article
       style={{
@@ -79,7 +81,16 @@ function ProjectCard({ project, current }: { project: ProjectSummary; current: b
             </a>
           </>
         )}
+        <button type="button" className="er-btn" disabled={exporter.pending} onClick={() => void exporter.run()} title="Save this project's setup and pipeline to share with another developer">
+          Export
+        </button>
       </div>
+      {saved && (
+        <span className="muted" style={{ fontSize: 13, wordBreak: 'break-all' }}>
+          Saved to {saved}. Whoever imports it adds their own repo folders and GitHub account.
+        </span>
+      )}
+      {exporter.error && <span className="error-text">Couldn't export: {errorMessage(exporter.error)}</span>}
     </article>
   )
 }

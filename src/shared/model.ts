@@ -1,6 +1,7 @@
 import type { TicketSourceConfig } from './sources'
 import type { Variable } from './variables'
 import type { LinearStateType } from './integrations'
+import type { StageConfig } from './pipeline'
 
 export type { Variable } from './variables'
 
@@ -110,6 +111,8 @@ export interface ProjectFile {
     steps: Omit<Step, 'id' | 'repoId'>[]
     services: Omit<Service, 'id' | 'repoId'>[]
   })[]
+  /** The pipeline's latest version, its stages taken by crew role (crew are per machine). Older files have none. */
+  pipeline?: StageConfig[]
 }
 
 export interface ProjectSummary {
