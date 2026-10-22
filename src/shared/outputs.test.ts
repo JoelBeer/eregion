@@ -46,6 +46,30 @@ describe('parsePlan', () => {
     expect(planApprovalBlockers(parsePlan(PLAN.replace('- [ ] Can', '- [x] Can'), ['word-magic']))).toEqual([])
   })
 
+  it('reads indented lines under a step as its details, not as steps of their own', () => {
+    const detailed = PLAN.replace(
+      '2. [word-magic] Feature test: hint shows after two misses',
+      [
+        '2. [word-magic] Feature test: hint shows after two misses',
+        '   - New `hints` column, nullable',
+        '',
+        '   Test: `tests/Feature/HintTest.php`:',
+        '   - Two misses show the first letter',
+        '2b. [word-magic] Teachers can turn hints off',
+        '    * Off by default for spelling tests'
+      ].join('\n')
+    ).replace('- word-magic: changes · new hint logic and UI', '- word-magic: changes · new hint logic and UI\n  - including the teacher setting')
+    const plan = parsePlan(detailed.replace('- [ ] Can', '- [x] Can'), ['word-magic'])
+    expect(plan.problems).toEqual([])
+    expect(plan.repos).toEqual([{ name: 'word-magic', changes: true, why: 'new hint logic and UI' }])
+    expect(plan.steps).toEqual([
+      { repo: 'word-magic', text: 'Add a hint column to spellings' },
+      { repo: 'word-magic', text: 'Feature test: hint shows after two misses' },
+      { repo: 'word-magic', text: 'Teachers can turn hints off' }
+    ])
+    expect(planApprovalBlockers(plan)).toEqual([])
+  })
+
   it('reports missing headings, unknown and missing repos, and steps for unchanged repos', () => {
     const plan = parsePlan('# X\n\n## Affected repos\n- api: changes · x\n- other: none · y\n\n## Steps\n1. [web] Do it\n2. No repo here\n', ['api', 'web'])
     expect(plan.problems).toEqual([

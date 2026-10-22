@@ -44,8 +44,18 @@ export function sections(markdown: string): Map<string, string[]> {
   return result
 }
 
+/** A list item: "- ", "* ", "1. ", "2) " or "2b. ", with its indent. */
+const LIST_ITEM = /^(\s*)(?:[-*]|\d+[a-z]?[.)])\s+(.*)$/
+
 function bullets(lines: string[] | undefined): string[] {
-  return (lines ?? []).map((line) => line.match(/^\s*(?:[-*]|\d+[.)])\s+(.*)$/)?.[1]?.trim()).filter((item): item is string => Boolean(item))
+  return (lines ?? []).map((line) => line.match(LIST_ITEM)?.[2]?.trim()).filter((item): item is string => Boolean(item))
+}
+
+/** The section's outermost list items only: indented items under one are its details, not items of their own. */
+function topLevelBullets(lines: string[] | undefined): string[] {
+  const items = (lines ?? []).map((line) => line.match(LIST_ITEM)).filter((match): match is RegExpMatchArray => match !== null && Boolean(match[2].trim()))
+  const outer = Math.min(...items.map((match) => match[1].replace(/\t/g, '    ').length))
+  return items.filter((match) => match[1].replace(/\t/g, '    ').length === outer).map((match) => match[2].trim())
 }
 
 export function parsePlan(markdown: string, repoNames: string[]): ParsedPlan {
@@ -59,7 +69,7 @@ export function parsePlan(markdown: string, repoNames: string[]): ParsedPlan {
   const summary = intro.filter((line) => line.trim() && !line.startsWith('#')).join(' ').trim()
 
   const repos: PlanRepo[] = []
-  for (const item of bullets(parts.get('Affected repos'))) {
+  for (const item of topLevelBullets(parts.get('Affected repos'))) {
     const match = item.match(/^`?([\w.-]+)`?\s*:\s*(changes|none)\b\s*(?:[·•\-–—:]\s*)?(.*)$/i)
     if (!match) {
       problems.push(`Can't read the repo line "${item}". Use "<repo>: changes · why" or "<repo>: none · why"`)
@@ -80,7 +90,7 @@ export function parsePlan(markdown: string, repoNames: string[]): ParsedPlan {
   }
 
   const changing = new Set(repos.filter((repo) => repo.changes).map((repo) => repo.name))
-  const steps = bullets(parts.get('Steps')).map((item) => {
+  const steps = topLevelBullets(parts.get('Steps')).map((item) => {
     const match = item.match(/^\[([\w.-]+)\]\s*(.*)$/)
     return match ? { repo: match[1], text: match[2] } : { repo: null, text: item }
   })
