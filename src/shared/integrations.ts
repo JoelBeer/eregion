@@ -71,6 +71,17 @@ export const DEFAULT_IMPORT_STATE_TYPES: LinearStateType[] = ['backlog', 'unstar
 export type CheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel'
 
 /** An account gh is signed in to on github.com; the active one is what gh uses unless told otherwise. */
+/** Whether Eregion gets Cursor runs' costs from Cursor's Admin API, and how that's going. */
+export interface CursorCostsStatus {
+  configured: boolean
+  /** The account the Cursor CLI is signed in as: only its usage is counted. */
+  email: string | null
+  lastSyncAt: string | null
+  lastError: string | null
+  /** Cursor runs whose cost isn't final yet. */
+  pending: number
+}
+
 export interface GitHubUser {
   login: string
   active: boolean

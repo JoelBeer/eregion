@@ -17,7 +17,7 @@ import type { RuleFile } from './rules'
 import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
 import type { CrewStats } from './crew'
-import type { GitHubAccount, GitHubSignIn, GitHubUser, ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
+import type { CursorCostsStatus, GitHubAccount, GitHubSignIn, GitHubUser, ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
 
 export interface RepoInput {
   name: string
@@ -77,6 +77,13 @@ export interface ProjectPatch {
 export interface EregionApi {
   appInfo(): Promise<AppInfo>
   checkTools(): Promise<ToolCheck[]>
+  /** Whether Cursor runs' costs come from Cursor's Admin API. */
+  getCursorCosts(): Promise<CursorCostsStatus>
+  /** Checks and saves a Cursor Admin API key, then fills in costs. */
+  saveCursorAdminKey(key: string): Promise<CursorCostsStatus>
+  removeCursorAdminKey(): Promise<CursorCostsStatus>
+  /** Fetches Cursor's usage now instead of waiting for the hourly check. */
+  syncCursorCosts(): Promise<CursorCostsStatus>
   /** The GitHub accounts gh is signed in to on this machine. */
   listGitHubAccounts(): Promise<GitHubUser[]>
   /** Starts gh's browser sign-in for another account: enter the code it returns at the URL. */
@@ -257,6 +264,10 @@ export interface EregionApi {
 export const API_METHODS = [
   'appInfo',
   'checkTools',
+  'getCursorCosts',
+  'saveCursorAdminKey',
+  'removeCursorAdminKey',
+  'syncCursorCosts',
   'listGitHubAccounts',
   'startGitHubSignIn',
   'finishGitHubSignIn',

@@ -19,17 +19,18 @@ interface Row {
   tokens_out: number | null
   tokens_cached: number | null
   cost_usd: number | null
+  cost_source: string | null
 }
 
 const SINCE: Record<CostPeriod, string | null> = { '7d': '-7 days', '30d': '-30 days', all: null }
 
 /** What a project's tickets and Forge chats cost over a period, from the usage each run reported. */
-export function costReport(db: Db, projectId: number, period: CostPeriod, listing: CostListing = {}): CostReport {
+export function costReport(db: Db, projectId: number, period: CostPeriod, listing: CostListing = {}, options: { cursorCosts?: boolean } = {}): CostReport {
   const since = SINCE[period]
   const rows = db
     .prepare(
       `SELECT r.id, r.ticket_id, r.chat_id, t.key, t.title, t.stage AS ticket_stage, r.stage, r.crew_id, r.adapter, r.model, r.loop,
-              r.started_at, r.result, r.tokens_in, r.tokens_out, r.tokens_cached, r.cost_usd
+              r.started_at, r.result, r.tokens_in, r.tokens_out, r.tokens_cached, r.cost_usd, r.cost_source
        FROM runs r
        LEFT JOIN tickets t ON t.id = r.ticket_id
        LEFT JOIN chats c ON c.id = r.chat_id
@@ -53,7 +54,8 @@ export function costReport(db: Db, projectId: number, period: CostPeriod, listin
       startedAt: row.started_at,
       result: row.result,
       tokens: runTokens({ tokensIn: row.tokens_in, tokensOut: row.tokens_out, tokensCached: row.tokens_cached }),
-      costUsd: row.cost_usd
+      costUsd: row.cost_usd,
+      costPending: row.adapter === 'cursor' && row.cost_source === null && row.cost_usd === null && Boolean(options.cursorCosts)
     }
     if (row.ticket_id !== null) {
       const ticket = tickets.get(row.ticket_id) ?? { ticketId: row.ticket_id, key: row.key ?? '', title: row.title ?? '', stage: row.ticket_stage ?? '', costUsd: 0, tokens: 0, runs: [] }

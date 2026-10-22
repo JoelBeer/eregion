@@ -38,6 +38,7 @@ import { CiWatcher } from './pipeline/ciWatch'
 import { PrStage } from './pipeline/prStage'
 import { PrStore } from './pipeline/prs'
 import { costReport, usageSummary } from './costs'
+import { CursorCosts, parseCursorEmail } from './integrations/cursorCosts'
 import { combineRules } from '@shared/rules'
 import { AgentsInfo } from './agentsInfo'
 import { RulesStore } from './rules'
@@ -131,6 +132,17 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   }
   const linearAuth = new LinearAuth(db, host.secrets ?? PLAIN_CODEC, options.fetch)
   const fetchImpl = options.fetch ?? (fetch as unknown as FetchLike)
+  // What Cursor charged for each Cursor run, from the team's Admin API; only the CLI's own account counts.
+  const cursorCosts = new CursorCosts(
+    db,
+    host.secrets ?? PLAIN_CODEC,
+    async () => {
+      const runner = runnerFor(availableRuntimes()[0])
+      const result = await runner.exec(runner.shell('cursor-agent status'), { timeoutMs: 20_000 })
+      return parseCursorEmail(`${result.stdout}\n${result.stderr}`)
+    },
+    fetchImpl
+  )
   // Jira and GitLab accounts (Settings › Accounts); a test says who each signs in as.
   const connections = new Connections(db, host.secrets ?? PLAIN_CODEC, {
     jira: async (connection, token) => (await new JiraClient(connection, token, fetchImpl).myself()).displayName,
@@ -197,6 +209,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   if (options.timers) {
     ci.start()
     issueSync.start()
+    cursorCosts.start()
   }
   const ticketsApi = createTicketsApi({
     db,
@@ -413,7 +426,14 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     stopRun: (runId) => agents.stop(runId),
 
     openExternal: (url) => host.openExternal(url),
-    getCosts: async (projectId, period, listing) => costReport(db, projectId, period, listing),
+    getCosts: async (projectId, period, listing) => costReport(db, projectId, period, listing, { cursorCosts: cursorCosts.configured() }),
+    getCursorCosts: async () => cursorCosts.status(),
+    saveCursorAdminKey: (key) => cursorCosts.saveKey(key),
+    removeCursorAdminKey: async () => cursorCosts.removeKey(),
+    syncCursorCosts: async () => {
+      await cursorCosts.sync()
+      return cursorCosts.status()
+    },
     getUsage: async (projectId) => usageSummary(db, projectId),
     listAgents: () => agentsInfo.list(),
     listConnectors: async () => agentsInfo.connectors(),
@@ -473,6 +493,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     shutdown: async () => {
       ci.stop()
       issueSync.stop()
+      cursorCosts.stop()
       linearAuth.cancelSignIn()
       await agents.stopAll()
       await services.stopAll()

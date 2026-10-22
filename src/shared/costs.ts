@@ -18,8 +18,10 @@ export interface CostRun {
   startedAt: string
   result: string
   tokens: number
-  /** What Claude Code reported for the run; null for Cursor runs and runs that reported nothing. */
+  /** What Claude Code reported for the run, or what Cursor charged for a Cursor run; null when there's nothing yet. */
   costUsd: number | null
+  /** A Cursor run whose charge Cursor's Admin API hasn't reported yet (it's final two hours after the run). */
+  costPending?: boolean
 }
 
 export interface TicketCost {
@@ -53,7 +55,7 @@ export interface CostReport {
   forge: { chats: number; costUsd: number; tokens: number }
 }
 
-/** Spend and tokens over a stretch of time; Cursor runs add tokens but no spend (they're on the Cursor plan). */
+/** Spend and tokens over a stretch of time. Cursor runs add spend once Cursor's Admin API reports it. */
 export interface UsageTotals {
   costUsd: number
   tokens: number

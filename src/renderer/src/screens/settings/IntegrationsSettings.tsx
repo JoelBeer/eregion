@@ -3,6 +3,7 @@ import type { GitHubPermission, GitHubSignIn, LinearStatus } from '@shared/integ
 import { Chip, StatusPill } from '../../components/ui'
 import { errorMessage, useAction, useQuery } from '../../hooks'
 import { ConnectionList, ConnectionsSection } from './ConnectionsSection'
+import { CursorCostsSection } from './CursorCostsSection'
 
 export function useLinearStatus(): { status: LinearStatus | undefined; reload: () => void } {
   const query = useQuery(() => window.eregion.getLinearStatus(), [], (event) => event.type === 'linear-changed')
@@ -389,6 +390,8 @@ export function IntegrationsSettings(): ReactElement {
         )}
         {gh?.found && <GitHubAccounts />}
       </section>
+
+      <CursorCostsSection />
 
       <ConnectionsSection />
     </div>

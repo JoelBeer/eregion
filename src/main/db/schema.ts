@@ -258,5 +258,10 @@ export const migrations: string[] = [
   // Checks Watch CI ignores for a ticket (a coverage gate you've decided not to fix, say).
   `
   ALTER TABLE tickets ADD COLUMN ignored_checks TEXT NOT NULL DEFAULT '[]';
+  `,
+  // Where a run's cost came from: null for what the agent reported itself (or nothing), 'cursor' once
+  // Cursor's Admin API has said what it charged for a Cursor run.
+  `
+  ALTER TABLE runs ADD COLUMN cost_source TEXT;
   `
 ]

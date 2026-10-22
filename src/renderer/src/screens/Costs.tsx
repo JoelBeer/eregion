@@ -72,7 +72,7 @@ function Runs({ projectId, ticket }: { projectId: number; ticket: TicketCost }):
                   {run.tokens > 0 ? formatTokens(run.tokens) : '—'}
                 </td>
                 <td className="mono" style={{ textAlign: 'right' }}>
-                  {run.costUsd !== null ? formatUsd(run.costUsd) : noCostLabel(connectors.find((item) => item.id === run.adapter))}
+                  {run.costUsd !== null ? formatUsd(run.costUsd) : run.costPending ? 'pending' : noCostLabel(connectors.find((item) => item.id === run.adapter))}
                 </td>
               </tr>
             )
