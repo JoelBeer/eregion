@@ -16,7 +16,7 @@ import { runnerForRuntimeId } from '../projects/detect'
 import type { ProjectStore } from '../projects/store'
 import type { Runner } from '../runner'
 import type { RunnerFor } from '../runner/types'
-import { changedFiles, commitAll, discardChanges, hasOrigin, pushBranch } from '../workspace/git'
+import { changedFiles, commitAll, discardChanges, hasOrigin, pushBranch, syncWithOrigin } from '../workspace/git'
 import type { Workspaces } from '../workspace/workspaces'
 import type { PipelineStore, TicketPatch, TicketStore } from './stores'
 
@@ -412,6 +412,24 @@ export class PipelineEngine {
   }
 
   /** Makes sure the ticket has a slot and a ready environment. Returns null when it has to wait or setup failed. */
+  /**
+   * Pulls what's been pushed to each ticket branch on GitHub since Eregion last pushed (CI's linter fixing
+   * style, say), so an agent starts from it and a push isn't rejected. Returns why it couldn't, or null.
+   */
+  async pullFromOrigin(ticket: Ticket, repos: { name: string; path: string; branch: string | null }[]): Promise<string | null> {
+    const runner = this.runner(this.project(ticket))
+    for (const repo of repos) {
+      if (repo.branch === null) continue
+      try {
+        const outcome = await syncWithOrigin(runner, repo.path, repo.branch)
+        if (outcome) this.deps.tickets.log(ticket.id, 'git', `${repo.name}: ${outcome}`)
+      } catch (error) {
+        return `Couldn't bring ${repo.name} up to date with GitHub: ${(error as Error).message}`
+      }
+    }
+    return null
+  }
+
   async ensureEnvironment(ticket: Ticket): Promise<Environment | null> {
     const project = this.project(ticket)
     const key = this.environmentKey(ticket)
@@ -540,6 +558,11 @@ export class PipelineEngine {
       environment = await this.ensureEnvironment(ticket)
       if (!environment) return
       ticket = this.deps.tickets.get(ticket.id)
+      const behind = await this.pullFromOrigin(ticket, environment.repos)
+      if (behind) {
+        this.stop(ticket, 'stuck', behind)
+        return
+      }
       cwd = await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)
       repoPaths = this.worktreePaths(environment)
       repos = this.repoLines(project, repoPaths, (repo) =>
@@ -664,6 +687,11 @@ export class PipelineEngine {
     if (stage.after.some((action) => action.type === 'push')) {
       for (const repo of environment.repos.filter((item) => item.branch !== null)) {
         if (!(await hasOrigin(runner, repo.path))) continue
+        const behind = await this.pullFromOrigin(ticket, [repo])
+        if (behind) {
+          this.stop(ticket, 'stuck', behind)
+          return false
+        }
         try {
           await pushBranch(runner, repo.path, repo.branch as string)
           this.deps.tickets.log(ticket.id, 'git', `Pushed ${repo.branch} in ${repo.name}`)

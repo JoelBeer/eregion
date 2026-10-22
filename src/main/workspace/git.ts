@@ -104,6 +104,30 @@ export async function hasOrigin(runner: Runner, path: string): Promise<boolean> 
   return gitOk(runner, path, ['remote', 'get-url', 'origin'])
 }
 
+/**
+ * Brings a ticket branch up to date with the same branch on origin, which CI or a person may have pushed to
+ * (a linter's fix commit, say). Commits only the worktree has aren't pushed yet, so they're replayed on top:
+ * this rebase never needs a force push. Uncommitted work is stashed and put back. Does nothing when the branch
+ * isn't on origin yet or the fetch fails (offline). A rebase that conflicts is aborted, so the worktree is unchanged.
+ * Returns what changed, or null when nothing did.
+ */
+export async function syncWithOrigin(runner: Runner, path: string, branch: string): Promise<string | null> {
+  if (!(await hasOrigin(runner, path))) return null
+  const fetched = await runner.exec(['git', 'fetch', '--quiet', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: path, timeoutMs: 120_000 })
+  if (fetched.code !== 0) return null
+  const remote = `origin/${branch}`
+  const behind = Number(await gitIn(runner, path, ['rev-list', '--count', `HEAD..${remote}`]))
+  if (behind === 0) return null
+  const ahead = Number(await gitIn(runner, path, ['rev-list', '--count', `${remote}..HEAD`]))
+  const count = (n: number): string => `${n} ${n === 1 ? 'commit' : 'commits'}`
+  const result = await runner.exec(['git', 'rebase', '--autostash', '--quiet', remote], { cwd: path, timeoutMs: 120_000 })
+  if (result.code !== 0) {
+    await runner.exec(['git', 'rebase', '--abort'], { cwd: path })
+    throw new GitError(`${remote} has ${count(behind)} this worktree doesn't, and its own ${count(ahead)} don't rebase cleanly onto them, so nothing changed: ${(result.stdout || result.stderr).trim().split('\n').slice(-6).join(' ')}`)
+  }
+  return ahead === 0 ? `pulled ${count(behind)} from ${remote}` : `pulled ${count(behind)} from ${remote} and rebased ${count(ahead)} on top`
+}
+
 /** Pushes the branch to origin, setting upstream. Never forces. */
 export async function pushBranch(runner: Runner, path: string, branch: string): Promise<void> {
   await gitIn(runner, path, ['push', '--quiet', '-u', 'origin', branch], 180_000)

@@ -1,6 +1,7 @@
 import type { Repo } from '@shared/model'
 import { parsePrDescription } from '@shared/outputs'
-import { DEFAULT_CI, type StageConfig } from '@shared/pipeline'
+import { ciState } from '@shared/cards'
+import { checkIgnored, DEFAULT_CI, nextStage, type StageConfig } from '@shared/pipeline'
 import type { Ticket } from '@shared/tickets'
 import type { GitHub } from '../integrations/github'
 import type { Runner } from '../runner/types'
@@ -114,6 +115,8 @@ export class PrStage {
       const description = descriptions.get(item.repo.id) as { title: string; body: string }
       try {
         if (!(await hasOrigin(runner, item.path))) throw new Error(`${item.repo.name} has no origin remote to push to`)
+        const behind = await this.engine.pullFromOrigin(ticket, [{ name: item.repo.name, path: item.path, branch: item.branch }])
+        if (behind) throw new Error(behind)
         await pushBranch(runner, item.path, item.branch)
         const existing = this.prs.forTicket(ticket.id).find((pr) => pr.repoId === item.repo.id && pr.state === 'open')
         const url = existing
@@ -144,21 +147,61 @@ export class PrStage {
     }
     const current = this.deps.tickets.get(ticket.id)
     await this.engine.runActions(current, stage.after)
-    if (opened.some((pr) => pr.draft)) this.engine.needsYou(current, 'ready-for-review', 'The PRs are open as drafts. Mark them ready for review when you are.')
-    else await this.engine.advance(current)
+    const drafts = opened.some((pr) => pr.draft)
+    // With Watch CI next, drafts go to it as they are: you mark them ready once CI is complete.
+    if (drafts && nextStage(this.engine.stages(current), stage.id)?.kind !== 'ci') {
+      this.engine.needsYou(current, 'ready-for-review', 'The PRs are open as drafts. Mark them ready for review when you are.')
+      return
+    }
+    if (drafts) this.deps.tickets.log(ticket.id, 'github', 'The PRs stay drafts while Watch CI runs. Mark them ready for review once CI is complete.')
+    await this.engine.advance(current)
   }
 
-  /** Marks the ticket's draft PRs ready for review, which ends the PR stage. */
+  /**
+   * Hands on tickets still waiting in the PR stage for drafts to be marked ready, from before drafts went
+   * straight to Watch CI: with Watch CI next, they go there now and stay drafts until CI is complete.
+   */
+  async moveWaitingDraftsOn(): Promise<void> {
+    for (const ticket of this.deps.tickets.active()) {
+      const stage = this.engine.stage(ticket)
+      if (stage?.kind !== 'pr' || ticket.waitingFor !== 'ready-for-review') continue
+      if (nextStage(this.engine.stages(ticket), stage.id)?.kind !== 'ci') continue
+      await this.engine.serial(ticket.id, async () => {
+        this.deps.tickets.log(ticket.id, 'github', 'The PRs stay drafts while Watch CI runs. Mark them ready for review once CI is complete.')
+        await this.engine.advance(this.engine.update(ticket.id, { status: 'running', waitingFor: null }))
+      })
+    }
+  }
+
+  /**
+   * Marks the ticket's draft PRs ready for review. In the PR stage that ends the stage; in Watch CI it's
+   * allowed once CI is complete (every counted check finished green), and the ticket carries on watching.
+   */
   markReady(ticketId: number): Promise<void> {
     return this.engine.serial(ticketId, async () => {
       const ticket = this.deps.tickets.get(ticketId)
-      if (ticket.waitingFor !== 'ready-for-review') throw new Error(`${ticket.key} has no draft PRs waiting`)
+      const stage = this.engine.stage(ticket)
+      const open = this.prs.forTicket(ticketId).filter((item) => item.state === 'open')
+      const inCi = stage?.kind === 'ci'
+      if (inCi) {
+        if (!open.some((pr) => pr.draft)) throw new Error(`${ticket.key} has no draft PRs`)
+        const ignores = { ...DEFAULT_CI, ...stage.ci }.ignoreChecks ?? []
+        if (ciState(open, (check) => checkIgnored(check.name, ticket.ignoredChecks, ignores)) !== 'complete') {
+          throw new Error("CI isn't complete yet. Mark the PRs ready once every check has finished green.")
+        }
+      } else if (ticket.waitingFor !== 'ready-for-review') {
+        throw new Error(`${ticket.key} has no draft PRs waiting`)
+      }
       const project = this.engine.project(ticket)
       const runner = this.engine.runner(project)
-      for (const pr of this.prs.forTicket(ticketId).filter((item) => item.state === 'open')) {
+      for (const pr of open.filter((item) => item.draft)) {
         const repo = project.repos.find((item) => item.id === pr.repoId) as Repo
         await this.github.markReady(runner, repo.path, pr.url)
         this.prs.save(ticketId, pr.repoId, await this.github.viewPr(runner, repo.path, pr.url), pr.autofix)
+      }
+      if (inCi) {
+        this.engine.update(ticketId, { waitingFor: null }, 'You marked the PRs ready for review')
+        return
       }
       this.deps.tickets.log(ticketId, 'github', 'You marked the PRs ready for review')
       await this.engine.advance(this.engine.update(ticketId, { status: 'running', waitingFor: null }))

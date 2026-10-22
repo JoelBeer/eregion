@@ -1,4 +1,5 @@
 import { useState, type ReactElement } from 'react'
+import { ciState } from '@shared/cards'
 import type { CheckBucket, PullRequest } from '@shared/integrations'
 import { checkIgnored, DEFAULT_CI, type StageConfig } from '@shared/pipeline'
 import type { RunSummary } from '@shared/runs'
@@ -243,6 +244,9 @@ export function CiPanel({ ticket, prs, stage, sendBackTo }: { ticket: Ticket; pr
   const on = prs.some((pr) => pr.autofix)
   const paused = prs.find((pr) => pr.autofixPausedReason)?.autofixPausedReason
   const lastChecked = prs.map((pr) => pr.checkedAt).filter(Boolean).sort().at(-1) ?? null
+  const drafts = prs.filter((pr) => pr.state === 'open' && pr.draft)
+  const complete = ciState(prs, (item) => checkIgnored(item.name, ticket.ignoredChecks, settings.ignoreChecks ?? [])) === 'complete'
+  const ready = useAction(() => window.eregion.markPrsReady(ticket.id))
   return (
     <section className="panel" aria-label="Watch CI">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -255,7 +259,17 @@ export function CiPanel({ ticket, prs, stage, sendBackTo }: { ticket: Ticket; pr
         <button type="button" className="er-btn er-btn-sm" disabled={check.pending || ticket.currentRunId !== null} onClick={() => void check.run()}>
           {check.pending ? 'Checking…' : stopped ? 'Watch CI again' : 'Check now'}
         </button>
+        {drafts.length > 0 && complete && (
+          <button type="button" className="er-btn er-btn-primary er-btn-sm" disabled={ready.pending || ticket.currentRunId !== null} onClick={() => void ready.run()}>
+            {drafts.length === 1 ? 'Mark ready for review' : drafts.length === 2 ? 'Mark both ready for review' : `Mark all ${drafts.length} ready for review`}
+          </button>
+        )}
       </div>
+      {drafts.length > 0 && (
+        <span className="muted">
+          {complete ? 'CI is complete. Mark the PRs ready for review when you are; Eregion keeps watching until they merge.' : 'The PRs stay drafts while CI runs. You can mark them ready for review once every check has finished green.'}
+        </span>
+      )}
       {prs.map((pr) => (
         <div key={pr.id} style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--divider-100)', paddingTop: 10 }}>
           <PrRow pr={pr} />
@@ -281,7 +295,7 @@ export function CiPanel({ ticket, prs, stage, sendBackTo }: { ticket: Ticket; pr
           A failed check is re-run once first, in case it's flaky. Eregion never force-pushes. When every PR merges, the environment is torn down and the ticket is done.
         </span>
       </div>
-      {(autofix.error || check.error || ignore.error) && <span className="error-text">{autofix.error ?? check.error ?? ignore.error}</span>}
+      {(autofix.error || check.error || ignore.error || ready.error) && <span className="error-text">{autofix.error ?? check.error ?? ignore.error ?? ready.error}</span>}
     </section>
   )
 }

@@ -97,7 +97,8 @@ describe('ticketCard', () => {
 })
 
 describe('ticketCard in Watch CI and from Linear', () => {
-  const check = (bucket: 'pass' | 'fail' | 'pending') => ({ name: 'tests', workflow: 'CI', bucket, link: '' })
+  const check = (bucket: 'pass' | 'fail' | 'pending', name = 'tests') => ({ name, workflow: 'CI', bucket, link: '' })
+  const open = (...checks: ReturnType<typeof check>[]) => [{ state: 'open' as const, checks, autofix: true, autofixPausedReason: null }]
   const ci = { stage: 'ci', status: 'idle' as const, currentRunId: null }
 
   it('watches checks without a running agent', () => {
@@ -105,7 +106,26 @@ describe('ticketCard in Watch CI and from Linear', () => {
       pill: { status: 'waiting', label: 'Watching CI' },
       bubble: '1 of 2 checks done.'
     })
-    expect(card(ci, { prs: [{ state: 'open', checks: [check('pass')], autofix: true, autofixPausedReason: null }] }).bubble).toBe('All checks green. Waiting for the merge.')
+  })
+
+  it('says CI is complete once every counted check has finished green', () => {
+    expect(card(ci, { prs: open(check('pass')) })).toMatchObject({ pill: { status: 'passed', label: 'CI complete' }, mood: 'idle', bubble: 'All checks green. Waiting for the merge.' })
+    const draft = [{ ...open(check('pass'))[0], draft: true }]
+    expect(card(ci, { prs: draft })).toMatchObject({ pill: { status: 'passed', label: 'CI complete' }, bubble: 'All checks green. Mark the PR ready for review.' })
+  })
+
+  it("doesn't count checks the ticket or the stage ignores", () => {
+    const coverage = { ...ci, ignoredChecks: ['codecov/project'] }
+    expect(card(coverage, { prs: open(check('pass'), check('fail', 'codecov/project')) })).toMatchObject({
+      pill: { status: 'passed', label: 'CI complete' },
+      bubble: 'All checks green apart from codecov/project, which is ignored. Waiting for the merge.'
+    })
+    expect(card(coverage, { prs: open(check('pending'), check('pass', 'lint'), check('fail', 'codecov/project')) })).toMatchObject({
+      pill: { status: 'waiting', label: 'Watching CI' },
+      bubble: '1 of 2 checks done.'
+    })
+    const stages = defaultPipeline().map((stage) => (stage.kind === 'ci' && stage.ci ? { ...stage, ci: { ...stage.ci, ignoreChecks: ['codecov/patch'] } } : stage))
+    expect(card(ci, { stages, prs: open(check('pass'), check('fail', 'codecov/patch')) }).pill).toEqual({ status: 'passed', label: 'CI complete' })
   })
 
   it('shows failing checks and when autofix is off', () => {

@@ -126,7 +126,8 @@ export class CiWatcher {
         const ignores = this.deps.tickets.get(ticketId).ignoredChecks
         const counted = (pr: StoredPr): PrCheck[] => pr.checks.filter((check) => !checkIgnored(check.name, ignores, settings.ignoreChecks))
         const green = open.every((pr) => pr.checks.length > 0 && counted(pr).every((check) => check.bucket === 'pass' || check.bucket === 'skipping'))
-        if (stage.doneWhen === 'prs-green' && green) {
+        // Drafts wait for you to mark them ready, even when every check is green.
+        if (stage.doneWhen === 'prs-green' && green && !open.some((pr) => pr.draft)) {
           this.deps.tickets.log(ticketId, 'github', 'Every check is green')
           await this.engine.advance(this.deps.tickets.get(ticketId))
           return
@@ -134,6 +135,8 @@ export class CiWatcher {
         for (const pr of open) {
           const failed = counted(pr).filter((check) => check.bucket === 'fail')
           if (failed.length === 0) continue
+          // Nothing is re-run, fixed or handed to you until every check Eregion counts has finished on this PR.
+          if (counted(pr).some((check) => check.bucket === 'pending')) continue
           await this.handleFailure(this.deps.tickets.get(ticketId), stage, settings, pr, failed)
           return
         }
@@ -233,8 +236,19 @@ export class CiWatcher {
       this.engine.stop(ticket, 'ci_needs_you', `${repo.name} has no worktree on the ticket branch to fix in`)
       return
     }
+    const behind = await this.engine.pullFromOrigin(ticket, [worktree])
+    if (behind) {
+      this.engine.stop(ticket, 'ci_needs_you', behind)
+      return
+    }
     const local = (await gitIn(runner, worktree.path, ['rev-parse', 'HEAD'])).trim()
     if (pr.headSha && local !== pr.headSha) {
+      // The branch moved on GitHub after the check ran (CI's own fix commit, say): its checks run again on the new commit.
+      const remote = (await runner.exec(['git', 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${worktree.branch}`], { cwd: worktree.path })).stdout.trim()
+      if (remote === local) {
+        this.deps.tickets.log(ticket.id, 'github', `${pr.repo} #${pr.number} has new commits since ${check.name} ran; waiting for the checks on them`)
+        return
+      }
       this.prs.update(pr.id, { autofixPausedReason: "The branch on GitHub doesn't match the worktree" })
       this.engine.stop(ticket, 'ci_needs_you', `${pr.repo} #${pr.number} on GitHub isn't the commit in the worktree, so Eregion won't fix it there`)
       return
@@ -289,6 +303,12 @@ export class CiWatcher {
       if (!sha) {
         this.prs.finishAttempt(pr.id, attempt, 'needs-you', runId)
         this.engine.stop(ended, 'ci_needs_you', `The fix for ${check.name} on ${label} changed no files`)
+        return
+      }
+      const behindNow = await this.engine.pullFromOrigin(ended, [worktree])
+      if (behindNow) {
+        this.prs.finishAttempt(pr.id, attempt, 'needs-you', runId)
+        this.engine.stop(ended, 'ci_needs_you', behindNow)
         return
       }
       try {

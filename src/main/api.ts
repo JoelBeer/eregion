@@ -89,6 +89,7 @@ export interface Backend {
   engine: PipelineEngine
   tickets: TicketStore
   prs: PrStore
+  prStage: PrStage
   ci: CiWatcher
   /** Brings issues in from each project's tracker. */
   issueSync: IssueSync
@@ -192,6 +193,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
   const prStage = new PrStage(engine, prs, github)
   const ci = new CiWatcher(engine, prs, github)
   engine.recover()
+  void prStage.moveWaitingDraftsOn().catch(() => undefined)
   if (options.timers) {
     ci.start()
     issueSync.start()
@@ -464,6 +466,7 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     engine,
     tickets,
     prs,
+    prStage,
     ci,
     issueSync,
     linearAuth,

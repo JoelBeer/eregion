@@ -1,7 +1,7 @@
 import { firstSentence } from './agent'
 import type { Environment } from './environment'
 import type { PullRequest } from './integrations'
-import { isGenericStage, stageAccess, type StageConfig } from './pipeline'
+import { checkIgnored, isGenericStage, stageAccess, type StageConfig } from './pipeline'
 import type { Mood } from './robot'
 import { STOP_LABELS, stageLoops, type Ticket, type TicketCard } from './tickets'
 
@@ -15,20 +15,36 @@ export interface CardInputs {
   openQuestions: number
   prLinks: { label: string; url: string }[]
   /** The ticket's PRs with their last-seen checks, for Watch CI. */
-  prs?: Pick<PullRequest, 'state' | 'checks' | 'autofix' | 'autofixPausedReason'>[]
+  prs?: (Pick<PullRequest, 'state' | 'checks' | 'autofix' | 'autofixPausedReason'> & { draft?: boolean })[]
 }
 
-/** What Watch CI is waiting on, in a few words. */
-export function ciSummary(prs: NonNullable<CardInputs['prs']>): string {
+type CiCheck = NonNullable<CardInputs['prs']>[number]['checks'][number]
+
+/** Where Watch CI is, from the checks it counts: the ones neither the ticket nor the stage ignores. */
+export function ciState(prs: NonNullable<CardInputs['prs']>, ignored: (check: CiCheck) => boolean = () => false): 'merged' | 'failing' | 'running' | 'complete' {
   const open = prs.filter((pr) => pr.state === 'open')
-  const checks = open.flatMap((pr) => pr.checks)
+  const checks = open.flatMap((pr) => pr.checks).filter((check) => !ignored(check))
+  if (open.length === 0) return 'merged'
+  if (checks.some((check) => check.bucket === 'fail')) return 'failing'
+  if (checks.length === 0 || checks.some((check) => check.bucket === 'pending')) return 'running'
+  return 'complete'
+}
+
+/** What Watch CI is waiting on, in a few words. Ignored checks aren't counted; failing ones are named when CI is otherwise done. */
+export function ciSummary(prs: NonNullable<CardInputs['prs']>, ignored: (check: CiCheck) => boolean = () => false): string {
+  const open = prs.filter((pr) => pr.state === 'open')
+  const checks = open.flatMap((pr) => pr.checks).filter((check) => !ignored(check))
   const failing = checks.filter((check) => check.bucket === 'fail').length
   const pending = checks.filter((check) => check.bucket === 'pending').length
   if (open.length === 0) return 'Every PR has merged.'
   if (failing > 0) return `${failing} ${failing === 1 ? 'check' : 'checks'} failing.`
   if (pending > 0) return `${checks.length - pending} of ${checks.length} checks done.`
   if (checks.length === 0) return 'Waiting for checks to start.'
-  return `All checks green. Waiting for ${open.length === 1 ? 'the merge' : `${open.length} merges`}.`
+  const drafts = open.filter((pr) => pr.draft).length
+  const next = drafts > 0 ? `Mark ${drafts === 1 ? 'the PR' : 'the PRs'} ready for review.` : `Waiting for ${open.length === 1 ? 'the merge' : `${open.length} merges`}.`
+  const ignoredFailing = [...new Set(open.flatMap((pr) => pr.checks).filter((check) => ignored(check) && check.bucket === 'fail').map((check) => check.name))]
+  if (ignoredFailing.length > 0) return `All checks green apart from ${ignoredFailing.join(', ')}, which ${ignoredFailing.length === 1 ? 'is' : 'are'} ignored. ${next}`
+  return `All checks green. ${next}`
 }
 
 /**
@@ -92,10 +108,11 @@ export function ticketCard(inputs: CardInputs): TicketCard {
     pill = { status: 'neutral', label: 'Waiting for a slot' }
     bubble = 'Waiting for a free slot.'
   } else if (ticket.status === 'idle' && stage?.kind === 'ci') {
-    const failing = (inputs.prs ?? []).some((pr) => pr.checks.some((check) => check.bucket === 'fail'))
-    pill = failing ? { status: 'fixing', label: 'Checks failing' } : { status: 'waiting', label: 'Watching CI' }
-    mood = failing ? 'working' : 'idle'
-    bubble = ciSummary(inputs.prs ?? [])
+    const ignored = (check: CiCheck): boolean => checkIgnored(check.name, ticket.ignoredChecks ?? [], stage.ci?.ignoreChecks ?? [])
+    const state = ciState(inputs.prs ?? [], ignored)
+    pill = state === 'failing' ? { status: 'fixing', label: 'Checks failing' } : state === 'complete' ? { status: 'passed', label: 'CI complete' } : { status: 'waiting', label: 'Watching CI' }
+    mood = state === 'failing' ? 'working' : 'idle'
+    bubble = ciSummary(inputs.prs ?? [], ignored)
   } else if (ticket.status === 'running') {
     mood = 'working'
     if (settingUp) {
