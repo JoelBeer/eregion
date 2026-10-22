@@ -13,10 +13,25 @@ export function createHttpBridge(): EregionBridge {
   }
   const bridge = Object.fromEntries(API_METHODS.map((method) => [method, (...args: unknown[]) => call(method, args)])) as Record<string, unknown>
   bridge.pickFolder = async () => window.prompt('Repo folder path (web preview)') || null
+  // One stream for every listener: a browser holds six connections to a server, and a screen has more listeners than that.
+  const listeners = new Set<(event: EregionEvent) => void>()
+  let source: EventSource | null = null
   bridge.onEvent = (listener: (event: EregionEvent) => void) => {
-    const source = new EventSource('/events')
-    source.onmessage = (message) => listener(JSON.parse(message.data) as EregionEvent)
-    return () => source.close()
+    listeners.add(listener)
+    if (!source) {
+      source = new EventSource('/events')
+      source.onmessage = (message) => {
+        const event = JSON.parse(message.data) as EregionEvent
+        for (const each of [...listeners]) each(event)
+      }
+    }
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) {
+        source?.close()
+        source = null
+      }
+    }
   }
   return bridge as unknown as EregionBridge
 }

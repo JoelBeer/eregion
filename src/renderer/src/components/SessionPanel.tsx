@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import type { AgentEvent } from '@shared/agent'
+import { conversationBlocks, describeTools, type ConversationBlock, type ToolCall } from '@shared/conversation'
 import { agentName, useConnectors } from '../agents'
 import type { CrewMember, RunView } from '@shared/runs'
 import { NavIcon } from './icons'
@@ -42,62 +43,133 @@ function Line({ kind, children, tag }: { kind: 'agent' | 'user' | 'tool' | 'syst
   )
 }
 
-/** Groups consecutive tool calls with their results, so a burst of work reads as one block. */
-function renderEvents(events: AgentEvent[]): ReactElement[] {
-  const lines: ReactElement[] = []
-  const results = new Map<string, { ok: boolean; output: string }>()
-  for (const event of events) if (event.kind === 'tool-result') results.set(event.id, event)
-  let tools: ReactElement[] = []
-  const flush = (): void => {
-    if (tools.length) lines.push(<Line key={`tools-${lines.length}`} kind="tool">{tools}</Line>)
-    tools = []
-  }
-  events.forEach((event, index) => {
-    switch (event.kind) {
-      case 'tool': {
-        const result = results.get(event.id)
-        tools.push(
-          <span key={index}>
-            {event.summary}
-            {result && !result.ok && <span className="del"> failed</span>}
+/** Seconds since a moment, ticking once a second while `on`. */
+function useSeconds(since: number, on: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!on) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [on])
+  return Math.max(0, Math.floor((now - since) / 1000))
+}
+
+function duration(seconds: number): string {
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+type CallState = 'running' | 'ok' | 'failed' | 'unfinished'
+
+function callState(call: ToolCall, live: boolean): CallState {
+  if (call.result) return call.result.ok ? 'ok' : 'failed'
+  return live ? 'running' : 'unfinished'
+}
+
+function Mark({ state }: { state: CallState }): ReactElement {
+  if (state === 'running') return <span className="er-spinner er-spinner-xs" role="img" aria-label="Running" />
+  if (state === 'ok') return <span className="er-tool-mark add" aria-label="Done">✓</span>
+  if (state === 'failed') return <span className="er-tool-mark del" aria-label="Failed">✕</span>
+  return <span className="er-tool-mark" aria-label="Didn't finish">–</span>
+}
+
+/** One call in an opened group: what it ran, and its output on a click. */
+function Call({ call, state }: { call: ToolCall; state: CallState }): ReactElement {
+  const [open, setOpen] = useState(false)
+  const output = call.result?.output.trim() ?? ''
+  return (
+    <div className="er-tool-call">
+      <button type="button" className="er-tool-row" aria-expanded={output ? open : undefined} disabled={!output} onClick={() => setOpen(!open)}>
+        <span className="er-tool-chevron" aria-hidden>{output ? '›' : ''}</span>
+        <Mark state={state} />
+        <span className="er-tool-summary">{call.summary}</span>
+        {state === 'unfinished' && <span className="er-tool-note">didn't finish</span>}
+      </button>
+      {open && output && <pre className="er-tool-output">{output}</pre>}
+    </div>
+  )
+}
+
+/**
+ * The tool calls between two things the agent said, folded to one line: what they did, which one is running
+ * and for how long, and how many failed. Opens to each call, and each call to its output.
+ */
+function ToolGroup({ tools, live }: { tools: ToolCall[]; live: (call: ToolCall) => boolean }): ReactElement {
+  const [open, setOpen] = useState(false)
+  const states = tools.map((call) => callState(call, live(call)))
+  const running = tools.find((_, index) => states[index] === 'running')
+  const failed = states.filter((state) => state === 'failed').length
+  const unfinished = states.filter((state) => state === 'unfinished').length
+  // How long the running call has been going, counted from when this view first saw it running.
+  const [since, setSince] = useState(() => Date.now())
+  useEffect(() => setSince(Date.now()), [running?.id])
+  const seconds = useSeconds(since, Boolean(running))
+  return (
+    <div className="er-tools">
+      <button type="button" className="er-tool-row" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className={`er-tool-chevron${open ? ' open' : ''}`} aria-hidden>›</span>
+        <Mark state={running ? 'running' : failed > 0 ? 'failed' : unfinished > 0 ? 'unfinished' : 'ok'} />
+        <span>{describeTools(tools)}</span>
+        {failed > 0 && <span className="del">· {failed} failed</span>}
+        {unfinished > 0 && !running && <span className="er-tool-note">· {unfinished} didn't finish</span>}
+        {running && (
+          <span className="er-tool-now">
+            · {running.summary} · {duration(seconds)}
           </span>
+        )}
+      </button>
+      {open && (
+        <div className="er-tool-list">
+          {tools.map((call, index) => (
+            <Call key={call.id || index} call={call} state={states[index]} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** What the agent said, each with the work it did folded under it, and your messages and Eregion's in between. */
+function renderBlocks(blocks: ConversationBlock[], live: (call: ToolCall) => boolean): ReactElement[] {
+  return blocks.map((block) => {
+    switch (block.kind) {
+      case 'say':
+        return (
+          <div key={block.key} className="er-said-block">
+            <Line kind="agent">
+              <span style={{ whiteSpace: 'pre-wrap' }}>{block.text}</span>
+            </Line>
+            {block.tools.length > 0 && <ToolGroup tools={block.tools} live={live} />}
+          </div>
         )
-        return
-      }
-      case 'tool-result':
-      case 'init':
-        return
-      case 'text':
-        flush()
-        lines.push(
-          <Line key={index} kind="agent">
-            <span style={{ whiteSpace: 'pre-wrap' }}>{event.text}</span>
-          </Line>
-        )
-        return
+      case 'tools':
+        return <ToolGroup key={block.key} tools={block.tools} live={live} />
       case 'user':
-        flush()
-        lines.push(
-          <Line key={index} kind="user" tag={[event.dictated ? 'dictated' : null, event.delivery === 'queue' ? 'queued' : event.delivery === 'now' ? 'sent now' : null].filter(Boolean).join(' · ') || undefined}>
-            <span style={{ whiteSpace: 'pre-wrap' }}>{event.text}</span>
+        return (
+          <Line key={block.key} kind="user" tag={[block.dictated ? 'dictated' : null, block.delivery === 'queue' ? 'queued' : block.delivery === 'now' ? 'sent now' : null].filter(Boolean).join(' · ') || undefined}>
+            <span style={{ whiteSpace: 'pre-wrap' }}>{block.text}</span>
           </Line>
         )
-        return
-      case 'result':
-        flush()
-        if (!event.ok) lines.push(<Line key={index} kind="error">{event.text || 'The agent stopped with an error.'}</Line>)
-        return
-      case 'system':
-        flush()
-        lines.push(<Line key={index} kind="system">{event.text}</Line>)
-        return
-      case 'error':
-        flush()
-        lines.push(<Line key={index} kind="error">{event.text}</Line>)
+      default:
+        return (
+          <Line key={block.key} kind={block.kind}>
+            {block.text}
+          </Line>
+        )
     }
   })
-  flush()
-  return lines
+}
+
+/** While the agent is thinking between calls: a spinner, and how long since it last showed anything. */
+function Working({ name, lastAt }: { name: string; lastAt: number }): ReactElement {
+  const seconds = useSeconds(lastAt, true)
+  return (
+    <div className="er-line-working">
+      <span className="er-spinner er-spinner-xs" aria-hidden />
+      <span>
+        {name} is working{seconds >= 10 ? ` · last update ${duration(seconds)} ago` : ''}
+      </span>
+    </div>
+  )
 }
 
 export interface SessionPanelProps {
@@ -124,8 +196,17 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
   const live = view?.state === 'running' || view?.state === 'waiting'
   const name = crew?.name ?? 'Agent'
   const events = [...(history ?? []), ...(view?.events ?? [])]
+  const historyLength = history?.length ?? 0
+  const running = view?.state === 'running'
+  // Only the current run's calls can still be running; an earlier run's call without a result didn't finish.
+  const liveCall = (call: ToolCall): boolean => running && call.index >= historyLength
+  const blocks = conversationBlocks(events)
+  const lastGroup = blocks.at(-1)
+  const callRunning = Boolean(lastGroup && (lastGroup.kind === 'say' || lastGroup.kind === 'tools') && lastGroup.tools.some((call) => !call.result && liveCall(call)))
+  const [lastAt, setLastAt] = useState(() => Date.now())
 
   useEffect(() => {
+    setLastAt(Date.now())
     body.current?.scrollTo({ top: body.current.scrollHeight })
   }, [events.length])
 
@@ -202,12 +283,8 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
         {path && <span className="er-session-path">{path}</span>}
       </div>
       <div ref={body} className="er-session-body" style={{ minHeight, maxHeight: 640, overflowY: 'auto' }}>
-        {events.length > 0 ? renderEvents(events) : placeholder}
-        {view?.state === 'running' && (
-          <div className="er-line-prompt">
-            <span className="er-cursor" aria-hidden />
-          </div>
-        )}
+        {events.length > 0 ? renderBlocks(blocks, liveCall) : placeholder}
+        {running && !callRunning && <Working name={name} lastAt={lastAt} />}
       </div>
       <DictationStatus dictation={dictation} finishHint={`Click the mic, or let go of ${HOLD_TO_TALK}, to finish`} />
       <div className="er-session-foot">
