@@ -113,6 +113,15 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     const [opened] = await api.getTicketPrs(ticket.id)
     expect(opened).toMatchObject({ repo: 'app', number: 1, draft: true, state: 'open', autofix: true })
     expect(github.prs[0].body).toContain('## How to test')
+    // The build log covers Build up to the PR, with the review's verdict and the build notes after.
+    const log = (await api.getTicketOutputs(ticket.id)).buildLog ?? ''
+    expect(log).toMatch(/^# Build log: WM-1 Show a hint after two wrong guesses/)
+    expect(log.match(/^## .*/gm)).toEqual(['## Build', '## Review', '## PR', '## Appendix: reviews'])
+    expect(log).not.toContain('## Plan')
+    expect(log).toContain('**Agent:** Built.')
+    expect(log).toContain('### Review\n\n> RESULT: PASS\n\nGood.')
+    expect(log).toContain('### Build notes')
+    expect(backend.tickets.logEntries(ticket.id).map((entry) => entry.message)).toContain('Wrote the build log (build-log.md)')
     await expect(api.markPrsReady(ticket.id)).rejects.toThrow("CI isn't complete yet")
 
     // A ticket left waiting in PR from before drafts went to Watch CI moves on at startup, still a draft.

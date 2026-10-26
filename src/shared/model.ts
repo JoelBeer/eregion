@@ -18,12 +18,13 @@ export interface LinearProjectConfig {
   importStateTypes?: LinearStateType[]
   /** Seconds between syncs while Eregion is open. */
   pollSec?: number
-  push?: { planComment: boolean; planDescription: boolean; prLinks: boolean }
+  /** What goes back to Linear. Missing switches take their defaults, so projects saved before a switch existed get it. */
+  push?: { planComment: boolean; planDescription: boolean; planDocument?: boolean; prLinks: boolean; buildLog?: boolean }
   /** Linear workflow state id to set when a ticket enters each stage, by stage id; `done` when it finishes. */
   statusByStage?: Record<string, string>
 }
 
-export const DEFAULT_LINEAR_PUSH = { planComment: true, planDescription: false, prLinks: true }
+export const DEFAULT_LINEAR_PUSH = { planComment: true, planDescription: false, planDocument: true, prLinks: true, buildLog: true }
 
 export interface GithubProjectConfig {
   /** Open PRs as drafts, so the PR stage waits for you to mark them ready. */

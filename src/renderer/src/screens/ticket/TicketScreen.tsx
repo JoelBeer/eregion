@@ -1,5 +1,5 @@
 import { usageLimitMessage } from '@shared/agent'
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { noCostLabel } from '@shared/connectors'
 import { SOURCE_NAMES } from '@shared/sources'
 import { isGenericStage, sendBackTarget, type StageConfig } from '@shared/pipeline'
@@ -76,35 +76,49 @@ function runLabel(run: RunSummary, stages: StageConfig[], crew: CrewMember[]): s
   return `${stage?.name ?? run.stage}${pass} · ${member?.name ?? run.model}`
 }
 
+/** One output file: its name (and anything worth seeing at a glance) as a row that opens and closes it. */
+function OutputFile({ name, badge, children }: { name: string; badge?: ReactNode; children: ReactNode }): ReactElement {
+  const [open, setOpen] = useState(false)
+  return (
+    <article className="panel er-output">
+      <button type="button" className="er-output-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className={`er-tool-chevron${open ? ' open' : ''}`} aria-hidden>›</span>
+        <span className="mono" style={{ fontWeight: 500 }}>{name}</span>
+        {badge}
+      </button>
+      {open && children}
+    </article>
+  )
+}
+
 function OutputsTab({ ticketId, outputs }: { ticketId: number; outputs: TicketOutputs | undefined }): ReactElement {
   if (!outputs) return <span className="muted">Loading…</span>
+  const review = outputs.review?.review
   const files = [
     outputs.plan && (
-      <article key="plan" className="panel">
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span className="mono" style={{ fontWeight: 500 }}>plan.md</span>
-        </div>
+      <OutputFile key="plan" name="plan.md">
         <Markdown source={outputs.plan.markdown} />
-      </article>
+      </OutputFile>
     ),
     outputs.buildNotes && (
-      <article key="notes" className="panel">
-        <span className="mono" style={{ fontWeight: 500 }}>build-notes.md</span>
+      <OutputFile key="notes" name="build-notes.md">
         <Markdown source={outputs.buildNotes.markdown} />
-      </article>
+      </OutputFile>
     ),
     outputs.review && (
-      <article key="review" className="panel">
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span className="mono" style={{ fontWeight: 500 }}>review.json</span>
-          {outputs.review.review && (
-            <StatusPill status={outputs.review.review.verdict === 'pass' ? 'passed' : 'failed'}>
-              {outputs.review.review.verdict === 'pass' ? 'Pass' : 'Fail'} · loop {outputs.review.review.loop}
+      <OutputFile
+        key="review"
+        name="review.json"
+        badge={
+          review && (
+            <StatusPill status={review.verdict === 'pass' ? 'passed' : 'failed'}>
+              {review.verdict === 'pass' ? 'Pass' : 'Fail'} · loop {review.loop}
             </StatusPill>
-          )}
-        </div>
-        {outputs.review.review?.summary && <span>{outputs.review.review.summary}</span>}
-        {outputs.review.review?.issues.map((issue) => (
+          )
+        }
+      >
+        {review?.summary && <span>{review.summary}</span>}
+        {review?.issues.map((issue) => (
           <div key={issue.id} style={{ display: 'flex', gap: 10, fontSize: 14 }}>
             <Severity severity={issue.severity} />
             <span>
@@ -121,17 +135,21 @@ function OutputsTab({ ticketId, outputs }: { ticketId: number; outputs: TicketOu
         <pre className="mono" style={{ margin: 0, padding: '14px 16px', background: 'var(--forge-900)', color: 'var(--term-text, #D6ECEF)', borderRadius: 10, overflowX: 'auto', fontSize: 12.5 }}>
           {outputs.review.text}
         </pre>
-      </article>
+      </OutputFile>
     ),
     outputs.fixes && (
-      <article key="fixes" className="panel">
-        <span className="mono" style={{ fontWeight: 500 }}>fixes.json</span>
+      <OutputFile key="fixes" name="fixes.json">
         {outputs.fixes.fixes?.map((fix) => (
           <div key={fix.issueId} style={{ fontSize: 14 }}>
             <span className="mono">{fix.issueId}</span> · {fix.fixed ? `fixed in ${fix.files.join(', ')}` : `not fixed: ${fix.note}`}
           </div>
         ))}
-      </article>
+      </OutputFile>
+    ),
+    outputs.buildLog && (
+      <OutputFile key="build-log" name="build-log.md">
+        <Markdown source={outputs.buildLog} />
+      </OutputFile>
     )
   ].filter(Boolean)
   return (
@@ -265,6 +283,9 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
   const discard = useAction(async () => {
     if (window.confirm('Move this ticket back to the Backlog? Its environment is torn down; its branch is kept.')) await window.eregion.discardTicket(ticketId)
   })
+  const reset = useAction(async () => {
+    if (window.confirm('Reset this ticket to Plan? Every run since the plan was approved is removed from the ticket (Costs still counts them), the code they wrote and the ticket branch are deleted, and the plan waits for your approval again.')) await window.eregion.resetToPlan(ticketId)
+  })
   const ticket = detail?.card.ticket
   // A finished ticket opens on its summary; its runs stay one click away.
   const runId = selectedRun ?? ticket?.currentRunId ?? (ticket?.stage === 'done' ? null : (detail?.runs.at(-1)?.id ?? null))
@@ -324,6 +345,11 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
             </button>
           </>
         )}
+        {ticket.stage !== 'backlog' && ticket.stage !== 'done' && stages[0]?.kind === 'plan' && ticket.stage !== stages[0].id && prs.length === 0 && (
+          <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void reset.run()} disabled={reset.pending}>
+            Reset to Plan
+          </button>
+        )}
         {ticket.stage !== 'backlog' && ticket.stage !== 'done' && (
           <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void discard.run()} disabled={discard.pending}>
             Move back to Backlog
@@ -332,7 +358,7 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
       </header>
 
       {ticket.stage !== 'backlog' && <Stepper steps={steps} />}
-      {(stopRun.error || discard.error || pause.error) && <span className="error-text">{stopRun.error ?? discard.error ?? pause.error}</span>}
+      {(stopRun.error || discard.error || reset.error || pause.error) && <span className="error-text">{stopRun.error ?? discard.error ?? reset.error ?? pause.error}</span>}
 
       {ticket.status === 'stopped' && stage && (
         <section className="panel" aria-label="Paused" style={{ border: '2px solid var(--primary-600)' }}>

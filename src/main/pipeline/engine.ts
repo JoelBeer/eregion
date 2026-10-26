@@ -16,7 +16,7 @@ import { runnerForRuntimeId } from '../projects/detect'
 import type { ProjectStore } from '../projects/store'
 import type { Runner } from '../runner'
 import type { RunnerFor } from '../runner/types'
-import { changedFiles, commitAll, discardChanges, hasOrigin, pushBranch, syncWithOrigin } from '../workspace/git'
+import { branchExists, changedFiles, commitAll, discardChanges, gitIn, gitOk, hasOrigin, pushBranch, syncWithOrigin } from '../workspace/git'
 import type { Workspaces } from '../workspace/workspaces'
 import type { PipelineStore, TicketPatch, TicketStore } from './stores'
 
@@ -31,6 +31,8 @@ export interface Integrations {
   stageEntered?(ticket: Ticket, stage: StageConfig, project: Project): Promise<void>
   planApproved?(ticket: Ticket, planMarkdown: string, project: Project): Promise<void>
   prsOpened?(ticket: Ticket, prs: { repo: string; number: number; url: string; title: string }[], project: Project): Promise<void>
+  /** The build log, written once the PRs are open (build-log.md). */
+  buildLogReady?(ticket: Ticket, markdown: string, project: Project): Promise<void>
   ticketDone?(ticket: Ticket, project: Project): Promise<void>
   notify?(title: string, body: string): void
 }
@@ -53,7 +55,7 @@ export interface EngineDeps {
 }
 
 /** Where an earlier copy of an output file is kept: review.json for loop 2 is history/review-2.json. */
-function historyName(file: string, suffix: string): string {
+export function historyName(file: string, suffix: string): string {
   const dot = file.lastIndexOf('.')
   return dot > 0 ? `${file.slice(0, dot)}-${suffix}${file.slice(dot)}` : `${file}-${suffix}`
 }
@@ -929,6 +931,60 @@ export class PipelineEngine {
         { stage: 'backlog', status: 'idle', stopReason: null, stopDetail: null, waitingFor: null, loop: 1, loops: {}, returnedFrom: null, affectedRepos: [], planApprovedAt: null, pipelineVersion: null },
         'Moved back to Backlog'
       )
+    })
+  }
+
+  /**
+   * Takes a ticket back to Plan as if the plan had just been written: stops its run, tears down its environment
+   * and deletes the ticket branch (on origin too, if it was pushed), takes every run after Plan off the ticket
+   * (Costs still counts them), drops the log and output files since the plan was approved, and waits for you
+   * to approve the plan again. The caller checks there are no PRs: those are for reviewers to see.
+   */
+  resetToPlan(ticketId: number): Promise<void> {
+    return this.serial(ticketId, async () => {
+      let ticket = this.deps.tickets.get(ticketId)
+      const plan = this.stages(ticket).find((stage) => stage.kind === 'plan')
+      if (!plan) throw new Error('This pipeline has no Plan stage')
+      if (ticket.stage === 'backlog' || ticket.stage === 'done' || ticket.stage === plan.id) throw new Error(`${ticket.key} isn't past Plan`)
+      if (ticket.currentRunId !== null) {
+        const runId = ticket.currentRunId
+        ticket = this.deps.tickets.update(ticketId, { currentRunId: null })
+        await this.deps.agents.stop(runId)
+      }
+      await this.teardown(ticket)
+      const project = this.project(ticket)
+      if (ticket.branch) {
+        const runner = this.runner(project)
+        for (const repo of project.repos) {
+          if (await branchExists(runner, repo.path, ticket.branch)) await gitIn(runner, repo.path, ['branch', '-D', ticket.branch])
+          if ((await hasOrigin(runner, repo.path)) && (await gitOk(runner, repo.path, ['ls-remote', '--exit-code', '--heads', 'origin', ticket.branch]))) {
+            await gitIn(runner, repo.path, ['push', '--quiet', 'origin', '--delete', ticket.branch], 180_000)
+          }
+        }
+      }
+      const runs = this.deps.agents.ticketRuns(ticketId).map((item) => item.run)
+      const removed = runs.filter((run) => run.stage !== plan.id)
+      this.deps.agents.markReset(removed.map((run) => run.id))
+      this.deps.tickets.dropLogSincePlanApproved(ticketId)
+      // Everything the later stages wrote goes; the plan and the earlier approved plans stay.
+      const runner = this.runner(project)
+      await runner.exec(['sh', '-c', 'cd "$1" 2>/dev/null && find . -type f ! -path ./plan.md ! -path "./history/plan-*" -delete; true', 'sh', await this.outputsDir(ticket)])
+      const names = this.stages(ticket)
+      const counts = [...new Set(removed.map((run) => run.stage))].map((id) => {
+        const n = removed.filter((run) => run.stage === id).length
+        return `${n} ${names.find((stage) => stage.id === id)?.name ?? id} ${n === 1 ? 'run' : 'runs'}`
+      })
+      const what = counts.length ? `removed ${counts.join(', ')} and their changes` : 'removed the changes'
+      ticket = this.update(
+        ticketId,
+        { stage: plan.id, status: 'needs_you', waitingFor: 'approval', stopReason: null, stopDetail: null, loops: {}, returnedFrom: null, affectedRepos: [], planApprovedAt: null, currentRunId: null },
+        `Reset to Plan: ${what}. Approve the plan to build again.`
+      )
+      try {
+        await this.deps.integrations?.stageEntered?.(ticket, plan, project)
+      } catch (error) {
+        this.deps.tickets.log(ticketId, 'warning', `Couldn't update the tracker: ${(error as Error).message}`)
+      }
     })
   }
 

@@ -145,6 +145,20 @@ export class LinearClient {
     await this.request('mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }', { id: issueId, input })
   }
 
+  /**
+   * Writes a markdown document under the issue's Resources: updates the one with this title if the issue
+   * has it already, so approving a plan again or reopening PRs doesn't add a second copy.
+   */
+  async saveIssueDocument(issueId: string, title: string, content: string): Promise<void> {
+    const data = await this.request<{ issue: { documents: { nodes: { id: string; title: string }[] } } }>('query($id: String!) { issue(id: $id) { documents(first: 50) { nodes { id title } } } }', { id: issueId })
+    const existing = data.issue.documents.nodes.find((document) => document.title === title)
+    if (existing) {
+      await this.request('mutation($id: String!, $input: DocumentUpdateInput!) { documentUpdate(id: $id, input: $input) { success } }', { id: existing.id, input: { content } })
+      return
+    }
+    await this.request('mutation($input: DocumentCreateInput!) { documentCreate(input: $input) { success } }', { input: { issueId, title, content } })
+  }
+
   async attachLink(issueId: string, url: string, title: string): Promise<void> {
     await this.request('mutation($issueId: String!, $url: String!, $title: String) { attachmentLinkURL(issueId: $issueId, url: $url, title: $title) { success } }', { issueId, url, title })
   }

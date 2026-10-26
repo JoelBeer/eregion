@@ -263,5 +263,9 @@ export const migrations: string[] = [
   // Cursor's Admin API has said what it charged for a Cursor run.
   `
   ALTER TABLE runs ADD COLUMN cost_source TEXT;
+  `,
+  // When a reset to Plan took the run off its ticket. It's kept, so Costs still counts what it spent.
+  `
+  ALTER TABLE runs ADD COLUMN reset_at TEXT;
   `
 ]

@@ -234,7 +234,9 @@ function LinearSection({ project, save, source, saveSource }: { project: StepPro
           <span className="label">Send back to Linear</span>
           <Switch label="The approved plan, as a comment" checked={push.planComment} onChange={(planComment) => save({ ...linear, push: { ...push, planComment } })} />
           <Switch label="The approved plan, added to the issue description" checked={push.planDescription} onChange={(planDescription) => save({ ...linear, push: { ...push, planDescription } })} />
+          <Switch label="The approved plan, as a document in the issue's resources" checked={push.planDocument} onChange={(planDocument) => save({ ...linear, push: { ...push, planDocument } })} />
           <Switch label="Links to the pull requests" checked={push.prLinks} onChange={(prLinks) => save({ ...linear, push: { ...push, prLinks } })} />
+          <Switch label="The build log, as a document in the issue's resources, once the pull requests are open" checked={push.buildLog} onChange={(buildLog) => save({ ...linear, push: { ...push, buildLog } })} />
         </div>
       )}
 

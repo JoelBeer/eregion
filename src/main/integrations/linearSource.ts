@@ -9,6 +9,10 @@ import type { SourceIssue, TicketSource } from './sources'
 
 const CLOSED = new Set(['completed', 'canceled', 'duplicate'])
 
+/** The titles of the documents Eregion keeps in an issue's resources, found again by title to update them. */
+export const PLAN_DOCUMENT = 'Approved plan'
+export const BUILD_LOG_DOCUMENT = 'Build log'
+
 /**
  * Whose Linear issues a project imports: its own choice. Projects on the main account that haven't made one
  * keep the choice Settings used to hold for every project; with a connection, it's you.
@@ -130,10 +134,15 @@ export class LinearSource implements TicketSource {
       const push = { ...DEFAULT_LINEAR_PUSH, ...project.linear.push }
       if (push.planComment) await this.client(project).comment(ticket.linearId as string, `**Plan approved in Eregion**\n\n${markdown.trim()}`)
       if (push.planDescription) await this.client(project).updateIssue(ticket.linearId as string, { description: descriptionWithPlan(ticket.description, markdown) })
+      if (push.planDocument) await this.client(project).saveIssueDocument(ticket.linearId as string, PLAN_DOCUMENT, markdown.trim())
     },
     prsOpened: async (ticket, prs, project) => {
       if (!{ ...DEFAULT_LINEAR_PUSH, ...project.linear.push }.prLinks) return
       for (const pr of prs) await this.client(project).attachLink(ticket.linearId as string, pr.url, `${pr.repo} #${pr.number}: ${pr.title}`)
+    },
+    buildLogReady: async (ticket, markdown, project) => {
+      if (!{ ...DEFAULT_LINEAR_PUSH, ...project.linear.push }.buildLog) return
+      await this.client(project).saveIssueDocument(ticket.linearId as string, BUILD_LOG_DOCUMENT, markdown)
     }
   }
 

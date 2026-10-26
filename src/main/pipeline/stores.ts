@@ -232,6 +232,13 @@ export class TicketStore {
     this.db.prepare('INSERT INTO ticket_log (ticket_id, kind, message) VALUES (?, ?, ?)').run(ticketId, kind, message)
   }
 
+  /** Deletes the log from the last plan approval on, for a reset to Plan. Returns how many entries went. */
+  dropLogSincePlanApproved(ticketId: number): number {
+    const from = this.db.prepare("SELECT MAX(id) AS id FROM ticket_log WHERE ticket_id = ? AND message LIKE 'Plan approved%'").get(ticketId) as { id: number | null }
+    if (from.id === null) return 0
+    return this.db.prepare('DELETE FROM ticket_log WHERE ticket_id = ? AND id >= ?').run(ticketId, from.id).changes
+  }
+
   logEntries(ticketId: number): { ts: string; kind: string; message: string }[] {
     return this.db.prepare('SELECT ts, kind, message FROM ticket_log WHERE ticket_id = ? ORDER BY id').all(ticketId) as { ts: string; kind: string; message: string }[]
   }

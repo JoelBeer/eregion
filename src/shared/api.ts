@@ -140,6 +140,11 @@ export interface EregionApi {
   pauseTicket(ticketId: number): Promise<void>
   resumeTicket(ticketId: number): Promise<void>
   discardTicket(ticketId: number): Promise<void>
+  /**
+   * Back to Plan as if the plan had just been written: the runs since (still counted in Costs), their log,
+   * outputs, environment and branch go, and the plan waits for your approval. Not once PRs are open.
+   */
+  resetToPlan(ticketId: number): Promise<void>
   startServices(ticketId: number): Promise<void>
   stopServices(ticketId: number): Promise<void>
   /**
@@ -314,6 +319,7 @@ export const API_METHODS = [
   'pauseTicket',
   'resumeTicket',
   'discardTicket',
+  'resetToPlan',
   'startServices',
   'stopServices',
   'openInEditor',

@@ -1,12 +1,13 @@
+import { buildLog } from '@shared/buildLog'
 import type { Repo } from '@shared/model'
-import { parsePrDescription } from '@shared/outputs'
+import { parsePrDescription, parseReview, type Review } from '@shared/outputs'
 import { ciState } from '@shared/cards'
-import { checkIgnored, DEFAULT_CI, nextStage, type StageConfig } from '@shared/pipeline'
+import { checkIgnored, DEFAULT_CI, nextStage, verdictFile, type StageConfig } from '@shared/pipeline'
 import type { Ticket } from '@shared/tickets'
 import type { GitHub } from '../integrations/github'
 import type { Runner } from '../runner/types'
 import { gitIn, hasOrigin, pushBranch } from '../workspace/git'
-import type { PipelineEngine } from './engine'
+import { historyName, type PipelineEngine } from './engine'
 import type { PrStore, StoredPr } from './prs'
 
 /** The PR body: the description, plus links to the ticket's other PRs under "## Linked". */
@@ -145,6 +146,7 @@ export class PrStage {
     } catch (error) {
       this.deps.tickets.log(ticket.id, 'warning', `Couldn't attach the PRs to Linear: ${(error as Error).message}`)
     }
+    await this.writeBuildLog(this.deps.tickets.get(ticket.id), stage)
     const current = this.deps.tickets.get(ticket.id)
     await this.engine.runActions(current, stage.after)
     const drafts = opened.some((pr) => pr.draft)
@@ -155,6 +157,51 @@ export class PrStage {
     }
     if (drafts) this.deps.tickets.log(ticket.id, 'github', 'The PRs stay drafts while Watch CI runs. Mark them ready for review once CI is complete.')
     await this.engine.advance(current)
+  }
+
+  /**
+   * Writes build-log.md (every run from the stage after Plan up to this PR stage, then the review verdicts
+   * and build notes) and hands it to the tracker. The PRs are open either way, so failures are only logged.
+   */
+  private async writeBuildLog(ticket: Ticket, prStage: StageConfig): Promise<void> {
+    try {
+      const project = this.engine.project(ticket)
+      const repoNames = project.repos.map((repo) => repo.name)
+      const stages = this.engine.stages(ticket)
+      const covered = stages.slice(stages.findIndex((stage) => stage.kind === 'plan') + 1, stages.findIndex((stage) => stage.id === prStage.id) + 1)
+      const names = new Map(covered.map((stage) => [stage.id, stage.name]))
+      const runs = this.deps.agents
+        .ticketRuns(ticket.id)
+        .filter((item) => names.has(item.run.stage))
+        .map((item) => ({ ...item, stageName: names.get(item.run.stage) as string }))
+      const verdicts: { stageName: string; reviews: Review[] }[] = []
+      for (const stage of covered) {
+        const file = verdictFile(stage)
+        if (!file) continue
+        const reviews: Review[] = []
+        // Each pass's verdict is kept in history/ when its stage ends.
+        for (let loop = 1; loop <= ticket.loop; loop++) {
+          const text = await this.engine.readOutput(ticket, `history/${historyName(file, String(loop))}`)
+          const review = text === null ? null : parseReview(text, repoNames).review
+          if (review) reviews.push(review)
+        }
+        verdicts.push({ stageName: stage.name, reviews })
+      }
+      const markdown = buildLog({
+        ticket: { key: ticket.key, title: ticket.title, branch: ticket.branch },
+        runs,
+        verdicts,
+        buildNotes: await this.engine.readOutput(ticket, 'build-notes.md'),
+        writtenAt: new Date(),
+        folders: { [await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)]: '', [await this.engine.outputsDir(ticket)]: 'outputs/' }
+      })
+      const runner = this.engine.runner(project)
+      await runner.writeFile(runner.join(await this.engine.outputsDir(ticket), 'build-log.md'), markdown)
+      this.deps.tickets.log(ticket.id, 'pipeline', 'Wrote the build log (build-log.md)')
+      await this.deps.integrations?.buildLogReady?.(ticket, markdown, project)
+    } catch (error) {
+      this.deps.tickets.log(ticket.id, 'warning', `Couldn't write the build log or send it to Linear: ${(error as Error).message}`)
+    }
   }
 
   /**

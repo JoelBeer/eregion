@@ -36,7 +36,7 @@ function issue(identifier: string, overrides: Partial<LinearIssue> = {}): Record
 }
 
 /** A Linear stand-in that answers by query text, and records every call. */
-function fakeLinear(handlers: { assigned?: () => unknown[]; byId?: (ids: string[]) => unknown[] } = {}) {
+function fakeLinear(handlers: { assigned?: () => unknown[]; byId?: (ids: string[]) => unknown[]; documents?: () => { id: string; title: string }[] } = {}) {
   const calls: Call[] = []
   const fetchImpl: FetchLike = async (url, init) => {
     calls.push({ url, headers: init.headers, body: init.body })
@@ -51,7 +51,8 @@ function fakeLinear(handlers: { assigned?: () => unknown[]; byId?: (ids: string[
     if (query.includes('viewer')) return respond(200, { data: { viewer: { id: 'u-joel', name: 'Joel', email: 'joel@example.com', organization: { name: 'Word Magic' } } } })
     if (query.includes('issues(filter: $filter')) return respond(200, { data: { issues: { nodes: handlers.assigned?.() ?? [], pageInfo: { hasNextPage: false, endCursor: null } } } })
     if (query.includes('id: { in: $ids }')) return respond(200, { data: { issues: { nodes: handlers.byId?.(variables.ids as string[]) ?? [] } } })
-    if (query.includes('commentCreate') || query.includes('issueUpdate') || query.includes('attachmentLinkURL')) return respond(200, { data: { ok: { success: true } } })
+    if (query.includes('documents(first')) return respond(200, { data: { issue: { documents: { nodes: handlers.documents?.() ?? [] } } } })
+    if (query.includes('commentCreate') || query.includes('issueUpdate') || query.includes('attachmentLinkURL') || query.includes('documentCreate') || query.includes('documentUpdate')) return respond(200, { data: { ok: { success: true } } })
     return respond(200, { errors: [{ message: `Unexpected query: ${query.slice(0, 40)}` }] })
   }
   return { calls, fetchImpl }
@@ -215,7 +216,7 @@ describe('Linear hooks', () => {
     const auth = new LinearAuth(db, PLAIN_CODEC, linear.fetchImpl)
     await auth.useApiKey('lin_api_abc')
     const projects = new ProjectStore(db)
-    const project = projects.update(projects.create('Word Magic').id, { linear: { teamId: 't', statusByStage: { build: 'state-in-progress' }, push: { planComment: true, planDescription: true, prLinks: true } } })
+    const project = projects.update(projects.create('Word Magic').id, { linear: { teamId: 't', statusByStage: { build: 'state-in-progress' }, push: { planComment: true, planDescription: true, planDocument: false, prLinks: true, buildLog: false } } })
     const tickets = new TicketStore(db)
     const ticket = tickets.create({ projectId: project.id, key: 'WM-5', title: 'Hints', description: 'Stuck.', linearId: 'id-WM-5' })
     const { hooks } = new LinearSource(auth)
@@ -228,6 +229,39 @@ describe('Linear hooks', () => {
     expect(sent.map((call) => call.query.match(/(commentCreate|issueUpdate|attachmentLinkURL)/)?.[1])).toEqual(['commentCreate', 'issueUpdate', 'issueUpdate', 'attachmentLinkURL'])
     expect(sent[2].variables).toEqual({ id: 'id-WM-5', input: { stateId: 'state-in-progress' } })
     expect(sent[3].variables).toMatchObject({ url: 'https://github.com/me/app/pull/3', title: 'app #3: WM-5: Hints' })
+  })
+
+  it("puts the plan and the build log in the issue's resources, updating Eregion's earlier copies", async () => {
+    const db = openDatabase(':memory:')
+    let documents: { id: string; title: string }[] = []
+    const linear = fakeLinear({ documents: () => documents })
+    const auth = new LinearAuth(db, PLAIN_CODEC, linear.fetchImpl)
+    await auth.useApiKey('lin_api_abc')
+    const projects = new ProjectStore(db)
+    // Saved before the document switches existed: they're on by default.
+    const project = projects.update(projects.create('Word Magic').id, { linear: { teamId: 't', push: { planComment: false, planDescription: false, prLinks: false } } })
+    const tickets = new TicketStore(db)
+    const ticket = tickets.create({ projectId: project.id, key: 'WM-5', title: 'Hints', description: 'Stuck.', linearId: 'id-WM-5' })
+    const { hooks } = new LinearSource(auth)
+    const sent = (): { query: string; variables: Record<string, unknown> }[] => linear.calls.map((call) => JSON.parse(call.body) as { query: string; variables: Record<string, unknown> }).filter((call) => /document/i.test(call.query))
+
+    await hooks.planApproved?.(ticket, '# Plan\n', project)
+    await hooks.buildLogReady?.(ticket, '# Build log\n', project)
+    expect(sent().filter((call) => call.query.includes('documentCreate')).map((call) => call.variables.input)).toEqual([
+      { issueId: 'id-WM-5', title: 'Approved plan', content: '# Plan' },
+      { issueId: 'id-WM-5', title: 'Build log', content: '# Build log\n' }
+    ])
+
+    documents = [{ id: 'doc-1', title: 'Notes' }, { id: 'doc-2', title: 'Approved plan' }]
+    const before = sent().length
+    await hooks.planApproved?.(ticket, '# Plan B', project)
+    expect(sent().slice(before).at(-1)).toMatchObject({ query: expect.stringContaining('documentUpdate'), variables: { id: 'doc-2', input: { content: '# Plan B' } } })
+
+    const off = projects.update(project.id, { linear: { ...project.linear, push: { planComment: false, planDescription: false, planDocument: false, prLinks: false, buildLog: false } } })
+    const count = linear.calls.length
+    await hooks.planApproved?.(ticket, '# Plan C', off)
+    await hooks.buildLogReady?.(ticket, '# Build log', off)
+    expect(linear.calls.length).toBe(count)
   })
 })
 

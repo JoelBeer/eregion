@@ -1,6 +1,6 @@
 import type { AgentEvent } from '@shared/agent'
 import { builtInConnector, BUILT_IN_CONNECTORS, type AgentConnector } from '@shared/connectors'
-import type { CrewMember, RunView } from '@shared/runs'
+import type { CrewMember, RunSummary, RunView } from '@shared/runs'
 import type { Runner } from '../runner'
 import type { RunStore } from './runs'
 import { startAgent, type AgentSession, type AgentStartOptions, type PermissionProfile, type SessionOutcome } from './session'
@@ -142,6 +142,16 @@ export class AgentManager {
       queued: this.runs.queuedCount(runId),
       takesMessagesMidRun: this.connectorFor(run.adapter)?.capabilities.midRunMessages ?? false
     }
+  }
+
+  /** Takes runs off their ticket for a reset to Plan (Costs still counts them). */
+  markReset(runIds: number[]): void {
+    this.runs.markReset(runIds)
+  }
+
+  /** A ticket's runs, oldest first, each with everything it did. */
+  ticketRuns(ticketId: number): { run: RunSummary; events: AgentEvent[] }[] {
+    return this.runs.forTicket(ticketId).map((run) => ({ run, events: this.runs.events(run.id) }))
   }
 
   isLive(runId: number): boolean {

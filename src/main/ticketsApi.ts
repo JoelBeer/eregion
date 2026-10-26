@@ -36,6 +36,7 @@ export type TicketsApi = Pick<
   | 'pauseTicket'
   | 'resumeTicket'
   | 'discardTicket'
+  | 'resetToPlan'
   | 'startServices'
   | 'stopServices'
   | 'openInEditor'
@@ -122,7 +123,7 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     const repoNames = project.repos.map((repo) => repo.name)
     const dir = await engine.outputsDir(ticket)
     const read = (name: string): Promise<string | null> => engine.readOutput(ticket, name)
-    const [planText, notesText, reviewText, fixesText] = await Promise.all([read('plan.md'), read('build-notes.md'), read('review.json'), read('fixes.json')])
+    const [planText, notesText, reviewText, fixesText, buildLog] = await Promise.all([read('plan.md'), read('build-notes.md'), read('review.json'), read('fixes.json'), read('build-log.md')])
     const plan = planText === null ? null : parsePlan(planText, repoNames)
     const review = reviewText === null ? null : parseReview(reviewText, repoNames)
     const runner = engine.runner(project)
@@ -150,6 +151,7 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     }
     return {
       prDescriptions,
+      buildLog,
       dir,
       plan: plan && planText !== null ? { markdown: planText, parsed: plan, blockers: planApprovalBlockers(plan) } : null,
       buildNotes: notesText === null ? null : { markdown: notesText, parsed: parseBuildNotes(notesText) },
@@ -234,6 +236,11 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     pauseTicket: (ticketId) => engine.pause(ticketId),
     resumeTicket: (ticketId) => background(deps, ticketId, () => engine.resume(ticketId)),
     discardTicket: (ticketId) => engine.discard(ticketId),
+    resetToPlan: async (ticketId) => {
+      // Once PRs are open, reviewers can see the work, so it isn't Eregion's to take back.
+      if (deps.prs?.forTicket(ticketId).length) throw new Error('This ticket has PRs, so it can no longer be reset to Plan')
+      await engine.resetToPlan(ticketId)
+    },
     startServices: async (ticketId) => {
       const ticket = tickets.get(ticketId)
       if (ticket.slot === null) throw new Error("This ticket doesn't have an environment")

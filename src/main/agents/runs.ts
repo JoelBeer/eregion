@@ -81,8 +81,15 @@ export class RunStore {
     return toSummary(row)
   }
 
+  /** The ticket's runs, oldest first. Runs a reset to Plan took off the ticket aren't among them. */
   forTicket(ticketId: number): RunSummary[] {
-    return (this.db.prepare(`${SELECT_RUN} WHERE ticket_id = ? ORDER BY id`).all(ticketId) as RunRow[]).map(toSummary)
+    return (this.db.prepare(`${SELECT_RUN} WHERE ticket_id = ? AND reset_at IS NULL ORDER BY id`).all(ticketId) as RunRow[]).map(toSummary)
+  }
+
+  /** Takes runs off their ticket for a reset to Plan. They stay in the database, so Costs still counts them. */
+  markReset(runIds: number[]): void {
+    const mark = this.db.prepare("UPDATE runs SET reset_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+    for (const id of runIds) mark.run(id)
   }
 
   forChat(chatId: number): RunSummary[] {

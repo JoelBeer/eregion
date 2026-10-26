@@ -331,6 +331,26 @@ h3 {
   }
 }
 
+/* An output file on the ticket's Outputs tab: its name row opens and closes it. */
+.er-output-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.er-output-head:focus-visible {
+  outline: 2px solid var(--aqua-400, #76e1ef);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
 /* The conversation: what the agent said, with its tool calls folded under it (open with the chevron). */
 .er-said-block {
   display: flex;
