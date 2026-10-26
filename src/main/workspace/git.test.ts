@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { NativeRunner } from '../runner/native'
 import { git, makeRepo } from '../testing/git'
-import { GitError, pushBranch, syncWithOrigin } from './git'
+import { ensureWorktree, GitError, physicalPath, pushBranch, removeWorktree, syncWithOrigin } from './git'
 
 const runner = new NativeRunner()
 
@@ -72,5 +73,25 @@ describe.skipIf(process.platform === 'win32')('syncWithOrigin', () => {
     expect(git(clone, 'rev-parse', 'HEAD')).toBe(before)
     expect(existsSync(join(clone, '.git', 'rebase-merge')) || existsSync(join(clone, '.git', 'rebase-apply'))).toBe(false)
     expect(git(clone, 'status', '--porcelain')).toBe('')
+  })
+})
+
+describe.skipIf(process.platform === 'win32')('worktrees through a symlinked folder', () => {
+  // Like macOS's /var, which git sees as /private/var: Eregion names the path one way, git lists it the other.
+  it('finds, reuses and removes a worktree whose path goes through a symlink', async () => {
+    const repo = await makeRepo({ 'a.txt': 'one\n' })
+    const real = await realpath(await mkdtemp(join(tmpdir(), 'eregion-real-')))
+    const linked = join(await realpath(await mkdtemp(join(tmpdir(), 'eregion-link-'))), 'root')
+    await symlink(real, linked)
+    const path = join(linked, 'work', 'WM-1', 'app')
+
+    expect(await physicalPath(runner, path)).toBe(join(real, 'work', 'WM-1', 'app'))
+    expect(await ensureWorktree(runner, repo.clone, path, 'origin/main', 'wm-1')).toBe('created')
+    expect(await physicalPath(runner, path)).toBe(join(real, 'work', 'WM-1', 'app'))
+    expect(await ensureWorktree(runner, repo.clone, path, 'origin/main', 'wm-1')).toBe('reused')
+    await removeWorktree(runner, repo.clone, path)
+    expect(existsSync(path)).toBe(false)
+    expect(git(repo.clone, 'worktree', 'list')).not.toContain('WM-1')
+    git(repo.clone, 'branch', '-D', 'wm-1')
   })
 })

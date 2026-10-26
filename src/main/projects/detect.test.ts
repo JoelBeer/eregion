@@ -1,6 +1,8 @@
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import { git, makeRepo } from '../testing/git'
 import { detectRepo, githubRepoFromRemote, parseEnv, runtimeForHostPath } from './detect'
 
@@ -33,8 +35,27 @@ describe('parseEnv', () => {
   })
 })
 
+const PATH = process.env.PATH
+
+/** Whether this machine has Herd is the test's choice: folders holding a herd command come off PATH, and `withHerd` puts a stand-in on. */
+async function herdOnPath(withHerd: boolean): Promise<void> {
+  const dirs = (PATH ?? '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'herd')))
+  if (withHerd) {
+    const bin = await mkdtemp(join(tmpdir(), 'eregion-herd-'))
+    await writeFile(join(bin, 'herd'), '#!/bin/sh\n')
+    await chmod(join(bin, 'herd'), 0o755)
+    dirs.unshift(bin)
+  }
+  process.env.PATH = dirs.join(delimiter)
+}
+
 describe.skipIf(process.platform === 'win32')('detectRepo', () => {
+  afterEach(() => {
+    process.env.PATH = PATH
+  })
+
   it('suggests a Word Magic style recipe for a Laravel app with SQLite', async () => {
+    await herdOnPath(false)
     const { clone, origin } = await makeRepo(
       {
         'composer.json': '{"require":{"laravel/framework":"^13.0"}}',
@@ -66,6 +87,15 @@ describe.skipIf(process.platform === 'win32')('detectRepo', () => {
     expect(detection.recipe.services).toEqual([
       expect.objectContaining({ name: 'app', command: 'php artisan serve --host=0.0.0.0 --port={{app_port}}' })
     ])
+  })
+
+  it('links each ticket with Herd when Herd is installed, and unlinks it at teardown', async () => {
+    await herdOnPath(true)
+    const { clone } = await makeRepo({ 'composer.json': '{"require":{"laravel/framework":"^13.0"}}', artisan: '#!/usr/bin/env php', '.env.example': 'APP_URL=http://localhost:8100\n' })
+    const detection = await detectRepo(clone, 'linux')
+    expect(detection.facts).toContainEqual(expect.objectContaining({ label: 'Server', value: 'Herd' }))
+    expect(detection.recipe.setup.map((step) => step.config)).toContainEqual({ type: 'command', command: 'herd link {{repo.name | slug}}-{{ticket.key | slug}}' })
+    expect(detection.recipe.teardown[0].config).toEqual({ type: 'command', command: 'herd unlink {{repo.name | slug}}-{{ticket.key | slug}}' })
   })
 
   it('suggests a per-ticket MySQL database and its teardown', async () => {

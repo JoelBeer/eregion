@@ -29,6 +29,22 @@ export async function baseRef(runner: Runner, mainPath: string, branch: string):
   return { ref: branch, fetched }
 }
 
+/**
+ * The path with its symlinks resolved, the way git lists worktrees: on macOS a temp folder under /var is
+ * /private/var to git. A path that doesn't exist yet keeps its missing end on its nearest existing folder.
+ */
+export async function physicalPath(runner: Runner, path: string): Promise<string> {
+  const script = 'p=$1; rest=; while [ ! -d "$p" ] && [ "$p" != / ] && [ "$p" != . ]; do rest=/$(basename "$p")$rest; p=$(dirname "$p"); done; printf %s "$(cd "$p" && pwd -P)$rest"'
+  const result = await runner.exec(['sh', '-c', script, 'sh', path])
+  return result.code === 0 && result.stdout.trim() ? result.stdout.trim().replace(/^\/\//, '/') : path
+}
+
+/** Whether git has a worktree at `path`, however the path reaches it. */
+async function isWorktree(runner: Runner, mainPath: string, path: string): Promise<boolean> {
+  const known = await worktreePaths(runner, mainPath)
+  return known.includes(path) || known.includes(await physicalPath(runner, path))
+}
+
 /** Worktree paths git knows about for a repo. */
 export async function worktreePaths(runner: Runner, mainPath: string): Promise<string[]> {
   const output = await gitIn(runner, mainPath, ['worktree', 'list', '--porcelain'])
@@ -48,8 +64,7 @@ export async function branchExists(runner: Runner, mainPath: string, branch: str
  * onto the branch when the ticket now needs to change that repo.
  */
 export async function ensureWorktree(runner: Runner, mainPath: string, path: string, base: string, branch: string | null): Promise<'created' | 'reused' | 'switched'> {
-  const existing = (await worktreePaths(runner, mainPath)).includes(path)
-  if (existing) {
+  if (await isWorktree(runner, mainPath, path)) {
     if (!branch) return 'reused'
     const current = await gitIn(runner, path, ['branch', '--show-current'])
     if (current === branch) return 'reused'
@@ -72,7 +87,7 @@ export async function ensureWorktree(runner: Runner, mainPath: string, path: str
 }
 
 export async function removeWorktree(runner: Runner, mainPath: string, path: string): Promise<void> {
-  if ((await worktreePaths(runner, mainPath)).includes(path)) {
+  if (await isWorktree(runner, mainPath, path)) {
     await gitIn(runner, mainPath, ['worktree', 'remove', '--force', path])
   }
   await gitIn(runner, mainPath, ['worktree', 'prune'])
