@@ -211,6 +211,9 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
   }, [events.length])
 
   const [dictated, setDictated] = useState(false)
+  const input = useRef<HTMLTextAreaElement>(null)
+  // Set when dictation adds words, so the message box grows to show them once they're in.
+  const fitAfterDictation = useRef(false)
   const voice = useVoice()
   const connectors = useConnectors()
 
@@ -222,6 +225,8 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
       else if (view) await window.eregion.sendToRun(view.run.id, text, delivery, byVoice)
       setDraft('')
       setDictated(false)
+      // Back to one line, however tall dictation or a drag made it.
+      if (input.current) input.current.style.height = ''
       setError(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(caught))
@@ -235,10 +240,20 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
     if (viaShortcut && voice.settings.sendOnRelease) {
       void send('now', next, true)
     } else {
+      fitAfterDictation.current = true
       setDraft(next)
       setDictated(true)
     }
   })
+
+  useEffect(() => {
+    const box = input.current
+    if (!fitAfterDictation.current || !box) return
+    fitAfterDictation.current = false
+    // Grow to fit the words (up to half the window, past that it scrolls); never shrink a box you dragged taller.
+    const borders = box.offsetHeight - box.clientHeight
+    box.style.height = `${Math.max(box.offsetHeight, Math.min(box.scrollHeight + borders, window.innerHeight / 2))}px`
+  }, [draft])
 
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === ' ' && event.ctrlKey) {
@@ -330,6 +345,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
           </span>
         )}
         <textarea
+          ref={input}
           aria-label={`Message ${name}`}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -338,7 +354,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
           disabled={!canType}
           rows={1}
           placeholder={dictation.state === 'idle' ? hint : ''}
-          style={{ flex: 1, minWidth: 200, resize: 'none', font: 'inherit', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--forge-600)', background: 'var(--forge-900)', color: 'var(--term-text, #D6ECEF)' }}
+          style={{ flex: 1, minWidth: 200, minHeight: 40, maxHeight: '50vh', resize: 'vertical', font: 'inherit', fontFamily: 'var(--font-mono)', fontSize: 13, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--forge-600)', background: 'var(--forge-900)', color: 'var(--term-text, #D6ECEF)' }}
         />
         {!onSend && live && view?.takesMessagesMidRun && !waiting && (
           <button type="button" className="er-btn er-btn-onforge er-btn-sm" onClick={() => void send('queue')} disabled={!draft.trim()}>
