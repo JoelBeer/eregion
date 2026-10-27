@@ -18,6 +18,7 @@ import type { McpServerInfo, McpServerSpec, SkillInfo } from './tooling'
 import type { Chat, NewChat } from './forge'
 import type { CrewStats } from './crew'
 import type { CursorCostsStatus, GitHubAccount, GitHubSignIn, GitHubUser, ImportAssignees, LinearState, LinearStatus, LinearTeam, LinearUser, LinearViewer, PullRequest } from './integrations'
+import type { CommitRules, CommitStyle } from './commits'
 
 export interface RepoInput {
   name: string
@@ -25,6 +26,8 @@ export interface RepoInput {
   runtime: string
   defaultBranch: string
   githubRepo?: string | null
+  commitStyle?: CommitStyle
+  commitTypes?: string[]
 }
 
 export type StepInput = Pick<Step, 'config' | 'options'>
@@ -108,6 +111,8 @@ export interface EregionApi {
   suggestRecipe(repoId: number): Promise<RepoDetection>
   addRepo(projectId: number, input: RepoInput): Promise<Repo>
   updateRepo(id: number, patch: Partial<RepoInput>): Promise<Repo>
+  /** How a repo's commit messages and PR titles are written, worked out from its setting and commitlint config. */
+  getCommitRules(repoId: number): Promise<CommitRules>
   removeRepo(id: number): Promise<void>
   reorderRepos(projectId: number, repoIds: number[]): Promise<Repo[]>
 
@@ -145,6 +150,11 @@ export interface EregionApi {
    * outputs, environment and branch go, and the plan waits for your approval. Not once PRs are open.
    */
   resetToPlan(ticketId: number): Promise<void>
+  /**
+   * Carries on the ticket's latest conversation once its run has ended: the stage picks up again in Plan and the
+   * stages that run from their fields; elsewhere it's a read-only talk with whoever ran it.
+   */
+  continueTicketConversation(ticketId: number, text: string, dictated: boolean): Promise<void>
   startServices(ticketId: number): Promise<void>
   stopServices(ticketId: number): Promise<void>
   /**
@@ -250,6 +260,11 @@ export interface EregionApi {
   deleteChat(chatId: number): Promise<void>
   /** Sends to the chat's live session, or starts (or resumes) one. */
   sendToChat(chatId: number, text: string, dictated: boolean): Promise<{ runId: number }>
+  /**
+   * A Forge chat about the ticket's work, with the crew member of the run you're looking at (or of the ticket's
+   * stage). It reads the ticket's code, outputs and PRs, and changes nothing.
+   */
+  sendTicketToForge(ticketId: number, runId: number | null): Promise<Chat>
 
   getTicketPrs(ticketId: number): Promise<PullRequest[]>
   markPrsReady(ticketId: number): Promise<void>
@@ -291,6 +306,7 @@ export const API_METHODS = [
   'suggestRecipe',
   'addRepo',
   'updateRepo',
+  'getCommitRules',
   'removeRepo',
   'reorderRepos',
   'getRecipe',
@@ -320,6 +336,7 @@ export const API_METHODS = [
   'resumeTicket',
   'discardTicket',
   'resetToPlan',
+  'continueTicketConversation',
   'startServices',
   'stopServices',
   'openInEditor',
@@ -390,6 +407,7 @@ export const API_METHODS = [
   'updateChat',
   'deleteChat',
   'sendToChat',
+  'sendTicketToForge',
   'getTicketPrs',
   'markPrsReady',
   'updatePrDescription',

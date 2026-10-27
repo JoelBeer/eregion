@@ -1,5 +1,5 @@
 import type { Environment } from './environment'
-import type { Fix, ParsedBuildNotes, ParsedPlan, Review } from './outputs'
+import type { Fix, ParsedBuildNotes, ParsedPlan, ParsedSpec, Review } from './outputs'
 import type { StageConfig } from './pipeline'
 import type { RunSummary } from './runs'
 import type { TicketCard } from './tickets'
@@ -15,6 +15,8 @@ export interface TicketDetail {
 export interface TicketOutputs {
   dir: string
   plan: { markdown: string; parsed: ParsedPlan; blockers: string[] } | null
+  /** spec.md, when the ticket has one. */
+  spec: { markdown: string; parsed: ParsedSpec } | null
   buildNotes: { markdown: string; parsed: ParsedBuildNotes } | null
   review: { text: string; review: Review | null; problems: string[] } | null
   fixes: { text: string; fixes: Fix[] | null; problems: string[] } | null

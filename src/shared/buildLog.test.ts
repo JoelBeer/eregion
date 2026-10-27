@@ -50,7 +50,8 @@ describe('buildLog', () => {
         ]),
         run(2, 'review', 'Review', [{ kind: 'user', text: 'Stage: Review' }, { kind: 'text', text: 'Pass.' }], { adapter: 'cursor', model: 'gpt-5', endedAt: '2026-10-20 16:41:00' })
       ],
-      verdicts: [{ stageName: 'Review', reviews: [{ loop: 1, verdict: 'pass', summary: 'Good.', issues: [{ id: 'r1-1', severity: 'low', repo: 'app', file: 'hint.ts', line: 3, problem: 'Name | unclear', fix: 'Rename' }] }] }],
+      verdicts: [{ stageName: 'Review', reviews: [{ loop: 1, verdict: 'pass', summary: 'Good.', issues: [{ id: 'r1-1', severity: 'low', repo: 'app', file: 'hint.ts', line: 3, problem: 'Name | unclear', fix: 'Rename' }], spec: [{ id: 'S1', met: true, evidence: 'Two wrong guesses show the hint (ran it).' }] }] }],
+      spec: '# Spec · WM-1 · Show a hint\n\n## Behaviour\n- S1: Two wrong guesses show the first letter',
       buildNotes: '# Build notes\n\n## Summary\nAdded the hint.',
       writtenAt
     })
@@ -64,8 +65,10 @@ describe('buildLog', () => {
     expect(log).toContain('    line 12\n    ```\n    _... 8 more lines_')
     expect(log).not.toContain('line 13')
     expect(log).toContain('- Tool: `edited app/hint.ts`\n  - Error:\n\n    ```\n    Tool call was denied.\n    ```')
-    expect(log).toContain('## Appendix: reviews\n\n### Review\n\n> RESULT: PASS\n\nGood.\n\n| # | Severity | Where | Problem | Fix |')
+    expect(log).toContain('### Review\n\n> RESULT: PASS\n\nGood.\n\n| # | Severity | Where | Problem | Fix |')
     expect(log).toContain('| r1-1 | low | `app/hint.ts:3` | Name \\| unclear | Rename |')
+    expect(log).toContain('| Spec | Status | Evidence |\n|---|---|---|\n| S1 | Met | Two wrong guesses show the hint (ran it). |')
+    expect(log).toContain('## Appendix: reviews\n\n### Spec\n\n#### Spec · WM-1 · Show a hint\n\n##### Behaviour\n- S1: Two wrong guesses show the first letter')
     // The notes' headings sit under the appendix's.
     expect(log).toContain('### Build notes\n\n#### Build notes\n\n##### Summary\nAdded the hint.')
   })

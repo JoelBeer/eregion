@@ -267,5 +267,14 @@ export const migrations: string[] = [
   // When a reset to Plan took the run off its ticket. It's kept, so Costs still counts what it spent.
   `
   ALTER TABLE runs ADD COLUMN reset_at TEXT;
+  `,
+  // The ticket a Forge chat asks about, when it was sent from the ticket.
+  `
+  ALTER TABLE chats ADD COLUMN ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL;
+  `,
+  // How a repo wants its commit messages: 'detect' follows its commitlint config. Types override the config's.
+  `
+  ALTER TABLE repos ADD COLUMN commit_style TEXT NOT NULL DEFAULT 'detect';
+  ALTER TABLE repos ADD COLUMN commit_types TEXT NOT NULL DEFAULT '[]';
   `
 ]

@@ -100,6 +100,11 @@ function OutputsTab({ ticketId, outputs }: { ticketId: number; outputs: TicketOu
         <Markdown source={outputs.plan.markdown} />
       </OutputFile>
     ),
+    outputs.spec && (
+      <OutputFile key="spec" name="spec.md">
+        <Markdown source={outputs.spec.markdown} />
+      </OutputFile>
+    ),
     outputs.buildNotes && (
       <OutputFile key="notes" name="build-notes.md">
         <Markdown source={outputs.buildNotes.markdown} />
@@ -118,6 +123,19 @@ function OutputsTab({ ticketId, outputs }: { ticketId: number; outputs: TicketOu
         }
       >
         {review?.summary && <span>{review.summary}</span>}
+        {review && review.spec.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 14 }}>
+            <span className="label">Spec audit</span>
+            {review.spec.map((check) => (
+              <div key={check.id} style={{ display: 'flex', gap: 10 }}>
+                <StatusPill status={check.met ? 'passed' : 'failed'}>{check.met ? 'Met' : 'Not met'}</StatusPill>
+                <span>
+                  <span className="mono">{check.id}</span> · {check.evidence}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {review?.issues.map((issue) => (
           <div key={issue.id} style={{ display: 'flex', gap: 10, fontSize: 14 }}>
             <Severity severity={issue.severity} />
@@ -283,6 +301,10 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
   const discard = useAction(async () => {
     if (window.confirm('Move this ticket back to the Backlog? Its environment is torn down; its branch is kept.')) await window.eregion.discardTicket(ticketId)
   })
+  const toForge = useAction(async () => {
+    const chat = await window.eregion.sendTicketToForge(ticketId, runId)
+    navigate({ name: 'forge', projectId: chat.projectId, chatId: chat.id })
+  })
   const reset = useAction(async () => {
     if (window.confirm('Reset this ticket to Plan? Every run since the plan was approved is removed from the ticket (Costs still counts them), the code they wrote and the ticket branch are deleted, and the plan waits for your approval again.')) await window.eregion.resetToPlan(ticketId)
   })
@@ -309,6 +331,12 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
   const stage = stages[currentIndex]
   const viewedRun = detail.runs.find((run) => run.id === runId)
   const viewedStage = detail.stages.find((item) => item.id === viewedRun?.stage) ?? stage
+  const viewedCrew = crew.find((member) => member.id === viewedRun?.crewId) ?? crewForStage(viewedStage, crew)
+  // The latest run's conversation carries on once it has ended: the stage itself in Plan and the stages that run
+  // from their fields, a read-only talk anywhere else. Earlier runs stay as they ended.
+  const canCarryOn = Boolean(viewedRun && viewedRun.id === detail.runs.at(-1)?.id && viewedRun.sessionId && view && view.state !== 'running' && view.state !== 'waiting' && ticket.status !== 'running')
+  const resumesStage = Boolean(stage && viewedRun?.stage === stage.id && (stage.kind === 'plan' || isGenericStage(stage)))
+  const carryOnHint = resumesStage ? `Enter carries on ${viewedCrew?.name ?? 'the agent'}'s conversation in ${stage?.name}` : `Enter asks ${viewedCrew?.name ?? 'the agent'} about this work (read-only)`
   const nextStage = currentIndex >= 0 ? (stages[currentIndex + 1] ?? null) : null
   const builder = crewForStage(nextStage ?? undefined, crew)
   const tabs: { id: TicketTab; label: string }[] = [
@@ -335,6 +363,11 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
             Open in {SOURCE_NAMES[ticket.linear.source ?? 'linear']}
           </button>
         )}
+        {ticket.stage !== 'backlog' && (
+          <button type="button" className="er-btn er-btn-sm er-btn-ghost" onClick={() => void toForge.run()} disabled={toForge.pending} title="Ask questions about this ticket's work in the Forge, with the crew member of the run you're looking at">
+            Send to Forge
+          </button>
+        )}
         {ticket.status === 'running' && ticket.currentRunId !== null && (
           <>
             <button type="button" className="er-btn" onClick={() => void pause.run()} disabled={pause.pending} title="Stops the agent but keeps its conversation, so Resume carries on where it was">
@@ -358,7 +391,7 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
       </header>
 
       {ticket.stage !== 'backlog' && <Stepper steps={steps} />}
-      {(stopRun.error || discard.error || reset.error || pause.error) && <span className="error-text">{stopRun.error ?? discard.error ?? reset.error ?? pause.error}</span>}
+      {(stopRun.error || discard.error || reset.error || toForge.error || pause.error) && <span className="error-text">{stopRun.error ?? discard.error ?? reset.error ?? toForge.error ?? pause.error}</span>}
 
       {ticket.status === 'stopped' && stage && (
         <section className="panel" aria-label="Paused" style={{ border: '2px solid var(--primary-600)' }}>
@@ -427,8 +460,10 @@ export function TicketScreen({ projectId, ticketId, tab }: { projectId: number; 
               )}
               {(ticket.stage !== 'done' || runId !== null) && (
                 <SessionPanel
-                  crew={crew.find((member) => member.id === viewedRun?.crewId) ?? crewForStage(viewedStage, crew)}
+                  crew={viewedCrew}
                   view={view}
+                  onSend={canCarryOn ? (text, dictated) => window.eregion.continueTicketConversation(ticketId, text, dictated) : undefined}
+                  sendHint={carryOnHint}
                   stageLabel={`${viewedStage?.name ?? 'Stage'} · ${ticket.key}`}
                   placeholder={<span>Nothing has run yet.</span>}
                 />

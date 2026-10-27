@@ -192,6 +192,27 @@ One short paragraph: what will change for the user, in plain words.
 
 ## Done when
 - <a check someone could carry out>`,
+  spec: `# Spec · {{ticket.key}} · {{ticket.title}}
+
+## Problem
+What's wrong or missing today, from the user's side, in a few sentences.
+
+## Behaviour
+- S1: <one behaviour that must be true when the ticket is done, which someone can check from the outside>
+- S2: <…>
+
+## Contracts
+- <an API shape, schema change, event or interface other code or clients rely on>  (or: None)
+
+## Test seams
+- <where tests prove the behaviour: the highest seam, such as the HTTP endpoint or the page>
+
+## Out of scope
+- <what this ticket deliberately leaves alone>`,
+  spec_audit: `"spec": [
+    { "id": "S1", "status": "met", "evidence": "GET /api/invoices/12/download as another team returns 403 (ran it against the app); InvoiceDownloadTest covers it." },
+    { "id": "S2", "status": "not-met", "evidence": "The CSV export still uses the old column order. Raised as r1-2." }
+  ]`,
   build_notes: `# Build notes · {{ticket.key}} · pass {{loop}}
 
 ## Summary
@@ -275,6 +296,37 @@ You can read these repos for context. They are read-only here:
 {{workspace.repos}}
 {{/if}}
 Answer plainly and briefly. Don't change files.`
+
+/**
+ * What each stage is told about the spec. Eregion adds these to the stage's own prompt, so pipelines with prompts
+ * of their own get them too: Plan when its stage writes a spec, the others whenever the ticket has spec.md.
+ */
+export const SPEC_PROMPTS = {
+  plan: `The spec. Once the plan is agreed, also write {{outputs.dir}}/spec.md: what must be true when this ticket is done, from the user's side, and keep it up to date as the plan changes. Build is held to it and Review checks it item by item, so:
+- Write it from the ticket and this conversation, not by restating the plan's steps. It says what, never how.
+- Each behaviour under Behaviour gets an id (S1, S2…) and is something someone could check from the outside: a request and its response, a page and what it shows, a command and its result. Cover the edge cases the conversation settled.
+- Contracts are the shapes other code relies on: API requests and responses, schema, events. No file paths or code.
+- Keep it to this ticket. What it leaves alone goes under Out of scope.
+Eregion only enables approval once spec.md is valid too.
+
+spec.md format. Keep the headings exactly as shown:
+{{format.spec}}`,
+  build: `The approved spec:
+{{outputs.spec}}
+
+The spec says what must be true; the plan says how. If following the plan wouldn't meet the spec, meet the spec, and record the change under Deviations from the plan. If the spec itself can't be met as written, don't change what it means: describe why under Blocked and finish, because the spec has to change in Plan first. Make sure there's a test for each behaviour (S1, S2…) at the seam the spec names.`,
+  review: `The approved spec:
+{{outputs.spec}}
+
+Audit the spec first. Check every behaviour in it (S1, S2…) against the running app and the tests, whatever the plan or the builder's notes say. A behaviour that isn't met is a high issue: raise it as one, and the verdict is fail. Add the audit to review.json as a "spec" list with one entry for every behaviour, saying met or not-met and the evidence (what you ran, read or saw), like this:
+{{format.spec_audit}}`,
+  pr: `The approved spec:
+{{outputs.spec}}
+
+Write How to test from the spec's behaviours that this repo's changes affect, as steps a reviewer can follow.`,
+  context: `The approved spec, for what this ticket must do:
+{{outputs.spec}}`
+} as const
 
 /** Fills a stage prompt: the preamble, the stage text, then house rules, with formats inlined. */
 export function composePrompt(stagePrompt: string, houseRules: string, includePreamble = true): string {

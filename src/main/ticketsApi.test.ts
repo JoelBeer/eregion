@@ -6,6 +6,7 @@ import type { Ticket } from '@shared/tickets'
 import { createBackend, type Backend } from './api'
 import { openDatabase } from './db'
 import { makeRepo } from './testing/git'
+import { HINT_SPEC, HINT_SPEC_MET } from './testing/spec'
 
 const FAKE = ['node', resolve('src/main/testing/fake-claude.mjs')]
 
@@ -38,7 +39,8 @@ const failed = JSON.stringify({
   issues: [
     { id: 'r1-1', severity: 'high', repo: 'app', file: 'HINTS.md', line: null, problem: 'Empty.', fix: 'Fill it.' },
     { id: 'r1-2', severity: 'low', repo: 'app', file: 'HINTS.md', line: null, problem: 'Wordy.', fix: 'Trim.' }
-  ]
+  ],
+  spec: HINT_SPEC_MET
 })
 const fixes = JSON.stringify({
   loop: 2,
@@ -68,11 +70,11 @@ describe.skipIf(process.platform === 'win32')('ticket outputs and diff', () => {
     await writeFile(
       script,
       JSON.stringify([
-        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan }, reply: 'Ready.' },
+        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan, '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
         { when: 'Stage: Build, pass 1', write: { '{cwd}/app/HINTS.md': '', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
         { when: 'Stage: Review, loop 1', write: { '{outputs}/review.json': failed }, reply: 'Fail.' },
         { when: 'Stage: Build, pass 2', write: { '{cwd}/app/HINTS.md': 'First letter.\n', '{outputs}/build-notes.md': notes(2), '{outputs}/fixes.json': fixes }, reply: 'Fixed.' },
-        { when: 'Stage: Review, loop 2', write: { '{outputs}/review.json': JSON.stringify({ loop: 2, verdict: 'pass', summary: 'Good.', issues: [] }) }, reply: 'Pass.' }
+        { when: 'Stage: Review, loop 2', write: { '{outputs}/review.json': JSON.stringify({ loop: 2, verdict: 'pass', summary: 'Good.', issues: [], spec: HINT_SPEC_MET }) }, reply: 'Pass.' }
       ])
     )
     process.env.EREGION_FAKE_SCRIPT = script

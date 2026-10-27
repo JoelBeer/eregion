@@ -7,7 +7,7 @@ import { CrewAvatar, RobotAvatar } from '../components/RobotAvatar'
 import { SessionPanel, useRun } from '../components/SessionPanel'
 import { Chip } from '../components/ui'
 import { useAction, useQuery } from '../hooks'
-import { navigate } from '../router'
+import { href, navigate } from '../router'
 import { useCrew } from './Board'
 import { useConnectors } from '../agents'
 
@@ -183,7 +183,13 @@ function ChatView({ chat }: { chat: Chat }): ReactElement {
           Delete
         </button>
       </header>
-      {project && project.repos.length > 0 && (
+      {chat.ticketId !== null && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+          <span className="muted">Reads this ticket's work: its code, what each stage wrote, and its PRs (read-only).</span>
+          <a href={href({ name: 'ticket', projectId: chat.projectId, ticketId: chat.ticketId, tab: 'conversation' })}>Open the ticket</a>
+        </div>
+      )}
+      {chat.ticketId === null && project && project.repos.length > 0 && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
           <span className="muted">Can read:</span>
           {project.repos.map((repo) => (

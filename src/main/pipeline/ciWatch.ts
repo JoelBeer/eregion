@@ -5,6 +5,8 @@ import { checkIgnored, DEFAULT_CI, type CiSettings, type StageConfig } from '@sh
 import type { Ticket } from '@shared/tickets'
 import type { GitHub } from '../integrations/github'
 import { commitAll, gitIn, pushBranch } from '../workspace/git'
+import { commitRules } from '../workspace/commitRules'
+import { conventionalSubject } from '@shared/commits'
 import type { PipelineEngine } from './engine'
 import type { PrStore, StoredPr } from './prs'
 
@@ -299,7 +301,10 @@ export class CiWatcher {
         this.engine.stop(ended, 'ci_needs_you', `${check.name} on ${label}: ${fix.cause}`)
         return
       }
-      const sha = await commitAll(runner, worktree.path, `${ended.key}: fix ${check.name} (CI attempt ${attempt})`, `${fix.cause}\n\n${fix.note}`.trim())
+      // A repo that checks commit messages (CI lints every commit on the PR) gets a conventional one.
+      const rules = await commitRules(runner, repo)
+      const subject = rules.conventional ? conventionalSubject('fix', ended.key, `fix ${check.name} (ci attempt ${attempt})`) : `${ended.key}: fix ${check.name} (CI attempt ${attempt})`
+      const sha = await commitAll(runner, worktree.path, subject, `${fix.cause}\n\n${fix.note}`.trim())
       if (!sha) {
         this.prs.finishAttempt(pr.id, attempt, 'needs-you', runId)
         this.engine.stop(ended, 'ci_needs_you', `The fix for ${check.name} on ${label} changed no files`)

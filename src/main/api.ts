@@ -45,6 +45,8 @@ import { AgentsInfo } from './agentsInfo'
 import { RulesStore } from './rules'
 import { Tooling } from './tooling'
 import { Forge } from './forge'
+import { ticketContext } from './ticketContext'
+import { commitRules } from './workspace/commitRules'
 
 /** What the API needs from Electron, kept behind an interface so the API can be tested without it. */
 export interface Host {
@@ -201,7 +203,8 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     userName: () => getSetting(db, 'user.name', host.userName ?? 'you'),
     houseRules,
     tooling: (project, repoPaths) => tooling.forRun(project, repoPaths, {}),
-    changed: (projectId) => host.emit({ type: 'forge-changed', projectId })
+    changed: (projectId) => host.emit({ type: 'forge-changed', projectId }),
+    ticketContext: (ticketId, folder) => ticketContext({ engine, tickets, workspaces, prs }, ticketId, folder)
   })
   const prStage = new PrStage(engine, prs, github)
   const ci = new CiWatcher(engine, prs, github)
@@ -341,6 +344,10 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       changed(repo.projectId)
       return repo
     },
+    getCommitRules: async (repoId) => {
+      const repo = projects.repo(repoId)
+      return commitRules(runnerForRuntimeId(repo.runtime), repo)
+    },
     removeRepo: async (id) => {
       const repo = projects.repo(id)
       projects.removeRepo(id)
@@ -478,6 +485,16 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
     updateChat: async (chatId, patch) => forge.update(chatId, patch),
     deleteChat: (chatId) => forge.remove(chatId),
     sendToChat: (chatId, text, dictated) => forge.send(chatId, text, dictated),
+    sendTicketToForge: async (ticketId, runId) => {
+      const ticket = tickets.get(ticketId)
+      // The crew member of the run you're looking at, or of the stage the ticket is in.
+      const run = runId !== null ? runs.get(runId) : null
+      const stages = engine.stages(ticket)
+      const stage = stages.find((item) => item.id === (run?.ticketId === ticketId ? run.stage : ticket.stage)) ?? stages.find((item) => item.id === ticket.stage) ?? stages[0]
+      const ran = run?.ticketId === ticketId && run.crewId !== null ? crew.list().find((item) => item.id === run.crewId) : undefined
+      const member = ran ?? engine.crewFor(stage)
+      return forge.createForTicket(ticket.projectId, ticket, { crewId: member.id, adapter: member.adapter, model: member.model })
+    },
 
     // After the tickets API: in a project linked to Linear, createTicket makes a Linear issue.
     ...integrationsApi

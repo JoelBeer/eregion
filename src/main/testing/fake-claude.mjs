@@ -6,7 +6,8 @@
 // appears in a turn's message runs: it writes files ({outputs} is the prompt's outputs folder,
 // {cwd} the working directory), then replies. Rules with "once": true are used up when they run.
 // [{ "when": "Stage: Plan", "write": { "{outputs}/plan.md": "..." }, "reply": "...", "once": true }]
-// A rule with "limit": true writes its files, then ends the turn on a usage-limit notice.
+// A rule with "limit": true writes its files, then ends the turn on a usage-limit notice. {resume} in a reply
+// is the session it was asked to carry on, or "new".
 //
 // Without a script, a message controls the turn:
 //   "write <file> <content>"  writes a file, then replies
@@ -18,6 +19,8 @@ import { dirname } from 'node:path'
 import { createInterface } from 'node:readline'
 
 const sessionId = 'fake-session-1'
+// The session it was asked to carry on (--resume), which a scripted reply can show as {resume}.
+const resumed = process.argv.includes('--resume') ? process.argv[process.argv.indexOf('--resume') + 1] : null
 let cost = 0
 let outputs = ''
 const rules = process.env.EREGION_FAKE_SCRIPT ? JSON.parse(readFileSync(process.env.EREGION_FAKE_SCRIPT, 'utf8')) : null
@@ -43,7 +46,7 @@ async function scripted(text) {
   if (rule.delayMs) await sleep(rule.delayMs)
   Object.entries(rule.write ?? {}).forEach(([path, content], i) => writeFile(path, content, i))
   if (rule.limit) return { limit: true }
-  return rule.reply ?? 'Done.'
+  return (rule.reply ?? 'Done.').replaceAll('{resume}', resumed ?? 'new')
 }
 
 async function turn(text) {

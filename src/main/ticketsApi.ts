@@ -1,7 +1,7 @@
 import type { PrStore } from './pipeline/prs'
 import type { EregionApi } from '@shared/api'
 import { ticketCard } from '@shared/cards'
-import { parseBuildNotes, parseFixes, parsePlan, parseReview, planApprovalBlockers } from '@shared/outputs'
+import { parseBuildNotes, parseFixes, parsePlan, parseReview, parseSpec } from '@shared/outputs'
 import { parseDiff, type RepoDiff, type TicketOutputs } from '@shared/ticketDetail'
 import type { Ticket, TicketCard } from '@shared/tickets'
 import type { Db } from './db'
@@ -37,6 +37,7 @@ export type TicketsApi = Pick<
   | 'resumeTicket'
   | 'discardTicket'
   | 'resetToPlan'
+  | 'continueTicketConversation'
   | 'startServices'
   | 'stopServices'
   | 'openInEditor'
@@ -123,9 +124,10 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     const repoNames = project.repos.map((repo) => repo.name)
     const dir = await engine.outputsDir(ticket)
     const read = (name: string): Promise<string | null> => engine.readOutput(ticket, name)
-    const [planText, notesText, reviewText, fixesText, buildLog] = await Promise.all([read('plan.md'), read('build-notes.md'), read('review.json'), read('fixes.json'), read('build-log.md')])
+    const [planText, specText, notesText, reviewText, fixesText, buildLog] = await Promise.all([read('plan.md'), read('spec.md'), read('build-notes.md'), read('review.json'), read('fixes.json'), read('build-log.md')])
     const plan = planText === null ? null : parsePlan(planText, repoNames)
-    const review = reviewText === null ? null : parseReview(reviewText, repoNames)
+    const spec = specText === null ? null : parseSpec(specText)
+    const review = reviewText === null ? null : parseReview(reviewText, repoNames, spec?.behaviours.map((behaviour) => behaviour.id))
     const runner = engine.runner(project)
     const listing = await runner.exec(['sh', '-c', 'ls -1 "$1" 2>/dev/null; true', 'sh', runner.join(dir, 'history')])
     // fixes.json answers the review before its Build pass, which is kept in history once a newer review runs.
@@ -153,7 +155,8 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
       prDescriptions,
       buildLog,
       dir,
-      plan: plan && planText !== null ? { markdown: planText, parsed: plan, blockers: planApprovalBlockers(plan) } : null,
+      plan: plan && planText !== null ? { markdown: planText, parsed: plan, blockers: await engine.approvalBlockers(ticket, plan) } : null,
+      spec: spec && specText !== null ? { markdown: specText, parsed: spec } : null,
       buildNotes: notesText === null ? null : { markdown: notesText, parsed: parseBuildNotes(notesText) },
       review: reviewText === null || !review ? null : { text: reviewText, review: review.review, problems: review.problems },
       fixes: fixesText === null ? null : (() => {
@@ -236,6 +239,7 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     pauseTicket: (ticketId) => engine.pause(ticketId),
     resumeTicket: (ticketId) => background(deps, ticketId, () => engine.resume(ticketId)),
     discardTicket: (ticketId) => engine.discard(ticketId),
+    continueTicketConversation: (ticketId, text, dictated) => engine.continueConversation(ticketId, text, dictated),
     resetToPlan: async (ticketId) => {
       // Once PRs are open, reviewers can see the work, so it isn't Eregion's to take back.
       if (deps.prs?.forTicket(ticketId).length) throw new Error('This ticket has PRs, so it can no longer be reset to Plan')

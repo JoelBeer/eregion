@@ -210,6 +210,13 @@ function StageEditor({ stage, stages, crew, onChange, onMove, onRemove }: { stag
         <span className="muted">Who runs it</span>
         <CrewPicker stage={stage} crew={crew} onChange={onChange} />
 
+        {stage.kind === 'plan' && (
+          <>
+            <span className="muted">Spec</span>
+            <Switch label="Also write spec.md: what must be true when the ticket is done. Build is held to it and Review checks it item by item." checked={stage.spec !== false} onChange={(spec) => onChange({ ...stage, spec })} />
+          </>
+        )}
+
         {generic && (
           <>
             <span className="muted">Works in</span>

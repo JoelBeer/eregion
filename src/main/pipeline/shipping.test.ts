@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,7 +7,9 @@ import { createBackend, type Backend } from '../api'
 import { openDatabase } from '../db'
 import { FakeGitHub } from '../testing/fake-github'
 import { git, makeRepo } from '../testing/git'
+import { ticketContext } from '../ticketContext'
 import { checkChanges } from './ciWatch'
+import { HINT_SPEC, HINT_SPEC_MET } from '../testing/spec'
 
 const FAKE = ['node', resolve('src/main/testing/fake-claude.mjs')]
 
@@ -68,11 +70,13 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     await writeFile(
       script,
       JSON.stringify([
-        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan }, reply: 'Ready.' },
+        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan, '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
         { when: 'Stage: Build', write: { '{cwd}/app/hint.txt': 'h\n', '{outputs}/build-notes.md': notes }, reply: 'Built.' },
-        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [] }) }, reply: 'Pass.' },
+        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [], spec: HINT_SPEC_MET }) }, reply: 'Pass.' },
         { when: 'Stage: PR', write: { '{outputs}/pr-app.md': pr }, reply: 'Wrote pr-app.md.' },
-        { when: 'Stage: Watch CI, fix attempt 1', write: { '{cwd}/app/hint.txt': 'H\n', '{outputs}/ci-fix.json': ciFix }, reply: 'Capitalised the hint.' }
+        { when: 'Stage: Watch CI, fix attempt 1', write: { '{cwd}/app/hint.txt': 'H\n', '{outputs}/ci-fix.json': ciFix }, reply: 'Capitalised the hint.' },
+        { when: 'Why a capital', reply: 'The test expects one (carried on {resume}).' },
+        { when: 'What changed', reply: 'The hint file (new chat {resume}).' }
       ])
     )
     process.env.EREGION_FAKE_SCRIPT = script
@@ -166,6 +170,33 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     expect(merged).toMatchObject({ state: 'merged', mergedAt: '2026-10-20T08:05:34Z', checksScope: 'all' })
     expect(merged.checkedAt).toBeTruthy()
     expect(backend.tickets.logEntries(ticket.id).map((entry) => entry.message)).toEqual(expect.arrayContaining(['app #1: tests failed, lint started, codecov/project failed', 'app #1: tests passed']))
+
+    // Done, the fixer's conversation carries on as a read-only talk: the ticket stays as it is.
+    const fixer = (await api.getTicket(ticket.id)).runs.at(-1)
+    expect(fixer?.stage).toBe('ci')
+    await api.continueTicketConversation(ticket.id, 'Why a capital?', false)
+    const talked = await until(backend, ticket.id, () => backend.agents.ticketRuns(ticket.id).at(-1)?.events.some((event) => event.kind === 'text') === true)
+    expect(talked).toMatchObject({ stage: 'done', status: 'done', currentRunId: null })
+    const talk = backend.agents.ticketRuns(ticket.id).at(-1)
+    expect(talk?.run).toMatchObject({ stage: 'ci', crewId: fixer?.crewId })
+    expect(talk?.events.filter((event) => event.kind === 'user' || event.kind === 'text').map((event) => (event as { text: string }).text)).toEqual(['Why a capital?', `The test expects one (carried on ${fixer?.sessionId}).`])
+
+    // Send to Forge: a chat about the ticket with whoever ran the run you're looking at, reading its outputs and diff.
+    const chat = await api.sendTicketToForge(ticket.id, fixer?.id ?? null)
+    expect(chat).toMatchObject({ ticketId: ticket.id, crewId: fixer?.crewId, title: 'WM-1: Show a hint after two wrong guesses' })
+    const { runId: chatRun } = await api.sendToChat(chat.id, 'What changed?', false)
+    const deadline = Date.now() + 10_000
+    while (!backend.agents.view(chatRun).events.some((event) => event.kind === 'text') && Date.now() < deadline) await new Promise((wait) => setTimeout(wait, 50))
+    expect(backend.agents.view(chatRun).events.find((event) => event.kind === 'text')).toMatchObject({ text: 'The hint file (new chat new).' })
+    expect((await api.listChats(project.id)).find((item) => item.id === chat.id)?.title).toBe('WM-1: Show a hint after two wrong guesses')
+    // What the chat is told: the environment is gone, so it reads the outputs and the branch's diff.
+    const context = await ticketContext(backend, ticket.id, await mkdtemp(join(tmpdir(), 'eregion-context-')))
+    expect(context.repoPaths).toEqual({})
+    expect(context.text).toContain('ticket WM-1, "Show a hint after two wrong guesses", which is finished')
+    expect(context.text).toContain('- app #1, merged, checks passed: ')
+    expect(context.text).toMatch(/hint\.txt +\| +1 \+/)
+    const diff = context.text.match(/- app: (.+changes-app\.diff)/)?.[1] as string
+    expect(await readFile(diff, 'utf8')).toContain('+H')
     await backend.shutdown()
   }, 120_000)
 
@@ -174,9 +205,9 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     await writeFile(
       script,
       JSON.stringify([
-        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan }, reply: 'Ready.' },
+        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan, '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
         { when: 'Stage: Build', write: { '{cwd}/app/hint.txt': 'h\n', '{outputs}/build-notes.md': notes }, reply: 'Built.' },
-        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [] }) }, reply: 'Pass.' },
+        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [], spec: HINT_SPEC_MET }) }, reply: 'Pass.' },
         { when: 'Stage: PR', write: { '{outputs}/pr-app.md': pr }, reply: 'Done.' },
         {
           when: 'skip the database tests',

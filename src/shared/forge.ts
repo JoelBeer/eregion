@@ -12,6 +12,8 @@ export interface Chat {
   model: string
   /** Repos the chat can read, as a read-only plan checkout. */
   repoIds: number[]
+  /** The ticket the chat asks about (sent from the ticket screen): it reads that ticket's work. */
+  ticketId: number | null
   createdAt: string
   updatedAt: string
   costUsd: number

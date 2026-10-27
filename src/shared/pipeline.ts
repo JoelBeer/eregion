@@ -61,6 +61,8 @@ export interface StageConfig {
   /** Linear workflow state to set when a ticket enters the stage. */
   linearState?: string | null
   ci?: CiSettings
+  /** Plan only: also write spec.md, the behaviour Build, Review and PR are held to. On unless switched off. */
+  spec?: boolean
 }
 
 export const DEFAULT_CI: CiSettings = {
@@ -95,6 +97,7 @@ export function defaultPipeline(): StageConfig[] {
       workspace: 'plan-checkout',
       goal: PLAN_PROMPT,
       outputs: ['plan.md'],
+      spec: true,
       doneWhen: 'approval',
       before: [],
       after: [],
@@ -168,6 +171,12 @@ export function defaultPipeline(): StageConfig[] {
       ci: DEFAULT_CI
     }
   ]
+}
+
+/** Whether the pipeline's Plan stage writes a spec beside the plan. Pipelines from before the setting do. */
+export function writesSpec(stages: StageConfig[]): boolean {
+  const plan = stages.find((stage) => stage.kind === 'plan')
+  return Boolean(plan) && plan?.spec !== false
 }
 
 export function activeStages(stages: StageConfig[]): StageConfig[] {

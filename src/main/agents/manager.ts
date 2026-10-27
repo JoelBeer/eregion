@@ -22,7 +22,7 @@ export interface StartRun {
   settings?: string
   systemPrompt?: string
   resume?: string
-  recordPrompt?: boolean
+  recordPrompt?: boolean | string
   conversational?: boolean
   /** Replaces the agent CLI, for tests and the web preview. */
   command?: string[]

@@ -8,6 +8,7 @@ import { createBackend, type Backend } from '../api'
 import { openDatabase } from '../db'
 import { FakeGitHub } from '../testing/fake-github'
 import { git, makeRepo } from '../testing/git'
+import { HINT_SPEC, HINT_SPEC_MET } from '../testing/spec'
 
 const FAKE = ['node', resolve('src/main/testing/fake-claude.mjs')]
 
@@ -53,9 +54,10 @@ describe.skipIf(process.platform === 'win32')('Reset to Plan', () => {
     await writeFile(
       script,
       JSON.stringify([
-        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan }, reply: 'Ready.' },
+        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan, '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
         { when: 'Stage: Build', write: { '{cwd}/app/hint.txt': 'h\n', '{outputs}/build-notes.md': notes }, reply: 'Built.' },
-        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [] }) }, reply: 'Pass.' }
+        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [], spec: HINT_SPEC_MET }) }, reply: 'Pass.' },
+        { when: 'Split step 1', write: { '{outputs}/plan.md': plan.replace('1. [app] Add hint.txt', '1. [app] Add hint.txt\n2. [app] Test it') }, reply: 'Split it ({resume}).' }
       ])
     )
     process.env.EREGION_FAKE_SCRIPT = script
@@ -100,13 +102,27 @@ describe.skipIf(process.platform === 'win32')('Reset to Plan', () => {
     expect(outputs.plan).not.toBeNull()
     expect(outputs.buildNotes).toBeNull()
     expect(outputs.review).toBeNull()
-    expect(outputs.history.every((name) => name.startsWith('plan-'))).toBe(true)
+    // The plan and spec stay, with their approved copies.
+    expect(outputs.history.sort()).toEqual(['plan-approved-1.md', 'spec-approved-1.md'])
     expect(existsSync(join(outputs.dir, 'plan.md'))).toBe(true)
+    expect(outputs.spec?.parsed.behaviours.map((behaviour) => behaviour.id)).toEqual(['S1'])
+
+    // The plan's conversation has ended; carrying it on resumes Plan in the same conversation, and the
+    // revised plan waits for approval again.
+    const planner = (await api.getTicket(ticket.id)).runs.at(-1)
+    await api.continueTicketConversation(ticket.id, 'Split step 1 in two', false)
+    const revised = await until(backend, ticket.id, (item) => item.waitingFor === 'approval' && item.status === 'needs_you')
+    expect(revised.stage).toBe('plan')
+    const replanned = backend.agents.ticketRuns(ticket.id)
+    expect(replanned.map((item) => item.run.stage)).toEqual(['plan', 'plan'])
+    expect(replanned[1].events.filter((event) => event.kind === 'user' || event.kind === 'text').map((event) => (event as { text: string }).text)).toEqual(['Split step 1 in two', `Split it (${planner?.sessionId}).`])
+    expect((await api.getTicketOutputs(ticket.id)).plan?.markdown).toContain('2. [app] Test it')
+    expect((await api.getTicket(ticket.id)).log.map((entry) => entry.message)).toEqual(expect.arrayContaining([expect.stringMatching(/^You carried on .*'s conversation in Plan$/)]))
 
     // Approving again builds afresh from the base branch.
     await api.approvePlan(ticket.id)
     await until(backend, ticket.id, (item) => item.waitingFor === 'manual-review')
-    expect((await api.getTicket(ticket.id)).runs.map((run) => run.stage)).toEqual(['plan', 'build', 'review'])
+    expect((await api.getTicket(ticket.id)).runs.map((run) => run.stage)).toEqual(['plan', 'plan', 'build', 'review'])
     expect(git(repo.origin, 'log', '--format=%s', `refs/heads/${branch}`).split('\n')).toHaveLength(2)
 
     // Once a PR exists, the work is for reviewers to see: no reset.

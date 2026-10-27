@@ -2,6 +2,7 @@ import type { TicketSourceConfig } from './sources'
 import type { Variable } from './variables'
 import type { LinearStateType } from './integrations'
 import type { StageConfig } from './pipeline'
+import type { CommitStyle } from './commits'
 
 export type { Variable } from './variables'
 
@@ -19,12 +20,12 @@ export interface LinearProjectConfig {
   /** Seconds between syncs while Eregion is open. */
   pollSec?: number
   /** What goes back to Linear. Missing switches take their defaults, so projects saved before a switch existed get it. */
-  push?: { planComment: boolean; planDescription: boolean; planDocument?: boolean; prLinks: boolean; buildLog?: boolean }
+  push?: { planComment: boolean; planDescription: boolean; planDocument?: boolean; specDocument?: boolean; prLinks: boolean; buildLog?: boolean }
   /** Linear workflow state id to set when a ticket enters each stage, by stage id; `done` when it finishes. */
   statusByStage?: Record<string, string>
 }
 
-export const DEFAULT_LINEAR_PUSH = { planComment: true, planDescription: false, planDocument: true, prLinks: true, buildLog: true }
+export const DEFAULT_LINEAR_PUSH = { planComment: true, planDescription: false, planDocument: true, specDocument: true, prLinks: true, buildLog: true }
 
 export interface GithubProjectConfig {
   /** Open PRs as drafts, so the PR stage waits for you to mark them ready. */
@@ -46,6 +47,10 @@ export interface Repo {
   defaultBranch: string
   githubRepo: string | null
   position: number
+  /** How its commit messages and PR titles are written: its commitlint config's way unless chosen here. */
+  commitStyle: CommitStyle
+  /** Conventional types to allow instead of the config's (or the standard ones). Empty uses those. */
+  commitTypes: string[]
 }
 
 export interface Project {

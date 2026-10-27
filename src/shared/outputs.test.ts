@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseBuildNotes, parseCiFix, parseFixes, parsePlan, parsePrDescription, parseReview, planApprovalBlockers } from './outputs'
+import { parseBuildNotes, parseCiFix, parseFixes, parsePlan, parsePrDescription, parseReview, parseSpec, planApprovalBlockers, specApprovalBlockers } from './outputs'
 
 const PLAN = `# WM-12 · Hints after two wrong tries
 
@@ -93,7 +93,7 @@ describe('parseBuildNotes', () => {
     `# Build notes · WM-12 · pass 1\n\n## Summary\nAdded hints.\n\n## Changes\n### word-magic\n- app/x.php: hint\n\n## Checks run\n- php artisan test: passed\n\n## Decisions\n- None\n\n## Deviations from the plan\n- None\n\n## Blocked\n${blocked}\n`
 
   it('reads the summary and treats None as not blocked', () => {
-    expect(parseBuildNotes(notes('None'))).toEqual({ summary: 'Added hints.', blocked: null, blockedNote: null, problems: [] })
+    expect(parseBuildNotes(notes('None'))).toEqual({ summary: 'Added hints.', blocked: null, blockedNote: null, commits: {}, problems: [] })
   })
 
   it('treats "None." followed by a note as not blocked, keeping the note', () => {
@@ -135,6 +135,77 @@ describe('parseReview', () => {
     expect(parseReview('{nope', ['api']).problems[0]).toContain("isn't valid JSON")
     const { problems } = parseReview(JSON.stringify({ verdict: 'fail', summary: 's', issues: [issue, { ...issue, repo: 'mobile' }] }), ['api'])
     expect(problems).toEqual(['Issue 2: the id r1-1 is used twice', 'Issue 2: repo must be one of api'])
+  })
+})
+
+describe('parseSpec', () => {
+  const SPEC = `# Spec · WM-12 · Hints
+
+## Problem
+Children get stuck on a word.
+
+## Behaviour
+- S1: After two wrong tries the first letter shows
+- **S2**: A third wrong try shows the second letter too
+
+## Contracts
+- GET /api/words/{id}/hint returns { letters: string }
+
+## Test seams
+- The hint endpoint
+
+## Out of scope
+- Hints for the spelling test
+`
+
+  it('reads the numbered behaviours', () => {
+    const spec = parseSpec(SPEC)
+    expect(spec.problems).toEqual([])
+    expect(spec.problem).toBe('Children get stuck on a word.')
+    expect(spec.behaviours).toEqual([
+      { id: 'S1', text: 'After two wrong tries the first letter shows' },
+      { id: 'S2', text: 'A third wrong try shows the second letter too' }
+    ])
+    expect(specApprovalBlockers(SPEC)).toEqual([])
+  })
+
+  it('says what makes a spec unreadable, and blocks approval until it is written and valid', () => {
+    const broken = SPEC.replace('## Contracts', '## Interfaces').replace('- **S2**: A third', '- A third').replace('- S1:', '- S1:') + '- S1: again\n'
+    expect(parseSpec(broken).problems).toEqual(['Missing the "## Contracts" heading', `Can't read the behaviour "A third wrong try shows the second letter too". Start it with its id, like "S1: …"`])
+    expect(parseSpec(SPEC.replace('- **S2**:', '- S1:')).problems).toEqual(['S1 is used twice'])
+    expect(parseSpec(SPEC.replace(/- S1.*\n- \*\*S2.*\n/, '')).problems).toEqual(['The Behaviour section lists nothing to check'])
+    expect(specApprovalBlockers(null)).toEqual(["spec.md isn't written yet"])
+    expect(specApprovalBlockers(SPEC.replace('## Problem', '## Why'))).toEqual(['spec.md: Missing the "## Problem" heading'])
+  })
+})
+
+describe('parseReview with a spec', () => {
+  const high = { id: 'r1-1', severity: 'high', repo: 'api', file: 'a.php', line: null, problem: 'S2 not met.', fix: 'Show the second letter.' }
+  const met = (id: string) => ({ id, status: 'met', evidence: 'Ran it against the app.' })
+  const review = (fields: Record<string, unknown>) => JSON.stringify({ loop: 1, verdict: 'pass', summary: 's', issues: [], ...fields })
+
+  it('audits every behaviour once, with evidence', () => {
+    const { review: parsed, problems } = parseReview(review({ spec: [met('S1'), met('S2')] }), ['api'], ['S1', 'S2'])
+    expect(problems).toEqual([])
+    expect(parsed?.spec).toEqual([
+      { id: 'S1', met: true, evidence: 'Ran it against the app.' },
+      { id: 'S2', met: true, evidence: 'Ran it against the app.' }
+    ])
+    expect(parseReview(review({}), ['api'], ['S1', 'S2']).problems).toEqual(['spec must check every behaviour in spec.md: S1, S2'])
+    expect(parseReview(review({ spec: [met('S1'), met('S1'), met('S3')] }), ['api'], ['S1', 'S2']).problems).toEqual(['spec checks S1 more than once', 'spec has no check for S2', "S3 isn't a behaviour in spec.md"])
+    expect(parseReview(review({ spec: [{ id: 'S1', status: 'done', evidence: '' }] }), ['api'], ['S1']).problems).toEqual(['Spec check 1: status must be "met" or "not-met"', 'Spec check 1: evidence is missing (what you ran, read or saw)'])
+  })
+
+  it('fails the review when a behaviour is not met, as a high issue', () => {
+    const unmet = { id: 'S2', status: 'not-met', evidence: 'Only one letter shows.' }
+    expect(parseReview(review({ spec: [met('S1'), unmet] }), ['api'], ['S1', 'S2']).problems).toEqual(["The verdict is pass, but S2 isn't met", "S2 isn't met, so raise it as a high issue too"])
+    const { review: parsed, problems } = parseReview(review({ verdict: 'fail', issues: [high], spec: [met('S1'), unmet] }), ['api'], ['S1', 'S2'])
+    expect(problems).toEqual([])
+    expect(parsed?.spec[1]).toEqual({ id: 'S2', met: false, evidence: 'Only one letter shows.' })
+  })
+
+  it("doesn't ask for an audit when the ticket has no spec", () => {
+    expect(parseReview(review({}), ['api']).review?.spec).toEqual([])
   })
 })
 

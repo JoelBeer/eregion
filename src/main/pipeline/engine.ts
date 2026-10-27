@@ -1,9 +1,9 @@
 import { usageLimitDetail, usageLimitMessage } from '@shared/agent'
 import type { Environment } from '@shared/environment'
 import { branchName, type Project, type Repo } from '@shared/model'
-import { parseBuildNotes, parseFixes, parsePlan, parseReview, planApprovalBlockers, type ParsedBuildNotes, type ParsedPlan, type Review } from '@shared/outputs'
-import { isGenericStage, nextStage, readsVerdict, sendBackTarget, stageAccess, stageById, verdictFile, type StageConfig, type StageKind } from '@shared/pipeline'
-import { composePrompt } from '@shared/prompts'
+import { parseBuildNotes, parseFixes, parsePlan, parseReview, parseSpec, planApprovalBlockers, specApprovalBlockers, type ParsedBuildNotes, type ParsedPlan, type Review } from '@shared/outputs'
+import { isGenericStage, nextStage, readsVerdict, sendBackTarget, stageAccess, stageById, verdictFile, writesSpec, type StageConfig, type StageKind } from '@shared/pipeline'
+import { composePrompt, SPEC_PROMPTS } from '@shared/prompts'
 import type { CrewMember } from '@shared/runs'
 import { nextFreeSlot } from '@shared/slots'
 import { render } from '@shared/template'
@@ -17,6 +17,8 @@ import type { ProjectStore } from '../projects/store'
 import type { Runner } from '../runner'
 import type { RunnerFor } from '../runner/types'
 import { branchExists, changedFiles, commitAll, discardChanges, gitIn, gitOk, hasOrigin, pushBranch, syncWithOrigin } from '../workspace/git'
+import { commitRules } from '../workspace/commitRules'
+import { commitPrompt, conventionalSubject, prTitlePrompt, subjectProblems, type CommitRules } from '@shared/commits'
 import type { Workspaces } from '../workspace/workspaces'
 import type { PipelineStore, TicketPatch, TicketStore } from './stores'
 
@@ -30,6 +32,8 @@ export interface EngineSettings {
 export interface Integrations {
   stageEntered?(ticket: Ticket, stage: StageConfig, project: Project): Promise<void>
   planApproved?(ticket: Ticket, planMarkdown: string, project: Project): Promise<void>
+  /** The spec approved with the plan, when the pipeline writes one. */
+  specApproved?(ticket: Ticket, specMarkdown: string, project: Project): Promise<void>
   prsOpened?(ticket: Ticket, prs: { repo: string; number: number; url: string; title: string }[], project: Project): Promise<void>
   /** The build log, written once the PRs are open (build-log.md). */
   buildLogReady?(ticket: Ticket, markdown: string, project: Project): Promise<void>
@@ -214,7 +218,78 @@ export class PipelineEngine {
       branch: ticket.branch ?? '',
       ...values
     }
-    return render(composePrompt(stage.goal, this.deps.settings.houseRules(project)), (name) => all[name] ?? '').text
+    const spec = await this.readOutput(ticket, 'spec.md')
+    all['outputs.spec'] = spec ?? ''
+    const additions = [this.specPrompt(ticket, stage, spec !== null), await this.commitMessagePrompt(ticket, stage)].filter(Boolean)
+    return render(composePrompt([stage.goal, ...additions].join('\n\n'), this.deps.settings.houseRules(project)), (name) => all[name] ?? '').text
+  }
+
+  /** The ticket's changing repos whose commit messages (and PR titles) are checked, with how. */
+  async checkedRepos(ticket: Ticket): Promise<{ name: string; rules: CommitRules }[]> {
+    const project = this.project(ticket)
+    const runner = this.runner(project)
+    const repos: { name: string; rules: CommitRules }[] = []
+    for (const repo of project.repos.filter((item) => ticket.affectedRepos.includes(item.name))) {
+      const rules = await commitRules(runner, repo)
+      if (rules.conventional) repos.push({ name: repo.name, rules })
+    }
+    return repos
+  }
+
+  /** What a stage that commits is told about checked commit messages, and PR about checked titles. */
+  private async commitMessagePrompt(ticket: Ticket, stage: StageConfig): Promise<string | null> {
+    const commits = isGenericStage(stage) && stageAccess(stage) === 'changes' && stage.after.some((action) => action.type === 'commit')
+    if (!commits && stage.kind !== 'pr') return null
+    const repos = await this.checkedRepos(ticket)
+    if (repos.length === 0) return null
+    return commits ? commitPrompt(repos, ticket.key) : prTitlePrompt(repos, ticket.key)
+  }
+
+  /**
+   * The commit subject for each repo that has changes and checks its commit messages, from build-notes.md's
+   * "## Commit", or what's wrong with them.
+   */
+  private async commitSubjects(ticket: Ticket, environment: Environment, notes: ParsedBuildNotes | null): Promise<{ subjects: Record<string, string>; problems: string[] }> {
+    const project = this.project(ticket)
+    const runner = this.runner(project)
+    const subjects: Record<string, string> = {}
+    const problems: string[] = []
+    for (const state of environment.repos.filter((item) => item.branch !== null)) {
+      const repo = project.repos.find((item) => item.id === state.repoId)
+      if (!repo) continue
+      const rules = await commitRules(runner, repo)
+      // A stage that writes no build notes gets a plain subject when it commits.
+      if (!notes || !rules.conventional || (await changedFiles(runner, state.path)).length === 0) continue
+      const subject = notes.commits[repo.name]
+      if (!subject) {
+        problems.push(`${repo.name} checks commit messages, so add "- ${repo.name}: <type>(${ticket.key}): <summary>" under "## Commit"`)
+        continue
+      }
+      const wrong = subjectProblems(subject, rules, ticket.key)
+      if (wrong.length > 0) problems.push(`${repo.name}'s commit subject "${subject}": ${wrong.join('; ')}`)
+      else subjects[repo.name] = subject
+    }
+    return { subjects, problems }
+  }
+
+  /**
+   * What a stage is told about the spec, on top of its own prompt: Plan writes one when its stage says so; once
+   * the ticket has spec.md, stages that change files are held to it, Review audits it, PR tests from it, and the
+   * rest get it for context.
+   */
+  private specPrompt(ticket: Ticket, stage: StageConfig, hasSpec: boolean): string | null {
+    if (stage.kind === 'plan') return writesSpec(this.stages(ticket)) ? SPEC_PROMPTS.plan : null
+    if (!hasSpec) return null
+    if (stage.kind === 'review') return SPEC_PROMPTS.review
+    if (stage.kind === 'pr') return SPEC_PROMPTS.pr
+    if (isGenericStage(stage) && stageAccess(stage) === 'changes') return SPEC_PROMPTS.build
+    return SPEC_PROMPTS.context
+  }
+
+  /** Why the plan (and its spec, when the pipeline writes one) can't be approved yet. */
+  async approvalBlockers(ticket: Ticket, plan: ParsedPlan): Promise<string[]> {
+    const blockers = planApprovalBlockers(plan)
+    return writesSpec(this.stages(ticket)) ? [...blockers, ...specApprovalBlockers(await this.readOutput(ticket, 'spec.md'))] : blockers
   }
 
   /**
@@ -247,6 +322,8 @@ export class PipelineEngine {
       cwd: options.cwd,
       prompt: resume ? `${options.note ?? RESUME_MESSAGE}\nOutputs folder: ${outputs}` : options.prompt,
       resume,
+      // Your message carrying on the conversation shows as yours, without the line Eregion adds to it.
+      recordPrompt: resume && options.note ? options.note : undefined,
       profile: options.profile,
       addDirs: [outputs],
       mcpConfig: tooling?.mcpConfig,
@@ -489,7 +566,11 @@ export class PipelineEngine {
       const plan = this.plan(current, markdown)
       const open = plan.questions.filter((question) => !question.answered).length
       if (open > 0) this.needsYou(current, 'answers', `${open} ${open === 1 ? 'question' : 'questions'} waiting for you`)
-      else this.needsYou(current, 'approval', planApprovalBlockers(plan).length === 0 ? 'The plan is ready for your approval' : 'The plan needs fixing before it can be approved')
+      else {
+        const blockers = await this.approvalBlockers(current, plan)
+        const what = writesSpec(this.stages(current)) ? 'The plan and spec are' : 'The plan is'
+        this.needsYou(current, 'approval', blockers.length === 0 ? `${what} ready for your approval` : `Not ready for approval yet: ${blockers[0]}`)
+      }
     })
   }
 
@@ -501,8 +582,9 @@ export class PipelineEngine {
       const markdown = await this.readOutput(ticket, 'plan.md')
       if (markdown === null) throw new Error("There's no plan.md yet")
       const plan = this.plan(ticket, markdown)
-      const blockers = planApprovalBlockers(plan)
+      const blockers = await this.approvalBlockers(ticket, plan)
       if (blockers.length > 0) throw new Error(blockers.join('. '))
+      const spec = writesSpec(this.stages(ticket)) ? await this.readOutput(ticket, 'spec.md') : null
       ticket = this.endRun(ticket)
       ticket = this.update(
         ticketId,
@@ -510,9 +592,11 @@ export class PipelineEngine {
         `Plan approved. Changes: ${plan.repos.filter((repo) => repo.changes).map((repo) => repo.name).join(', ')}`
       )
       await this.keepHistory(ticket, 'plan.md', `plan-approved-${ticket.loop}.md`)
+      if (spec !== null) await this.keepHistory(ticket, 'spec.md', `spec-approved-${ticket.loop}.md`)
       // What goes back to Linear is the project's choice (setup step 6).
       try {
         await this.deps.integrations?.planApproved?.(ticket, markdown, this.project(ticket))
+        if (spec !== null) await this.deps.integrations?.specApproved?.(ticket, spec, this.project(ticket))
       } catch (error) {
         this.deps.tickets.log(ticketId, 'warning', `Couldn't post the plan to Linear: ${(error as Error).message}`)
       }
@@ -609,7 +693,10 @@ export class PipelineEngine {
           notes = parseBuildNotes(text)
           if (notes.problems.length > 0) problems.push({ file: output, problems: notes.problems })
         } else if (output === ownVerdict) {
-          const parsed = parseReview(text, project.repos.map((repo) => repo.name))
+          // Review audits every behaviour in the ticket's spec, when it has one.
+          const spec = stage.kind === 'review' ? await this.readOutput(current, 'spec.md') : null
+          const specIds = spec === null ? [] : parseSpec(spec).behaviours.map((behaviour) => behaviour.id)
+          const parsed = parseReview(text, project.repos.map((repo) => repo.name), specIds)
           verdict = parsed.review
           if (!parsed.review) problems.push({ file: output, problems: parsed.problems })
         }
@@ -619,6 +706,9 @@ export class PipelineEngine {
         this.stop(this.deps.tickets.get(current.id), 'blocked', notes.blocked)
         return
       }
+      // Repos that check commit messages get the subject the builder gave, once it passes their rules.
+      const commits = environment && access === 'changes' && stage.after.some((action) => action.type === 'commit') && (!notes || notes.problems.length === 0) ? await this.commitSubjects(current, environment, notes) : null
+      if (commits && commits.problems.length > 0) problems.push({ file: 'build-notes.md', problems: commits.problems })
       if (previous) {
         const fixesText = await this.readOutput(current, 'fixes.json')
         const fixes = fixesText === null ? ["fixes.json wasn't written"] : parseFixes(fixesText, previous.issueIds).problems
@@ -639,7 +729,7 @@ export class PipelineEngine {
       for (const output of [...stage.outputs, ...(previous ? ['fixes.json'] : [])]) await this.keepHistory(ended, output, historyName(output, String(ended.loop)))
 
       if (environment && access === 'read-only') await this.discardStageChanges(ended, environment, crew)
-      if (environment && access === 'changes' && !(await this.commitAndPush(ended, stage, notes?.summary ?? '', environment))) return
+      if (environment && access === 'changes' && !(await this.commitAndPush(ended, stage, notes?.summary ?? '', environment, commits?.subjects ?? {}))) return
 
       if (stage.doneWhen === 'command' && stage.doneCommand) {
         const runner = this.runner(project)
@@ -676,12 +766,19 @@ export class PipelineEngine {
   }
 
   /** Commits and pushes the stage's work when its after-actions say so. Returns false when the ticket stopped. */
-  private async commitAndPush(ticket: Ticket, stage: StageConfig, summary: string, environment: Environment): Promise<boolean> {
-    const runner = this.runner(this.project(ticket))
+  private async commitAndPush(ticket: Ticket, stage: StageConfig, summary: string, environment: Environment, subjects: Record<string, string> = {}): Promise<boolean> {
+    const project = this.project(ticket)
+    const runner = this.runner(project)
     if (stage.after.some((action) => action.type === 'commit')) {
       const commits: string[] = []
       for (const repo of environment.repos.filter((item) => item.branch !== null)) {
-        const sha = await commitAll(runner, repo.path, `${ticket.key}: ${ticket.title} (${stage.name.toLowerCase()} pass ${ticket.loop})`, summary)
+        // A repo that checks commit messages gets the builder's subject; a stage without build notes gets a plain chore one.
+        const config = project.repos.find((item) => item.id === repo.repoId)
+        const rules = config ? await commitRules(runner, config) : null
+        const subject = rules?.conventional
+          ? (subjects[repo.name] ?? conventionalSubject('chore', ticket.key, `${stage.name} pass ${ticket.loop}`))
+          : `${ticket.key}: ${ticket.title} (${stage.name.toLowerCase()} pass ${ticket.loop})`
+        const sha = await commitAll(runner, repo.path, subject, summary)
         if (sha) commits.push(`${repo.name} ${sha}`)
       }
       this.deps.tickets.log(ticket.id, 'git', commits.length ? `Committed ${commits.join(', ')}` : 'Nothing to commit')
@@ -905,6 +1002,64 @@ export class PipelineEngine {
     })
   }
 
+  /**
+   * Carries on the ticket's latest conversation with your message, once its run has ended. In Plan and the stages
+   * that run from their fields, when the run is the current stage's, the stage itself picks up again in the same
+   * conversation and checks its output as usual when the turn ends (the plan waits for approval again, a verdict is
+   * read again). Anywhere else (PR, Watch CI, a finished ticket) it's a read-only talk with whoever ran it: the
+   * ticket carries on as it was, and nothing is committed or pushed. Earlier runs can't be carried on.
+   */
+  continueConversation(ticketId: number, text: string, dictated = false): Promise<void> {
+    return this.serial(ticketId, async () => {
+      const message = text.trim()
+      if (!message) throw new Error('Write something first')
+      const ticket = this.deps.tickets.get(ticketId)
+      const latest = this.deps.agents.ticketRuns(ticketId).at(-1)?.run
+      if (!latest) throw new Error(`${ticket.key} has no conversation to carry on yet`)
+      if (this.deps.agents.liveState(latest.id)) {
+        this.deps.agents.send(latest.id, message, 'now', dictated)
+        return
+      }
+      if (ticket.status === 'running') throw new Error(`${ticket.key} is running: wait for it, or stop it first`)
+      if (!latest.sessionId || !this.deps.agents.canFollowUp(latest.id)) throw new Error("This agent can't carry on the conversation")
+      const stages = this.stages(ticket)
+      const stage = this.stage(ticket)
+      const project = this.project(ticket)
+      if (stage && latest.stage === stage.id && (stage.kind === 'plan' || isGenericStage(stage))) {
+        this.resuming.set(ticketId, latest.sessionId)
+        const crew = this.crewFor(stage)
+        await this.runHandler(this.update(ticketId, { status: 'running', waitingFor: null, stopReason: null, stopDetail: null }, `You carried on ${crew.name}'s conversation in ${stage.name}`), stage, message)
+        return
+      }
+      const runStage = stageById(stages, latest.stage)
+      const member = (latest.crewId !== null ? this.deps.crew.list().find((item) => item.id === latest.crewId) : undefined) ?? (runStage ? this.crewFor(runStage) : undefined)
+      if (!member) throw new Error(`Nobody can carry on ${runStage?.name ?? latest.stage}: add a crew member first`)
+      // The agent finds its saved conversation by the folder it ran in, so the talk starts in the same one.
+      const inPlanCheckout = runStage?.kind === 'plan' || (runStage && isGenericStage(runStage) && runStage.workspace !== 'ticket-worktrees')
+      const cwd = inPlanCheckout ? await this.deps.workspaces.planFolder(project) : await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)
+      const runner = this.runner(project)
+      await runner.exec(['mkdir', '-p', cwd])
+      const environment = this.deps.workspaces.get(this.environmentKey(ticket))
+      const outputs = await this.outputsDir(ticket)
+      this.deps.agents.start({
+        ticketId,
+        stage: latest.stage,
+        loop: latest.loop,
+        crew: { ...member, adapter: latest.adapter, model: latest.model },
+        runner,
+        cwd,
+        prompt: message,
+        resume: latest.sessionId,
+        profile: 'chat',
+        addDirs: [outputs, ...(environment ? Object.values(this.worktreePaths(environment)) : [])],
+        conversational: true,
+        recordPrompt: true
+      })
+      this.deps.tickets.log(ticketId, 'pipeline', `You carried on ${member.name}'s conversation from ${runStage?.name ?? latest.stage} (read-only)`)
+      this.deps.onTicketChanged(this.deps.tickets.get(ticketId))
+    })
+  }
+
   /** Whether the ticket's next run carries on a paused conversation (so the stage keeps what it already wrote). */
   isResuming(ticketId: number): boolean {
     return this.resuming.has(ticketId)
@@ -966,9 +1121,9 @@ export class PipelineEngine {
       const removed = runs.filter((run) => run.stage !== plan.id)
       this.deps.agents.markReset(removed.map((run) => run.id))
       this.deps.tickets.dropLogSincePlanApproved(ticketId)
-      // Everything the later stages wrote goes; the plan and the earlier approved plans stay.
+      // Everything the later stages wrote goes; the plan and spec, and their earlier approved versions, stay.
       const runner = this.runner(project)
-      await runner.exec(['sh', '-c', 'cd "$1" 2>/dev/null && find . -type f ! -path ./plan.md ! -path "./history/plan-*" -delete; true', 'sh', await this.outputsDir(ticket)])
+      await runner.exec(['sh', '-c', 'cd "$1" 2>/dev/null && find . -type f ! -path ./plan.md ! -path ./spec.md ! -path "./history/plan-*" ! -path "./history/spec-*" -delete; true', 'sh', await this.outputsDir(ticket)])
       const names = this.stages(ticket)
       const counts = [...new Set(removed.map((run) => run.stage))].map((id) => {
         const n = removed.filter((run) => run.stage === id).length

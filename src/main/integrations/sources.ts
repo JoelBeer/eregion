@@ -43,7 +43,7 @@ export interface TicketSource {
   /** A new issue in the tracker, assigned to you, for New ticket in a linked project. */
   create?(project: Project, input: { title: string; description: string }): Promise<SourceIssue>
   /** Pipeline hooks: status as the ticket moves, the approved plan, PR links, the build log. */
-  hooks: Pick<Integrations, 'stageEntered' | 'ticketDone' | 'planApproved' | 'prsOpened' | 'buildLogReady'>
+  hooks: Pick<Integrations, 'stageEntered' | 'ticketDone' | 'planApproved' | 'specApproved' | 'prsOpened' | 'buildLogReady'>
 }
 
 export interface SyncResult {
@@ -271,6 +271,7 @@ export function sourceIntegrations(sync: IssueSync, notify: (title: string, body
     stageEntered: hook('stageEntered') as (ticket: Ticket, stage: StageConfig, project: Project) => Promise<void>,
     ticketDone: hook('ticketDone') as (ticket: Ticket, project: Project) => Promise<void>,
     planApproved: hook('planApproved') as (ticket: Ticket, markdown: string, project: Project) => Promise<void>,
+    specApproved: hook('specApproved') as Integrations['specApproved'],
     prsOpened: hook('prsOpened') as Integrations['prsOpened'],
     buildLogReady: hook('buildLogReady') as Integrations['buildLogReady'],
     notify

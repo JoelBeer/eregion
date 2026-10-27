@@ -3,7 +3,8 @@ import type { RepoDetection } from '@shared/api'
 import { BADGE_COLORS, cleanInitials, type Repo } from '@shared/model'
 import { NavIcon } from '../../components/icons'
 import { ProjectBadge } from '../../components/ui'
-import { useAction } from '../../hooks'
+import type { CommitStyle } from '@shared/commits'
+import { useAction, useQuery } from '../../hooks'
 import { SetupFooter, type StepProps } from './ProjectSetup'
 
 function runtimeLabel(runtime: string): string {
@@ -45,6 +46,7 @@ function RepoCard({ repo, first, last, onMove }: { repo: Repo; first: boolean; l
           GitHub repo
         </label>
         <input id={`gh-${repo.id}`} className="input mono" style={{ maxWidth: 320 }} placeholder="owner/name" value={draft.githubRepo} onChange={(event) => setDraft({ ...draft, githubRepo: event.target.value })} />
+        <CommitSettings repo={repo} />
       </div>
       {dirty && (
         <button type="button" className="er-btn er-btn-primary er-btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => void save.run()} disabled={save.pending}>
@@ -53,6 +55,57 @@ function RepoCard({ repo, first, last, onMove }: { repo: Repo; first: boolean; l
       )}
       {(save.error || remove.error) && <span className="error-text">{save.error ?? remove.error}</span>}
     </section>
+  )
+}
+
+const STYLE_LABELS: Record<CommitStyle, string> = {
+  detect: "Follow the repo's commitlint config",
+  eregion: "Eregion's: PP-123: <ticket title> (build pass 1)",
+  conventional: 'Conventional: <type>(PP-123): <summary>'
+}
+
+/** How the repo's commit messages and PR titles are written, and what that works out to. */
+function CommitSettings({ repo }: { repo: Repo }): ReactElement {
+  const [types, setTypes] = useState(repo.commitTypes.join(', '))
+  useEffect(() => setTypes(repo.commitTypes.join(', ')), [repo])
+  const rules = useQuery(() => window.eregion.getCommitRules(repo.id), [repo.id, repo.commitStyle, repo.commitTypes.join(',')]).data
+  const save = useAction((patch: { commitStyle?: CommitStyle; commitTypes?: string[] }) => window.eregion.updateRepo(repo.id, patch))
+  const typeList = types.split(',').map((type) => type.trim()).filter(Boolean)
+  return (
+    <>
+      <label className="muted" htmlFor={`commits-${repo.id}`}>
+        Commit messages
+      </label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <select id={`commits-${repo.id}`} className="select" style={{ maxWidth: 420 }} value={repo.commitStyle} onChange={(event) => void save.run({ commitStyle: event.target.value as CommitStyle })}>
+          {(Object.keys(STYLE_LABELS) as CommitStyle[]).map((style) => (
+            <option key={style} value={style}>
+              {STYLE_LABELS[style]}
+            </option>
+          ))}
+        </select>
+        {rules && (
+          <span className="muted" style={{ fontSize: 13 }}>
+            {rules.conventional
+              ? `Conventional, from ${rules.source}: ${rules.types.join(', ')}. Build commits, CI fixes and PR titles look like ${rules.types.includes('feat') ? 'feat' : rules.types[0]}(PP-123): show the hint after two wrong guesses.`
+              : repo.commitStyle === 'detect'
+                ? "No conventional commitlint config found, so Eregion's own messages are used."
+                : "Eregion's own messages."}
+          </span>
+        )}
+        {repo.commitStyle !== 'eregion' && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input className="input mono" aria-label="Commit types" style={{ maxWidth: 420, flex: 1 }} placeholder="Types to allow instead (optional): feat, fix, chore" value={types} onChange={(event) => setTypes(event.target.value)} />
+            {typeList.join(',') !== repo.commitTypes.join(',') && (
+              <button type="button" className="er-btn er-btn-sm" onClick={() => void save.run({ commitTypes: typeList })} disabled={save.pending}>
+                Save types
+              </button>
+            )}
+          </div>
+        )}
+        {save.error && <span className="error-text">{save.error}</span>}
+      </div>
+    </>
   )
 }
 

@@ -183,11 +183,13 @@ export interface SessionPanelProps {
   history?: AgentEvent[]
   /** Takes over sending, so the composer stays open between runs (the Forge starts one on demand). */
   onSend?: (text: string, dictated: boolean) => Promise<void>
+  /** The message box's hint while onSend is waiting for a message. */
+  sendHint?: string
   /** Skills you've allowed, offered by the / button. */
   skills?: string[]
 }
 
-export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHeight = 420, history, onSend, skills }: SessionPanelProps): ReactElement {
+export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHeight = 420, history, onSend, sendHint, skills }: SessionPanelProps): ReactElement {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -277,7 +279,7 @@ export function SessionPanel({ crew, view, stageLabel, path, placeholder, minHei
   const hint = onSend
     ? view?.state === 'running'
       ? `${name} is answering. Enter sends a follow-up.`
-      : `Ask ${name} anything. Enter sends.`
+      : (sendHint ?? `Ask ${name} anything. Enter sends.`)
     : !view
       ? `Nothing running for ${name} yet`
       : !live

@@ -1,12 +1,14 @@
 import { buildLog } from '@shared/buildLog'
 import type { Repo } from '@shared/model'
-import { parsePrDescription, parseReview, type Review } from '@shared/outputs'
+import { parsePrDescription, parseReview, parseSpec, type Review } from '@shared/outputs'
 import { ciState } from '@shared/cards'
 import { checkIgnored, DEFAULT_CI, nextStage, verdictFile, type StageConfig } from '@shared/pipeline'
 import type { Ticket } from '@shared/tickets'
 import type { GitHub } from '../integrations/github'
 import type { Runner } from '../runner/types'
 import { gitIn, hasOrigin, pushBranch } from '../workspace/git'
+import { commitRules } from '../workspace/commitRules'
+import { subjectProblems } from '@shared/commits'
 import { historyName, type PipelineEngine } from './engine'
 import type { PrStore, StoredPr } from './prs'
 
@@ -35,6 +37,12 @@ export class PrStage {
     private readonly github: GitHub
   ) {
     engine.registerStage('pr', (ticket, stage, note) => this.run(ticket, stage, note))
+  }
+
+  /** A repo that lints PR titles like commit messages gets its title checked that way. */
+  private async titleCheck(ticket: Ticket, repo: Repo): Promise<((title: string) => string[]) | undefined> {
+    const rules = await commitRules(this.engine.runner(this.engine.project(ticket)), repo)
+    return rules.conventional ? (title) => subjectProblems(title, rules, ticket.key) : undefined
   }
 
   private get deps(): PipelineEngine['deps'] {
@@ -90,7 +98,7 @@ export class PrStage {
           problems.push(`${file} wasn't written`)
           continue
         }
-        const parsed = parsePrDescription(markdown, current.key)
+        const parsed = parsePrDescription(markdown, current.key, await this.titleCheck(current, item.repo))
         if (parsed.description) descriptions.set(item.repo.id, parsed.description)
         else problems.push(`${file}: ${parsed.problems.join('; ')}`)
       }
@@ -174,6 +182,8 @@ export class PrStage {
         .ticketRuns(ticket.id)
         .filter((item) => names.has(item.run.stage))
         .map((item) => ({ ...item, stageName: names.get(item.run.stage) as string }))
+      const spec = await this.engine.readOutput(ticket, 'spec.md')
+      const specIds = spec === null ? [] : parseSpec(spec).behaviours.map((behaviour) => behaviour.id)
       const verdicts: { stageName: string; reviews: Review[] }[] = []
       for (const stage of covered) {
         const file = verdictFile(stage)
@@ -182,7 +192,9 @@ export class PrStage {
         // Each pass's verdict is kept in history/ when its stage ends.
         for (let loop = 1; loop <= ticket.loop; loop++) {
           const text = await this.engine.readOutput(ticket, `history/${historyName(file, String(loop))}`)
-          const review = text === null ? null : parseReview(text, repoNames).review
+          // Earlier reviews may predate the spec, so a review without an audit still counts.
+          const parsed = text === null ? null : parseReview(text, repoNames, specIds)
+          const review = parsed?.review ?? (text === null ? null : parseReview(text, repoNames).review)
           if (review) reviews.push(review)
         }
         verdicts.push({ stageName: stage.name, reviews })
@@ -191,6 +203,7 @@ export class PrStage {
         ticket: { key: ticket.key, title: ticket.title, branch: ticket.branch },
         runs,
         verdicts,
+        spec,
         buildNotes: await this.engine.readOutput(ticket, 'build-notes.md'),
         writtenAt: new Date(),
         folders: { [await this.deps.workspaces.ticketFolder(project, project.repos[0], ticket.key)]: '', [await this.engine.outputsDir(ticket)]: 'outputs/' }
@@ -258,9 +271,10 @@ export class PrStage {
   /** Saves an edited description and updates the PR on GitHub. */
   async updateDescription(ticketId: number, repoName: string, markdown: string): Promise<void> {
     const ticket = this.deps.tickets.get(ticketId)
-    const parsed = parsePrDescription(markdown, ticket.key)
-    if (!parsed.description) throw new Error(parsed.problems.join('. '))
     const project = this.engine.project(ticket)
+    const config = project.repos.find((item) => item.name === repoName)
+    const parsed = parsePrDescription(markdown, ticket.key, config ? await this.titleCheck(ticket, config) : undefined)
+    if (!parsed.description) throw new Error(parsed.problems.join('. '))
     const runner = this.engine.runner(project)
     await runner.writeFile(runner.join(await this.engine.outputsDir(ticket), `pr-${repoName}.md`), markdown)
     const prs = this.prs.forTicket(ticketId)

@@ -69,7 +69,8 @@ function describe(stage: StageConfig, crewName: (stage: StageConfig) => string):
     'If it fails': stage.onFailure ? `back to ${stage.onFailure.returnTo}, at most ${stage.onFailure.maxLoops} times` : '—',
     Afterwards: stage.after.map((action) => (action.type === 'run' ? `run ${action.command}` : ACTION_LABELS[action.type])).join(', ') || 'nothing',
     On: stage.enabled ? 'yes' : 'no',
-    'CI settings': stage.ci ? JSON.stringify(stage.ci) : '—'
+    'CI settings': stage.ci ? JSON.stringify(stage.ci) : '—',
+    ...(stage.kind === 'plan' ? { 'Writes a spec': stage.spec === false ? 'no' : 'yes' } : {})
   }
 }
 

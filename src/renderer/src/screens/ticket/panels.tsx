@@ -22,10 +22,11 @@ export function Severity({ severity }: { severity: string }): ReactElement {
   return <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: style.background, color: style.color, flex: 'none' }}>{style.label}</span>
 }
 
-/** The live plan.md beside the Plan conversation, with approval gated on open questions. */
+/** The live plan.md (and spec.md, when the pipeline writes one) beside the Plan conversation, with approval gated on open questions and a valid spec. */
 export function PlanPanel({ ticket, outputs, builder, nextStage }: { ticket: Ticket; outputs: TicketOutputs | undefined; builder: CrewMember | undefined; nextStage: StageConfig | null }): ReactElement {
   const approve = useAction(() => window.eregion.approvePlan(ticket.id))
   const plan = outputs?.plan
+  const spec = outputs?.spec
   const open = plan?.parsed.questions.filter((question) => !question.answered).length ?? 0
   const changing = plan?.parsed.repos.filter((repo) => repo.changes).map((repo) => repo.name) ?? []
   const waiting = ticket.status === 'needs_you' && (ticket.waitingFor === 'approval' || ticket.waitingFor === 'answers')
@@ -61,6 +62,19 @@ export function PlanPanel({ ticket, outputs, builder, nextStage }: { ticket: Tic
           <Markdown source={plan.markdown} />
         </>
       )}
+      {spec && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-200, #d5dce6)', paddingTop: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h2 className="mono" style={{ fontSize: 15 }}>
+              spec.md
+            </h2>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {spec.parsed.behaviours.length} {spec.parsed.behaviours.length === 1 ? 'behaviour' : 'behaviours'} Review checks one by one
+            </span>
+          </div>
+          <Markdown source={spec.markdown} />
+        </div>
+      )}
       {plan && plan.blockers.length > 0 && (
         <ul className="error-text" style={{ margin: 0, paddingLeft: 18 }}>
           {plan.blockers.map((blocker) => (
@@ -75,7 +89,7 @@ export function PlanPanel({ ticket, outputs, builder, nextStage }: { ticket: Tic
       )}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <button type="button" className="er-btn er-btn-primary" disabled={!waiting || !plan || plan.blockers.length > 0 || approve.pending} onClick={() => void approve.run()}>
-          {nextStage ? `Approve plan and start ${nextStage.name}` : 'Approve plan'}
+          {`Approve plan${spec ? ' and spec' : ''}${nextStage ? ` and start ${nextStage.name}` : ''}`}
         </button>
         {open > 0 && <span className="muted">Answer the open {open === 1 ? 'question' : 'questions'} to enable approval.</span>}
       </div>

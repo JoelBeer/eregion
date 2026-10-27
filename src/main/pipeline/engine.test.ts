@@ -14,6 +14,7 @@ import { git, makeRepo } from '../testing/git'
 import { Workspaces } from '../workspace/workspaces'
 import { PipelineEngine } from './engine'
 import { PipelineStore, TicketStore } from './stores'
+import { HINT_SPEC, HINT_SPEC_MET } from '../testing/spec'
 
 const FAKE = ['node', resolve('src/main/testing/fake-claude.mjs')]
 
@@ -40,8 +41,8 @@ Hints appear after two wrong tries.
 const notes = (pass: number, blocked = 'None') =>
   `# Build notes · WM-1 · pass ${pass}\n\n## Summary\nPass ${pass} work.\n\n## Changes\n### app\n- hint.txt: added\n\n## Checks run\n- cat hint.txt: ok\n\n## Decisions\n- None\n\n## Deviations from the plan\n- None\n\n## Blocked\n${blocked}\n`
 
-const failedReview = JSON.stringify({ loop: 1, verdict: 'fail', summary: 'Missing test.', issues: [{ id: 'r1-1', severity: 'medium', repo: 'app', file: 'hint.txt', line: null, problem: 'No test.', fix: 'Add one.' }] })
-const passedReview = JSON.stringify({ loop: 2, verdict: 'pass', summary: 'Good.', issues: [] })
+const failedReview = JSON.stringify({ loop: 1, verdict: 'fail', summary: 'Missing test.', issues: [{ id: 'r1-1', severity: 'medium', repo: 'app', file: 'hint.txt', line: null, problem: 'No test.', fix: 'Add one.' }], spec: HINT_SPEC_MET })
+const passedReview = JSON.stringify({ loop: 2, verdict: 'pass', summary: 'Good.', issues: [], spec: HINT_SPEC_MET })
 
 async function setup(rules: unknown[]) {
   const scriptDir = await mkdtemp(join(tmpdir(), 'eregion-script-'))
@@ -98,8 +99,8 @@ afterEach(() => {
 describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
   it('takes a ticket from Plan through a failed review, a second Build, and a passing review', async () => {
     const { engine, tickets, runs, ticket, repo, notices } = await setup([
-      { when: 'Stage: Plan', once: true, write: { '{outputs}/plan.md': plan(false) }, reply: 'One question before I finish: show the first letter?' },
-      { when: 'Yes, the first letter', once: true, write: { '{outputs}/plan.md': plan(true) }, reply: 'The plan is ready for approval.' },
+      { when: 'Stage: Plan', once: true, write: { '{outputs}/plan.md': plan(false), '{outputs}/spec.md': HINT_SPEC }, reply: 'One question before I finish: show the first letter?' },
+      { when: 'Yes, the first letter', once: true, write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'The plan is ready for approval.' },
       { when: 'Stage: Build, pass 1', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Added the hint.' },
       { when: 'Stage: Review, loop 1', once: true, write: { '{outputs}/review.json': failedReview }, reply: 'Fail: missing test.' },
       { when: 'Stage: Build, pass 2', once: true, write: { '{cwd}/app/hint.test': 't', '{outputs}/build-notes.md': notes(2), '{outputs}/fixes.json': JSON.stringify({ loop: 2, fixes: [{ issueId: 'r1-1', fixed: true, files: ['app/hint.test'], note: '' }] }) }, reply: 'Added the test.' },
@@ -134,9 +135,80 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
     expect(notices.length).toBeGreaterThan(0)
   }, 60_000)
 
+  it('holds approval for a valid spec, then holds Build to it and has Review audit it', async () => {
+    const { engine, tickets, ticket, agents, workspaces } = await setup([
+      { when: 'Stage: Plan', once: true, write: { '{outputs}/plan.md': plan(true) }, reply: 'The plan is ready.' },
+      { when: 'Write the spec', once: true, write: { '{outputs}/spec.md': HINT_SPEC }, reply: 'Spec written.' },
+      { when: 'Stage: Build', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
+      { when: 'Stage: Review', once: true, write: { '{outputs}/review.json': passedReview.replace(/,"spec":.*\}$/, '}').replace('"loop":2', '"loop":1') }, reply: 'Pass.' },
+      { when: "review.json isn't valid", once: true, write: { '{outputs}/review.json': passedReview.replace('"loop":2', '"loop":1') }, reply: 'Audited the spec.' }
+    ])
+    await engine.start(ticket.id)
+    const planned = await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    expect(tickets.logEntries(ticket.id).at(-1)?.message).toBe("Not ready for approval yet: spec.md isn't written yet")
+    await expect(engine.approvePlan(ticket.id)).rejects.toThrow("spec.md isn't written yet")
+
+    // Plan's prompt asks for the spec; once there is one, Build and Review are given it.
+    const stages = engine.stages(planned)
+    const prompt = (id: string): Promise<string> => engine.promptFor(tickets.get(ticket.id), stages.find((stage) => stage.id === id) as StageConfig, engine.crewFor(stages[0]), {})
+    expect(await prompt('plan')).toContain('also write')
+    expect(await prompt('build')).not.toContain('The approved spec')
+
+    agents.send(planned.currentRunId as number, 'Write the spec too', 'now')
+    await until(tickets, ticket.id, () => tickets.logEntries(ticket.id).at(-1)?.message === 'The plan and spec are ready for your approval')
+    expect(await prompt('build')).toContain('The approved spec:\n# Spec · WM-1 · Hints')
+    expect(await prompt('build')).toContain('meet the spec, and record the change under Deviations from the plan')
+    expect(await prompt('review')).toContain('Audit the spec first')
+    expect(await prompt('review')).toContain('- S1: After two wrong guesses')
+
+    await engine.approvePlan(ticket.id)
+    const outputs = await engine.outputsDir(tickets.get(ticket.id))
+    expect(await readFile(join(outputs, 'history', 'spec-approved-1.md'), 'utf8')).toBe(HINT_SPEC)
+    // A review without the audit is sent back once to add it.
+    const reviewed = await until(tickets, ticket.id, (item) => item.waitingFor === 'manual-review' || item.stopReason !== null)
+    expect(reviewed.stopReason).toBeNull()
+    expect(JSON.parse(await readFile(join(outputs, 'review.json'), 'utf8')).spec).toEqual(HINT_SPEC_MET)
+    expect(workspaces).toBeTruthy()
+  }, 60_000)
+
+  it('approves a plan without a spec when the Plan stage writes none', async () => {
+    const { engine, tickets, ticket, pipelines } = await setup([{ when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' }])
+    pipelines.save(ticket.projectId, defaultPipeline().map((stage) => (stage.kind === 'plan' ? { ...stage, spec: false } : stage)))
+    await engine.start(ticket.id)
+    const planned = await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    expect(tickets.logEntries(ticket.id).at(-1)?.message).toBe('The plan is ready for your approval')
+    const stages = engine.stages(planned)
+    expect(await engine.promptFor(planned, stages[0], engine.crewFor(stages[0]), {})).not.toContain('spec.md')
+    await engine.approvePlan(ticket.id)
+    expect(tickets.get(ticket.id).stage).toBe('build')
+  }, 60_000)
+
+  it("commits the way the repo's commitlint wants, past its commit-msg hook", async () => {
+    const { engine, tickets, ticket, repo } = await setup([
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
+      { when: 'Stage: Build', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
+      { when: 'checks commit messages', once: true, write: { '{outputs}/build-notes.md': `${notes(1)}\n## Commit\n- app: feat(WM-1): show the hint after two wrong guesses\n` }, reply: 'Added the commit subject.' },
+      { when: 'Stage: Review', write: { '{outputs}/review.json': passedReview.replace('"loop":2', '"loop":1') }, reply: 'Pass.' }
+    ])
+    // Like web-app: a conventional commitlint config, and a hook that rejects anything else.
+    await writeFile(join(repo.clone, 'commitlint.config.js'), "module.exports = { extends: ['@commitlint/config-conventional'], rules: { 'type-enum': [2, 'always', ['feat', 'fix', 'test']] } }")
+    const hooks = await mkdtemp(join(tmpdir(), 'eregion-hooks-'))
+    await writeFile(join(hooks, 'commit-msg'), '#!/bin/sh\ngrep -Eq "^(feat|fix|test)\\(WM-1\\): [a-z]" "$1" || { echo "commit message rejected" >&2; exit 1; }\n', { mode: 0o755 })
+    git(repo.clone, 'config', 'core.hooksPath', hooks)
+
+    await engine.start(ticket.id)
+    await until(tickets, ticket.id, (item) => item.waitingFor === 'approval')
+    await engine.approvePlan(ticket.id)
+    const build = engine.stages(tickets.get(ticket.id)).find((stage) => stage.id === 'build') as StageConfig
+    expect(await engine.promptFor(tickets.get(ticket.id), build, engine.crewFor(build), {})).toContain('- app: "<type>(WM-1): <summary>", where type is one of feat, fix, test')
+    const reviewed = await until(tickets, ticket.id, (item) => item.waitingFor === 'manual-review' || item.stopReason !== null)
+    expect(reviewed.stopReason).toBeNull()
+    expect(git(repo.clone, 'log', '-1', '--format=%s', 'wm-1-hints')).toBe('feat(WM-1): show the hint after two wrong guesses')
+  }, 60_000)
+
   it('asks once for a broken output file, then stops the ticket as stuck', async () => {
     const { engine, tickets, ticket, root } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build', write: { '{outputs}/build-notes.md': '## Summary\nonly this' }, reply: 'Done.' },
       { when: "build-notes.md isn't valid", reply: 'I tried.' }
     ])
@@ -151,7 +223,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
 
   it('stops as Blocked without committing, and goes back to Plan with the reason', async () => {
     const { engine, tickets, ticket, repo } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build', once: true, write: { '{cwd}/app/half.txt': 'x', '{outputs}/build-notes.md': notes(1, 'web needs a change the plan marks as none.') }, reply: 'Blocked.' }
     ])
     await engine.start(ticket.id)
@@ -168,7 +240,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
 
   it('stops at the loop limit, and one more loop goes back to Build', async () => {
     const { engine, tickets, ticket } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build', write: { '{cwd}/app/x.txt': 'x', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
       { when: 'fixes.json', write: { '{outputs}/fixes.json': JSON.stringify({ fixes: [{ issueId: 'r1-1', fixed: false, files: [], note: 'Not needed.' }] }) }, reply: 'Wrote fixes.' },
       { when: 'Stage: Review', write: { '{outputs}/review.json': failedReview }, reply: 'Fail.' }
@@ -189,7 +261,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
 
   it('waits for a free slot and starts when one frees up', async () => {
     const { engine, tickets, ticket, workspaces } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build', write: { '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
       { when: 'Stage: Review', write: { '{outputs}/review.json': passedReview.replace('"loop":2', '"loop":1') }, reply: 'Pass.' }
     ])
@@ -209,7 +281,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
 
   it('stops with the usage limit, without asking for a fix, when the builder runs out before writing its notes', async () => {
     const { engine, tickets, ticket, runs } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build', limit: true }
     ])
     await engine.start(ticket.id)
@@ -225,7 +297,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
 
   it('carries on when the usage limit hits after the stage wrote everything it needed', async () => {
     const { engine, tickets, ticket } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build', write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, limit: true },
       { when: 'Stage: Review', write: { '{outputs}/review.json': passedReview.replace('"loop":2', '"loop":1') }, reply: 'Pass.' }
     ])
@@ -238,7 +310,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
   it('runs a stage you added from its fields: a read-only verdict that sends the work back to Build, then moves on by itself', async () => {
     const failedCheck = JSON.stringify({ loop: 1, verdict: 'fail', summary: 'Needs a hint test.', issues: [{ id: 'c1-1', severity: 'high', repo: 'app', file: 'hint.txt', line: null, problem: 'Untested.', fix: 'Test it.' }] })
     const { engine, tickets, runs, ticket, repo, pipelines } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build, pass 1', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
       { when: 'Stage: Check, loop 1', once: true, write: { '{cwd}/app/stray.txt': 'x', '{outputs}/check.json': failedCheck }, reply: 'Fail.' },
       { when: 'Stage: Build, pass 2', once: true, write: { '{cwd}/app/hint.test': 't', '{outputs}/build-notes.md': notes(2), '{outputs}/fixes.json': JSON.stringify({ loop: 2, fixes: [{ issueId: 'c1-1', fixed: true, files: ['app/hint.test'], note: '' }] }) }, reply: 'Fixed.' },
@@ -275,7 +347,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
 
   it("loops back when a stage's done command fails, and moves on once it passes", async () => {
     const { engine, tickets, ticket, repo, pipelines } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build, pass 1', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Built.' },
       { when: 'Stage: Build, pass 2', once: true, write: { '{cwd}/app/ok.txt': 'ok', '{outputs}/build-notes.md': notes(2) }, reply: 'Fixed.' },
       { when: 'Stage: Tests', reply: 'Ran them.' }
@@ -301,7 +373,7 @@ describe.skipIf(process.platform === 'win32')('PipelineEngine', () => {
 
   it('pauses a stage mid-run, keeping its conversation, and resumes it in the same session', async () => {
     const { engine, tickets, runs, ticket } = await setup([
-      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true) }, reply: 'Ready.' },
+      { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan(true), '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
       { when: 'Stage: Build, pass 1', once: true, delayMs: 4000, write: { '{cwd}/app/half.txt': 'x' }, reply: 'Halfway.' },
       { when: 'You were paused', once: true, write: { '{cwd}/app/hint.txt': 'h', '{outputs}/build-notes.md': notes(1) }, reply: 'Carried on.' },
       { when: 'Stage: Review', write: { '{outputs}/review.json': passedReview.replace('"loop":2', '"loop":1') }, reply: 'Pass.' }

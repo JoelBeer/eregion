@@ -11,6 +11,7 @@ const CLOSED = new Set(['completed', 'canceled', 'duplicate'])
 
 /** The titles of the documents Eregion keeps in an issue's resources, found again by title to update them. */
 export const PLAN_DOCUMENT = 'Approved plan'
+export const SPEC_DOCUMENT = 'Approved spec'
 export const BUILD_LOG_DOCUMENT = 'Build log'
 
 /**
@@ -139,6 +140,10 @@ export class LinearSource implements TicketSource {
     prsOpened: async (ticket, prs, project) => {
       if (!{ ...DEFAULT_LINEAR_PUSH, ...project.linear.push }.prLinks) return
       for (const pr of prs) await this.client(project).attachLink(ticket.linearId as string, pr.url, `${pr.repo} #${pr.number}: ${pr.title}`)
+    },
+    specApproved: async (ticket, markdown, project) => {
+      if (!{ ...DEFAULT_LINEAR_PUSH, ...project.linear.push }.specDocument) return
+      await this.client(project).saveIssueDocument(ticket.linearId as string, SPEC_DOCUMENT, markdown.trim())
     },
     buildLogReady: async (ticket, markdown, project) => {
       if (!{ ...DEFAULT_LINEAR_PUSH, ...project.linear.push }.buildLog) return

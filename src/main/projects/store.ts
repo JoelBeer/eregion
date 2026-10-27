@@ -38,6 +38,8 @@ interface RepoRow {
   default_branch: string
   github_repo: string | null
   position: number
+  commit_style: CommitStyle
+  commit_types: string
 }
 
 interface StepRow {
@@ -68,7 +70,9 @@ function toRepo(row: RepoRow): Repo {
     runtime: row.runtime,
     defaultBranch: row.default_branch,
     githubRepo: row.github_repo,
-    position: row.position
+    position: row.position,
+    commitStyle: row.commit_style ?? 'detect',
+    commitTypes: JSON.parse(row.commit_types ?? '[]') as string[]
   }
 }
 
@@ -96,6 +100,7 @@ function toService(row: ServiceRow): Service {
 
 export type { ProjectPatch, RepoInput, ServiceInput, StepInput } from '@shared/api'
 import type { ProjectPatch as ApiProjectPatch, RepoInput, ServiceInput, StepInput } from '@shared/api'
+import type { CommitStyle } from '@shared/commits'
 
 type ProjectPatch = ApiProjectPatch
 
@@ -215,8 +220,8 @@ export class ProjectStore {
     if (!name) throw new Error('Give the repo a short name, such as api or web')
     const position = (this.db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM repos WHERE project_id = ?').get(projectId) as { next: number }).next
     const result = this.db
-      .prepare('INSERT INTO repos (project_id, name, path, runtime, default_branch, github_repo, position) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(projectId, name, input.path, input.runtime, input.defaultBranch || 'main', input.githubRepo ?? null, position)
+      .prepare('INSERT INTO repos (project_id, name, path, runtime, default_branch, github_repo, position, commit_style, commit_types) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(projectId, name, input.path, input.runtime, input.defaultBranch || 'main', input.githubRepo ?? null, position, input.commitStyle ?? 'detect', JSON.stringify(input.commitTypes ?? []))
     return this.repo(Number(result.lastInsertRowid))
   }
 
@@ -224,8 +229,8 @@ export class ProjectStore {
     const current = this.repo(id)
     const next = { ...current, ...patch }
     this.db
-      .prepare('UPDATE repos SET name = ?, path = ?, runtime = ?, default_branch = ?, github_repo = ? WHERE id = ?')
-      .run(next.name.trim(), next.path, next.runtime, next.defaultBranch, next.githubRepo ?? null, id)
+      .prepare('UPDATE repos SET name = ?, path = ?, runtime = ?, default_branch = ?, github_repo = ?, commit_style = ?, commit_types = ? WHERE id = ?')
+      .run(next.name.trim(), next.path, next.runtime, next.defaultBranch, next.githubRepo ?? null, next.commitStyle, JSON.stringify(next.commitTypes.map((type) => type.trim()).filter(Boolean)), id)
     return this.repo(id)
   }
 
@@ -297,6 +302,8 @@ export class ProjectStore {
         defaultBranch: repo.defaultBranch,
         githubRepo: repo.githubRepo,
         position: repo.position,
+        commitStyle: repo.commitStyle,
+        commitTypes: repo.commitTypes,
         steps: [...this.steps(repo.id, 'setup'), ...this.steps(repo.id, 'teardown')].map((step) => ({
           phase: step.phase,
           position: step.position,
@@ -339,7 +346,10 @@ export class ProjectStore {
           path: paths[repoFile.name] ?? repoFile.path,
           runtime: repoFile.runtime,
           defaultBranch: repoFile.defaultBranch,
-          githubRepo: repoFile.githubRepo
+          githubRepo: repoFile.githubRepo,
+          // Files exported before commit settings existed follow the repo's commitlint config.
+          commitStyle: repoFile.commitStyle ?? 'detect',
+          commitTypes: repoFile.commitTypes ?? []
         })
         for (const phase of ['setup', 'teardown'] as const) {
           this.saveSteps(

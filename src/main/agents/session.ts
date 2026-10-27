@@ -49,8 +49,8 @@ export interface AgentStartOptions {
   systemPrompt?: string
   /** Carries on an earlier session, such as a Forge chat after a restart. */
   resume?: string
-  /** Shows the first prompt in the conversation as your message. */
-  recordPrompt?: boolean
+  /** Shows the first prompt in the conversation as your message, or this text in its place. */
+  recordPrompt?: boolean | string
   /** Keep the session open after a turn, waiting for the next message (Plan, the Forge). */
   conversational?: boolean
   /** Replaces the CLI command, for tests. */
@@ -159,7 +159,9 @@ export class AgentSession extends EventEmitter {
 
   start(): this {
     if (this.streaming) {
-      this.spawn(this.options.command ?? ['claude', ...claudeArgs(this.options)])
+      // A stand-in for the CLI (tests, the web preview) still hears which conversation it carries on.
+      const resume = this.options.resume ? ['--resume', this.options.resume] : []
+      this.spawn(this.options.command ? [...this.options.command, ...resume] : ['claude', ...claudeArgs(this.options)])
       this.child?.stdin?.write(userLine(this.options.prompt))
     } else {
       // Only Claude Code has a system prompt flag, so for the others the Forge's instructions lead the first message.
@@ -263,7 +265,8 @@ export class AgentSession extends EventEmitter {
 
   /** Shows the first prompt as your message, once whoever started the session is listening. */
   private recordPromptSoon(): void {
-    queueMicrotask(() => this.record({ kind: 'user', text: this.options.prompt, dictated: false, delivery: 'now' }))
+    const shown = this.options.recordPrompt
+    queueMicrotask(() => this.record({ kind: 'user', text: typeof shown === 'string' ? shown : this.options.prompt, dictated: false, delivery: 'now' }))
   }
 
   private setState(state: SessionState): void {

@@ -117,6 +117,39 @@ export function parsePlan(markdown: string, repoNames: string[]): ParsedPlan {
   }
 }
 
+export interface ParsedSpec {
+  problem: string
+  /** The numbered behaviours (S1, S2…) Review checks one by one. */
+  behaviours: { id: string; text: string }[]
+  problems: string[]
+}
+
+const SPEC_HEADINGS = ['Problem', 'Behaviour', 'Contracts', 'Test seams', 'Out of scope']
+
+/** spec.md: what must be true when the ticket is done, as numbered behaviours someone can check. */
+export function parseSpec(markdown: string): ParsedSpec {
+  const parts = sections(markdown)
+  const problems = SPEC_HEADINGS.filter((heading) => !parts.has(heading)).map((heading) => `Missing the "## ${heading}" heading`)
+  const behaviours: ParsedSpec['behaviours'] = []
+  for (const item of topLevelBullets(parts.get('Behaviour'))) {
+    const match = item.match(/^\*{0,2}(S\d+)\*{0,2}\s*[:.)\-–—]\s*(.+)$/)
+    if (!match) {
+      problems.push(`Can't read the behaviour "${item}". Start it with its id, like "S1: …"`)
+      continue
+    }
+    if (behaviours.some((behaviour) => behaviour.id === match[1])) problems.push(`${match[1]} is used twice`)
+    else behaviours.push({ id: match[1], text: match[2].trim() })
+  }
+  if (parts.has('Behaviour') && behaviours.length === 0) problems.push('The Behaviour section lists nothing to check')
+  return { problem: (parts.get('Problem') ?? []).join('\n').trim(), behaviours, problems }
+}
+
+/** What stops a spec being approved with the plan: it isn't written, or it isn't valid. */
+export function specApprovalBlockers(markdown: string | null): string[] {
+  if (markdown === null) return ["spec.md isn't written yet"]
+  return parseSpec(markdown).problems.map((problem) => `spec.md: ${problem}`)
+}
+
 /** Approval needs a valid plan with every question answered. */
 export function planApprovalBlockers(plan: ParsedPlan): string[] {
   const open = plan.questions.filter((question) => !question.answered).length
@@ -128,6 +161,8 @@ export interface ParsedBuildNotes {
   blocked: string | null
   /** What followed "None" under Blocked: a caveat for the reviewer, not a blocker. */
   blockedNote: string | null
+  /** The commit subject for each repo, from "## Commit", for repos whose commit messages are checked. */
+  commits: Record<string, string>
   problems: string[]
 }
 
@@ -145,7 +180,12 @@ export function parseBuildNotes(markdown: string): ParsedBuildNotes {
   const blocked = !parts.has('Blocked') || blockedText === '' || notBlocked ? null : blockedText
   const blockedNote = notBlocked ? blockedText.slice(notBlocked[0].length).trim() || null : null
   if (parts.has('Summary') && !summary) problems.push('The Summary is empty')
-  return { summary, blocked, blockedNote, problems }
+  const commits: Record<string, string> = {}
+  for (const item of bullets(parts.get('Commit'))) {
+    const match = item.replace(/^`|`$/g, '').match(/^`?([\w.-]+)`?\s*:\s+`?(.+?)`?$/)
+    if (match) commits[match[1]] = match[2].trim()
+  }
+  return { summary, blocked, blockedNote, commits, problems }
 }
 
 export type Severity = 'high' | 'medium' | 'low'
@@ -160,11 +200,20 @@ export interface ReviewIssue {
   fix: string
 }
 
+/** Review's check of one spec behaviour. */
+export interface SpecCheck {
+  id: string
+  met: boolean
+  evidence: string
+}
+
 export interface Review {
   loop: number
   verdict: 'pass' | 'fail'
   summary: string
   issues: ReviewIssue[]
+  /** The spec audit: every behaviour in spec.md, met or not, with the evidence. Empty without a spec. */
+  spec: SpecCheck[]
 }
 
 function parseJson(text: string): { value: unknown; problem: string | null } {
@@ -179,7 +228,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function parseReview(text: string, repoNames: string[]): { review: Review | null; problems: string[] } {
+/**
+ * Reads a verdict file. With `specIds` (the behaviours in the ticket's spec.md), the review must audit each one
+ * exactly once, and a behaviour that isn't met fails the review as a high issue.
+ */
+export function parseReview(text: string, repoNames: string[], specIds: string[] = []): { review: Review | null; problems: string[] } {
   const { value, problem } = parseJson(text)
   if (problem) return { review: null, problems: [problem] }
   const problems: string[] = []
@@ -217,7 +270,35 @@ export function parseReview(text: string, repoNames: string[]): { review: Review
   const blocking = issues.some((issue) => issue.severity === 'high' || issue.severity === 'medium')
   if (value.verdict === 'pass' && blocking) problems.push('The verdict is pass, but there is a high or medium issue')
   if (value.verdict === 'fail' && !blocking) problems.push('The verdict is fail, but no issue is high or medium')
-  const review: Review = { loop: typeof value.loop === 'number' ? value.loop : 1, verdict: value.verdict === 'pass' ? 'pass' : 'fail', summary: String(value.summary ?? ''), issues }
+
+  const spec: SpecCheck[] = []
+  // Only an explicit not-met fails the review; an unreadable status is reported once, on its own.
+  const unmet: string[] = []
+  if (value.spec !== undefined && !Array.isArray(value.spec)) problems.push('spec must be a list')
+  else if (specIds.length > 0 && value.spec === undefined) problems.push(`spec must check every behaviour in spec.md: ${specIds.join(', ')}`)
+  for (const [index, raw] of (Array.isArray(value.spec) ? value.spec : []).entries()) {
+    const where = `Spec check ${index + 1}`
+    if (!isObject(raw)) {
+      problems.push(`${where} should be an object`)
+      continue
+    }
+    if (typeof raw.id !== 'string' || !/^S\d+$/.test(raw.id)) problems.push(`${where}: id should be a behaviour from spec.md, like S1`)
+    if (raw.status !== 'met' && raw.status !== 'not-met') problems.push(`${where}: status must be "met" or "not-met"`)
+    if (typeof raw.evidence !== 'string' || !raw.evidence.trim()) problems.push(`${where}: evidence is missing (what you ran, read or saw)`)
+    spec.push({ id: String(raw.id ?? ''), met: raw.status === 'met', evidence: String(raw.evidence ?? '') })
+    if (raw.status === 'not-met') unmet.push(String(raw.id ?? ''))
+  }
+  if (specIds.length > 0) {
+    for (const id of specIds) {
+      const count = spec.filter((check) => check.id === id).length
+      if (count === 0 && Array.isArray(value.spec)) problems.push(`spec has no check for ${id}`)
+      if (count > 1) problems.push(`spec checks ${id} more than once`)
+    }
+    for (const check of spec) if (check.id && !specIds.includes(check.id)) problems.push(`${check.id} isn't a behaviour in spec.md`)
+  }
+  if (unmet.length > 0 && value.verdict === 'pass') problems.push(`The verdict is pass, but ${unmet.join(', ')} ${unmet.length === 1 ? "isn't" : "aren't"} met`)
+  if (unmet.length > 0 && !issues.some((issue) => issue.severity === 'high')) problems.push(`${unmet.join(', ')} ${unmet.length === 1 ? "isn't" : "aren't"} met, so raise ${unmet.length === 1 ? 'it' : 'each'} as a high issue too`)
+  const review: Review = { loop: typeof value.loop === 'number' ? value.loop : 1, verdict: value.verdict === 'pass' ? 'pass' : 'fail', summary: String(value.summary ?? ''), issues, spec }
   return { review: problems.length === 0 ? review : null, problems }
 }
 
@@ -265,13 +346,20 @@ export interface PrDescription {
   body: string
 }
 
-export function parsePrDescription(markdown: string, ticketKey: string): { description: PrDescription | null; problems: string[] } {
+/**
+ * Reads pr-<repo>.md. `titleProblems` replaces the default title check for a repo that lints PR titles like
+ * commit messages ("<type>(PP-357): <summary>").
+ */
+export function parsePrDescription(markdown: string, ticketKey: string, titleProblems?: (title: string) => string[]): { description: PrDescription | null; problems: string[] } {
   const lines = markdown.replace(/\r\n/g, '\n').trim().split('\n')
   const problems: string[] = []
   const title = lines[0]?.replace(/^#\s+/, '').trim() ?? ''
   if (!lines[0]?.startsWith('# ')) problems.push('The first line must be "# <title>"')
-  if (!title.startsWith(ticketKey)) problems.push(`The title must start with ${ticketKey}`)
-  if (title.length > 72) problems.push(`The title is ${title.length} characters; keep it under 72`)
+  if (titleProblems) problems.push(...titleProblems(title).map((problem) => `The title: ${problem}`))
+  else {
+    if (!title.startsWith(ticketKey)) problems.push(`The title must start with ${ticketKey}`)
+    if (title.length > 72) problems.push(`The title is ${title.length} characters; keep it under 72`)
+  }
   const parts = sections(markdown)
   for (const heading of ['Summary', 'Changes', 'How to test', 'Linked']) {
     if (!parts.has(heading)) problems.push(`Missing the "## ${heading}" heading`)

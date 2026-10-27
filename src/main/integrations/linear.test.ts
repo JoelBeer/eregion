@@ -231,7 +231,7 @@ describe('Linear hooks', () => {
     expect(sent[3].variables).toMatchObject({ url: 'https://github.com/me/app/pull/3', title: 'app #3: WM-5: Hints' })
   })
 
-  it("puts the plan and the build log in the issue's resources, updating Eregion's earlier copies", async () => {
+  it("puts the plan, the spec and the build log in the issue's resources, updating Eregion's earlier copies", async () => {
     const db = openDatabase(':memory:')
     let documents: { id: string; title: string }[] = []
     const linear = fakeLinear({ documents: () => documents })
@@ -246,9 +246,11 @@ describe('Linear hooks', () => {
     const sent = (): { query: string; variables: Record<string, unknown> }[] => linear.calls.map((call) => JSON.parse(call.body) as { query: string; variables: Record<string, unknown> }).filter((call) => /document/i.test(call.query))
 
     await hooks.planApproved?.(ticket, '# Plan\n', project)
+    await hooks.specApproved?.(ticket, '# Spec\n', project)
     await hooks.buildLogReady?.(ticket, '# Build log\n', project)
     expect(sent().filter((call) => call.query.includes('documentCreate')).map((call) => call.variables.input)).toEqual([
       { issueId: 'id-WM-5', title: 'Approved plan', content: '# Plan' },
+      { issueId: 'id-WM-5', title: 'Approved spec', content: '# Spec' },
       { issueId: 'id-WM-5', title: 'Build log', content: '# Build log\n' }
     ])
 
@@ -257,9 +259,10 @@ describe('Linear hooks', () => {
     await hooks.planApproved?.(ticket, '# Plan B', project)
     expect(sent().slice(before).at(-1)).toMatchObject({ query: expect.stringContaining('documentUpdate'), variables: { id: 'doc-2', input: { content: '# Plan B' } } })
 
-    const off = projects.update(project.id, { linear: { ...project.linear, push: { planComment: false, planDescription: false, planDocument: false, prLinks: false, buildLog: false } } })
+    const off = projects.update(project.id, { linear: { ...project.linear, push: { planComment: false, planDescription: false, planDocument: false, specDocument: false, prLinks: false, buildLog: false } } })
     const count = linear.calls.length
     await hooks.planApproved?.(ticket, '# Plan C', off)
+    await hooks.specApproved?.(ticket, '# Spec C', off)
     await hooks.buildLogReady?.(ticket, '# Build log', off)
     expect(linear.calls.length).toBe(count)
   })

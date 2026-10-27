@@ -19,6 +19,8 @@ export interface BuildLogInput {
   runs: BuildLogRun[]
   /** Each verdict stage's verdicts, oldest pass first. */
   verdicts: { stageName: string; reviews: Review[] }[]
+  /** The approved spec, when the ticket has one. */
+  spec?: string | null
   buildNotes: string | null
   writtenAt: Date
   /** Folders shown shorter, such as the ticket's workspace as nothing (paths read from the repo) and its outputs folder as outputs/. */
@@ -144,7 +146,17 @@ function renderReview(review: Review, heading: string, redactor: Redactor): stri
     }
     lines.push('')
   }
+  if (review.spec.length > 0) {
+    lines.push('| Spec | Status | Evidence |', '|---|---|---|')
+    for (const check of review.spec) lines.push(`| ${check.id} | ${check.met ? 'Met' : 'Not met'} | ${cell(redactor.redact(check.evidence))} |`)
+    lines.push('')
+  }
   return lines
+}
+
+/** A file's own headings sit under the appendix's. */
+function nested(markdown: string): string {
+  return markdown.replace(/^(#{1,3}) /gm, (_match, hashes: string) => `${'#'.repeat(Math.min(hashes.length + 3, 6))} `)
 }
 
 /**
@@ -175,17 +187,16 @@ export function buildLog(input: BuildLogInput): string {
   for (const item of runs) lines.push(...renderRun(item, runs, redactor))
 
   const reviewed = input.verdicts.filter((stage) => stage.reviews.length > 0)
-  if (reviewed.length > 0 || input.buildNotes?.trim()) {
+  if (reviewed.length > 0 || input.buildNotes?.trim() || input.spec?.trim()) {
     lines.push('---', '', '## Appendix: reviews', '')
+    if (input.spec?.trim()) lines.push('### Spec', '', nested(redactor.redact(input.spec.trim())), '')
     for (const stage of reviewed) {
       stage.reviews.forEach((review, index) => {
         lines.push(...renderReview(review, `### ${stage.stageName}${stage.reviews.length > 1 ? `, pass ${index + 1}` : ''}`, redactor))
       })
     }
     if (input.buildNotes?.trim()) {
-      // The notes' own headings sit under the appendix's.
-      const notes = redactor.redact(input.buildNotes.trim()).replace(/^(#{1,3}) /gm, (_match, hashes: string) => `${'#'.repeat(Math.min(hashes.length + 3, 6))} `)
-      lines.push('### Build notes', '', notes, '')
+      lines.push('### Build notes', '', nested(redactor.redact(input.buildNotes.trim())), '')
     }
   }
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`

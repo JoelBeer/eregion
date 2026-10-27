@@ -7,6 +7,7 @@ import type { RunTooling } from '@shared/tooling'
 import type { CrewStore } from './agents/crew'
 import type { AgentManager } from './agents/manager'
 import type { RunStore } from './agents/runs'
+import type { TicketContext } from './ticketContext'
 import type { Db } from './db'
 import { runnerForRuntimeId } from './projects/detect'
 import type { ProjectStore } from './projects/store'
@@ -21,6 +22,7 @@ interface ChatRow {
   model: string
   title: string
   repo_ids: string
+  ticket_id: number | null
   created_at: string
   updated_at: string
   cost: number | null
@@ -41,6 +43,7 @@ function toChat(row: ChatRow): Chat {
     adapter: row.adapter,
     model: row.model,
     repoIds: JSON.parse(row.repo_ids) as number[],
+    ticketId: row.ticket_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     costUsd: row.cost ?? 0,
@@ -65,6 +68,8 @@ export interface ForgeDeps {
   tooling?(project: Project, repoPaths: Record<string, string>): Promise<RunTooling>
   changed(projectId: number): void
   runnerFor?: (runtime: string) => Runner
+  /** A ticket's context for a chat about it, with the branch's diffs written into `folder`. */
+  ticketContext?(ticketId: number, folder: string): Promise<TicketContext>
 }
 
 /**
@@ -90,6 +95,18 @@ export class Forge {
     const adapter = chat.crewId ? this.deps.crew.get(chat.crewId).adapter : chat.adapter
     const id = Number(
       this.deps.db.prepare('INSERT INTO chats (project_id, crew_id, adapter, model, repo_ids) VALUES (?, ?, ?, ?, ?)').run(projectId, chat.crewId, adapter, model, JSON.stringify(chat.repoIds)).lastInsertRowid
+    )
+    this.deps.changed(projectId)
+    return this.get(id)
+  }
+
+  /** A chat about a ticket's work, with the crew member you choose, titled with the ticket's key. */
+  createForTicket(projectId: number, ticket: { id: number; key: string; title: string }, member: { crewId: number | null; adapter: AdapterId; model: string }): Chat {
+    const title = `${ticket.key}: ${ticket.title}`
+    const id = Number(
+      this.deps.db
+        .prepare('INSERT INTO chats (project_id, crew_id, adapter, model, repo_ids, ticket_id, title) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(projectId, member.crewId, member.adapter, member.model, '[]', ticket.id, title.length > 80 ? `${title.slice(0, 79).trimEnd()}…` : title).lastInsertRowid
     )
     this.deps.changed(projectId)
     return this.get(id)
@@ -136,7 +153,14 @@ export class Forge {
     if (project.repos.length === 0) throw new Error('Add a repo to the project first')
     const member = chat.crewId ? { ...this.deps.crew.get(chat.crewId), model: chat.model } : visitor(chat.adapter, chat.model)
     const runner = (this.deps.runnerFor ?? runnerForRuntimeId)(project.repos[0].runtime)
-    const repoPaths = await this.repoPaths(project, chat.repoIds)
+    const cwd = await this.deps.workspaces.forgeFolder(project)
+    // A chat about a ticket reads its worktrees (or, once they're gone, every repo at its base plus the branch's diffs).
+    const context = chat.ticketId !== null && this.deps.ticketContext ? await this.deps.ticketContext(chat.ticketId, runner.join(cwd, 'tickets', `chat-${chat.id}`)) : null
+    const repoPaths = context
+      ? Object.keys(context.repoPaths).length
+        ? context.repoPaths
+        : await this.repoPaths(project, project.repos.map((repo) => repo.id))
+      : await this.repoPaths(project, chat.repoIds)
     const values: Record<string, string> = {
       'crew.name': member.name,
       'user.name': this.deps.userName(),
@@ -144,7 +168,8 @@ export class Forge {
         .map(([name, path]) => `- ${name}: ${path}`)
         .join('\n')
     }
-    const systemPrompt = render(composePrompt(FORGE_PROMPT, this.deps.houseRules(project), false), (name) => values[name]).text
+    const instructions = render(composePrompt(FORGE_PROMPT, this.deps.houseRules(project), false), (name) => values[name]).text
+    const systemPrompt = context ? `${instructions}\n\n${context.text}` : instructions
     const tooling = this.deps.tooling ? await this.deps.tooling(project, repoPaths) : null
     const resume = last ? (this.deps.runs.get(last).sessionId ?? undefined) : undefined
     const { runId } = this.deps.agents.start({
@@ -152,10 +177,10 @@ export class Forge {
       stage: 'forge',
       crew: member,
       runner,
-      cwd: await this.deps.workspaces.forgeFolder(project),
+      cwd,
       prompt: message,
       profile: 'chat',
-      addDirs: Object.values(repoPaths),
+      addDirs: [...Object.values(repoPaths), ...(context?.readDirs ?? [])],
       conversational: true,
       systemPrompt,
       resume,
@@ -165,7 +190,7 @@ export class Forge {
       deniedTools: tooling?.deniedTools,
       settings: tooling?.settings
     })
-    if (chat.runIds.length === 0) this.deps.db.prepare('UPDATE chats SET title = ? WHERE id = ?').run(chatTitle(message), chatId)
+    if (chat.runIds.length === 0 && chat.ticketId === null) this.deps.db.prepare('UPDATE chats SET title = ? WHERE id = ?').run(chatTitle(message), chatId)
     this.touch(chat)
     return { runId }
   }
