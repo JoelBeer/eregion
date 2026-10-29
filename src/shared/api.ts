@@ -111,6 +111,11 @@ export interface EregionApi {
   suggestRecipe(repoId: number): Promise<RepoDetection>
   addRepo(projectId: number, input: RepoInput): Promise<Repo>
   updateRepo(id: number, patch: Partial<RepoInput>): Promise<Repo>
+  /**
+   * Points a repo at another folder (a fresh clone, or the repo moved on disk), keeping its name, setup and
+   * teardown steps, services and settings. Not while any of the project's tickets has an environment.
+   */
+  moveRepo(repoId: number, hostPath: string): Promise<Repo>
   /** How a repo's commit messages and PR titles are written, worked out from its setting and commitlint config. */
   getCommitRules(repoId: number): Promise<CommitRules>
   removeRepo(id: number): Promise<void>
@@ -306,6 +311,7 @@ export const API_METHODS = [
   'suggestRecipe',
   'addRepo',
   'updateRepo',
+  'moveRepo',
   'getCommitRules',
   'removeRepo',
   'reorderRepos',

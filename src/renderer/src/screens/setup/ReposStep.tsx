@@ -16,15 +16,23 @@ function RepoCard({ repo, first, last, onMove }: { repo: Repo; first: boolean; l
   useEffect(() => setDraft({ name: repo.name, defaultBranch: repo.defaultBranch, githubRepo: repo.githubRepo ?? '' }), [repo])
   const save = useAction(() => window.eregion.updateRepo(repo.id, { name: draft.name, defaultBranch: draft.defaultBranch, githubRepo: draft.githubRepo || null }))
   const remove = useAction(() => window.eregion.removeRepo(repo.id))
+  // A new folder for the same repo keeps its steps, services and settings.
+  const changeFolder = useAction(async () => {
+    const folder = await window.eregion.pickFolder()
+    if (folder) await window.eregion.moveRepo(repo.id, folder)
+  })
   const dirty = draft.name !== repo.name || draft.defaultBranch !== repo.defaultBranch || draft.githubRepo !== (repo.githubRepo ?? '')
 
   return (
     <section aria-label={`Repo ${repo.name}`} className="panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <input className="input" aria-label="Repo name" style={{ fontWeight: 600, width: 180 }} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-        <span className="mono muted" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <span className="mono muted" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={repo.path}>
           {repo.path}
         </span>
+        <button type="button" className="er-btn er-btn-ghost er-btn-sm" onClick={() => void changeFolder.run()} disabled={changeFolder.pending} title="Point this repo at another folder, keeping its steps, services and settings">
+          Change folder
+        </button>
         <button type="button" className="er-btn er-btn-ghost er-btn-sm" aria-label="Move up" disabled={first} onClick={() => onMove(-1)}>
           <NavIcon name="up" size={16} />
         </button>
@@ -53,7 +61,7 @@ function RepoCard({ repo, first, last, onMove }: { repo: Repo; first: boolean; l
           Save changes
         </button>
       )}
-      {(save.error || remove.error) && <span className="error-text">{save.error ?? remove.error}</span>}
+      {(save.error || remove.error || changeFolder.error) && <span className="error-text">{save.error ?? remove.error ?? changeFolder.error}</span>}
     </section>
   )
 }

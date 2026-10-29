@@ -344,6 +344,23 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       changed(repo.projectId)
       return repo
     },
+    moveRepo: async (repoId, hostPath) => {
+      const repo = projects.repo(repoId)
+      const project = projects.get(repo.projectId)
+      // Live worktrees belong to the old folder's git, so they'd be left behind.
+      const live = tickets.list(project.id).filter((ticket) => ticket.slot !== null)
+      if (live.length > 0) throw new Error(`Tear down ${live.map((ticket) => ticket.key).join(', ')} first: their worktrees belong to ${repo.name}'s current folder`)
+      const detection = await detectRepo(hostPath)
+      // The shared plan checkout is a worktree of the old folder too: it goes, and is made again from the new one.
+      const runner = runnerForRuntimeId(repo.runtime)
+      const checkout = runner.join(await workspaces.planFolder(project), repo.name)
+      await runner.exec(['git', 'worktree', 'remove', '--force', checkout], { cwd: repo.path })
+      await runner.exec(['rm', '-rf', checkout])
+      await runner.exec(['git', 'worktree', 'prune'], { cwd: repo.path })
+      const moved = projects.updateRepo(repoId, { path: detection.path, runtime: detection.runtime })
+      changed(project.id)
+      return moved
+    },
     getCommitRules: async (repoId) => {
       const repo = projects.repo(repoId)
       return commitRules(runnerForRuntimeId(repo.runtime), repo)
