@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultPipeline, moveStage, nextStage, stageAccess, stageFromTemplate, validatePipeline, verdictFile, type StageConfig } from './pipeline'
+import { canFail, defaultPipeline, moveStage, nextStage, stageAccess, stageFromTemplate, validatePipeline, verdictFile, writesReviewerNotes, type StageConfig } from './pipeline'
 
 function custom(id: string): StageConfig {
   return { ...defaultPipeline()[1], id, name: id, kind: 'custom', goal: 'Do it' }
@@ -80,6 +80,22 @@ describe('generic stages', () => {
     expect(stageFromTemplate('review', withBuild, 4)).toMatchObject({ id: 'review-2', onFailure: { returnTo: 'build-2', maxLoops: 2 }, access: 'read-only' })
     expect(stageFromTemplate('custom', stages, 1)).toMatchObject({ id: 'custom-1', name: 'New stage', goal: '', doneWhen: 'agent-finishes' })
     expect(stageFromTemplate('custom', [...stages, stageFromTemplate('custom', stages, 1)], 1).id).toBe('custom-2')
+  })
+
+  it('adds Intelligent review only from its template: read-only, never failing, before Pull requests', () => {
+    const stages = defaultPipeline()
+    expect(stages.some((stage) => stage.kind === 'intelligent-review')).toBe(false)
+    const notes = stageFromTemplate('intelligent-review', stages, 3)
+    expect(notes).toMatchObject({ id: 'intelligent-review', name: 'Intelligent review', outputs: ['reviewer-notes.md'], doneWhen: 'agent-finishes', onFailure: undefined })
+    expect([stageAccess(notes), canFail(notes)]).toEqual(['read-only', false])
+    const before = [...stages.slice(0, 3), notes, ...stages.slice(3)]
+    expect(validatePipeline(before)).toEqual([])
+    expect(writesReviewerNotes(before, 'pr')).toBe(true)
+    expect(writesReviewerNotes(stages, 'pr')).toBe(false)
+    const after = [...stages.slice(0, 4), notes, stages[4]]
+    expect(validatePipeline(after)).toEqual(['Intelligent review must come before Pull requests, so its notes go in the descriptions'])
+    expect(writesReviewerNotes(after, 'pr')).toBe(false)
+    expect(validatePipeline([...before.slice(0, 4), { ...notes, id: 'intelligent-review-2' }, ...before.slice(4)])).toEqual(['There can only be one Intelligent review stage'])
   })
 
   it('reads access and the verdict file from the fields', () => {

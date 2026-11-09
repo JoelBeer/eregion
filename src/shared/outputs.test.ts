@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseBuildNotes, parseCiFix, parseFixes, parsePlan, parsePrDescription, parseReview, parseSpec, planApprovalBlockers, specApprovalBlockers } from './outputs'
+import { parseBuildNotes, parseCiFix, parseFixes, parsePlan, parsePrDescription, parseReview, parseReviewerNotes, parseSpec, planApprovalBlockers, specApprovalBlockers } from './outputs'
 
 const PLAN = `# WM-12 · Hints after two wrong tries
 
@@ -223,6 +223,24 @@ describe('parsePrDescription', () => {
     const md = '# WM-12: Hints after two wrong tries\n\n## Summary\nx\n\n## Changes\n- y\n\n## How to test\n- z\n\n## Linked\n- Linear: u\n'
     expect(parsePrDescription(md, 'WM-12').description?.title).toBe('WM-12: Hints after two wrong tries')
     expect(parsePrDescription(md.replace('WM-12:', 'Hints:'), 'WM-12').problems).toContain('The title must start with WM-12')
+  })
+})
+
+describe('parseReviewerNotes', () => {
+  const md = '# Reviewer notes · WM-12\n\n## api\n\n### Start here\n1. `app/Hint.php` (show()): shows the first letter after two misses.\n   Check: does a third miss keep it?\n\n### Worth a second look\n- None\n\n### Safe to skim\n- Docblocks\n'
+
+  it("reads each repo's section", () => {
+    const { repos, problems } = parseReviewerNotes(md, ['api', 'web'])
+    expect(problems).toEqual([])
+    expect(repos?.api).toMatch(/^### Start here\n1\. `app\/Hint\.php`/)
+    expect(repos?.api).toContain('- Docblocks')
+  })
+
+  it('wants known repos, every heading, and something to start with', () => {
+    expect(parseReviewerNotes(md.replace('## api', '## mobile'), ['api']).problems).toEqual(['"## mobile" isn\'t one of this project\'s repos (api)'])
+    expect(parseReviewerNotes(md.replace('### Safe to skim', '### Other'), ['api']).problems).toEqual(['api: missing the "### Safe to skim" heading'])
+    expect(parseReviewerNotes(md.replace(/1\. .*\n.*\n/, ''), ['api']).problems).toEqual(['api: Start here has no changes in it'])
+    expect(parseReviewerNotes('# Reviewer notes · WM-12\n', ['api']).problems).toEqual(['No repo has a "## <repo>" section'])
   })
 })
 

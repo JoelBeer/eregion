@@ -1,8 +1,8 @@
 import { usageLimitDetail, usageLimitMessage } from '@shared/agent'
 import type { Environment } from '@shared/environment'
 import { branchName, type Project, type Repo } from '@shared/model'
-import { parseBuildNotes, parseFixes, parsePlan, parseReview, parseSpec, planApprovalBlockers, specApprovalBlockers, type ParsedBuildNotes, type ParsedPlan, type Review } from '@shared/outputs'
-import { isGenericStage, nextStage, readsVerdict, sendBackTarget, stageAccess, stageById, verdictFile, writesSpec, type StageConfig, type StageKind } from '@shared/pipeline'
+import { parseBuildNotes, parseFixes, parsePlan, parseReview, parseReviewerNotes, parseSpec, planApprovalBlockers, specApprovalBlockers, type ParsedBuildNotes, type ParsedPlan, type Review } from '@shared/outputs'
+import { isGenericStage, nextStage, readsVerdict, REVIEWER_NOTES, sendBackTarget, stageAccess, stageById, verdictFile, writesSpec, type StageConfig, type StageKind } from '@shared/pipeline'
 import { composePrompt, SPEC_PROMPTS } from '@shared/prompts'
 import type { CrewMember } from '@shared/runs'
 import { nextFreeSlot } from '@shared/slots'
@@ -672,6 +672,7 @@ export class PipelineEngine {
       'env.summary': this.envSummary(environment ?? undefined),
       'outputs.plan': (await this.readOutput(ticket, 'plan.md')) ?? '',
       'outputs.build_notes': (await this.readOutput(ticket, 'build-notes.md')) ?? '',
+      'outputs.review': (await this.readOutput(ticket, 'review.json')) ?? '',
       'review.previous': previous?.text ?? (recheck && ownVerdict ? ((await this.readOutput(ticket, ownVerdict)) ?? '') : ''),
       'fixes.current': recheck ? ((await this.readOutput(ticket, 'fixes.json')) ?? '') : ''
     })
@@ -699,6 +700,9 @@ export class PipelineEngine {
           const parsed = parseReview(text, project.repos.map((repo) => repo.name), specIds)
           verdict = parsed.review
           if (!parsed.review) problems.push({ file: output, problems: parsed.problems })
+        } else if (output === REVIEWER_NOTES) {
+          const parsed = parseReviewerNotes(text, project.repos.map((repo) => repo.name))
+          if (!parsed.repos) problems.push({ file: output, problems: parsed.problems })
         }
       }
       if (notes?.blocked) {

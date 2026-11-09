@@ -164,6 +164,11 @@ function OutputsTab({ ticketId, outputs }: { ticketId: number; outputs: TicketOu
         ))}
       </OutputFile>
     ),
+    outputs.reviewerNotes && (
+      <OutputFile key="reviewer-notes" name="reviewer-notes.md">
+        <Markdown source={outputs.reviewerNotes} />
+      </OutputFile>
+    ),
     outputs.buildLog && (
       <OutputFile key="build-log" name="build-log.md">
         <Markdown source={outputs.buildLog} />

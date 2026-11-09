@@ -2,6 +2,7 @@ import type { PrStore } from './pipeline/prs'
 import type { EregionApi } from '@shared/api'
 import { ticketCard } from '@shared/cards'
 import { parseBuildNotes, parseFixes, parsePlan, parseReview, parseSpec } from '@shared/outputs'
+import { REVIEWER_NOTES } from '@shared/pipeline'
 import { parseDiff, type RepoDiff, type TicketOutputs } from '@shared/ticketDetail'
 import type { Ticket, TicketCard } from '@shared/tickets'
 import type { Db } from './db'
@@ -124,7 +125,15 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     const repoNames = project.repos.map((repo) => repo.name)
     const dir = await engine.outputsDir(ticket)
     const read = (name: string): Promise<string | null> => engine.readOutput(ticket, name)
-    const [planText, specText, notesText, reviewText, fixesText, buildLog] = await Promise.all([read('plan.md'), read('spec.md'), read('build-notes.md'), read('review.json'), read('fixes.json'), read('build-log.md')])
+    const [planText, specText, notesText, reviewText, fixesText, reviewerNotes, buildLog] = await Promise.all([
+      read('plan.md'),
+      read('spec.md'),
+      read('build-notes.md'),
+      read('review.json'),
+      read('fixes.json'),
+      read(REVIEWER_NOTES),
+      read('build-log.md')
+    ])
     const plan = planText === null ? null : parsePlan(planText, repoNames)
     const spec = specText === null ? null : parseSpec(specText)
     const review = reviewText === null ? null : parseReview(reviewText, repoNames, spec?.behaviours.map((behaviour) => behaviour.id))
@@ -153,6 +162,7 @@ export function createTicketsApi(deps: TicketsApiDeps): TicketsApi {
     }
     return {
       prDescriptions,
+      reviewerNotes,
       buildLog,
       dir,
       plan: plan && planText !== null ? { markdown: planText, parsed: plan, blockers: await engine.approvalBlockers(ticket, plan) } : null,

@@ -1,8 +1,8 @@
 import { buildLog } from '@shared/buildLog'
 import type { Repo } from '@shared/model'
-import { parsePrDescription, parseReview, parseSpec, type Review } from '@shared/outputs'
+import { parsePrDescription, parseReview, parseReviewerNotes, parseSpec, type Review } from '@shared/outputs'
 import { ciState } from '@shared/cards'
-import { checkIgnored, DEFAULT_CI, nextStage, verdictFile, type StageConfig } from '@shared/pipeline'
+import { checkIgnored, DEFAULT_CI, nextStage, REVIEWER_NOTES, verdictFile, writesReviewerNotes, type StageConfig } from '@shared/pipeline'
 import type { Ticket } from '@shared/tickets'
 import type { GitHub } from '../integrations/github'
 import type { Runner } from '../runner/types'
@@ -17,6 +17,20 @@ export function prBody(body: string, others: { repo: string; number: number; url
   if (others.length === 0) return body
   const links = others.map((pr) => `- ${pr.repo} #${pr.number}: ${pr.url}`).join('\n')
   return /^## Linked\s*$/m.test(body) ? body.replace(/^## Linked\s*$/m, (heading) => `${heading}\n${links}`) : `${body}\n\n## Linked\n${links}`
+}
+
+/**
+ * The PR body with the repo's reviewer notes (from Intelligent review) under "## Reviewer notes", straight after
+ * the Summary so a reviewer reads them first.
+ */
+export function withReviewerNotes(body: string, notes: string): string {
+  const section = `## Reviewer notes\n\n> [!IMPORTANT]\n> Start with these. They're the changes that decide how this works; the rest is routine.\n\n${notes.trim()}`
+  const lines = body.split('\n')
+  const summary = lines.findIndex((line) => /^##\s+Summary\s*$/.test(line))
+  if (summary < 0) return `${section}\n\n${body}`
+  const next = lines.findIndex((line, index) => index > summary && /^##\s+/.test(line))
+  if (next < 0) return `${body}\n\n${section}`
+  return [...lines.slice(0, next), ...section.split('\n'), '', ...lines.slice(next)].join('\n')
 }
 
 interface ChangedRepo {
@@ -91,6 +105,9 @@ export class PrStage {
     await this.engine.startRun(ticket, stage, { cwd, prompt, profile: 'pr', crew, note }, async (current, runId) => {
       const problems: string[] = []
       const descriptions = new Map<number, { title: string; body: string }>()
+      const notes = writesReviewerNotes(this.engine.stages(current), stage.id) ? await this.engine.readOutput(current, REVIEWER_NOTES) : null
+      const repoNotes = notes === null ? null : parseReviewerNotes(notes, project.repos.map((repo) => repo.name)).repos
+      if (notes !== null && !repoNotes) this.deps.tickets.log(current.id, 'warning', `${REVIEWER_NOTES} isn't valid, so the PR descriptions go without reviewer notes`)
       for (const item of changed) {
         const file = `pr-${item.repo.name}.md`
         const markdown = await this.engine.readOutput(current, file)
@@ -99,7 +116,8 @@ export class PrStage {
           continue
         }
         const parsed = parsePrDescription(markdown, current.key, await this.titleCheck(current, item.repo))
-        if (parsed.description) descriptions.set(item.repo.id, parsed.description)
+        const forRepo = repoNotes?.[item.repo.name]
+        if (parsed.description) descriptions.set(item.repo.id, forRepo ? { ...parsed.description, body: withReviewerNotes(parsed.description.body, forRepo) } : parsed.description)
         else problems.push(`${file}: ${parsed.problems.join('; ')}`)
       }
       if (problems.length > 0) {

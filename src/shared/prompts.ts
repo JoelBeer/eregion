@@ -142,6 +142,37 @@ Rules:
 - Don't add links to the other PRs. Eregion adds them once every PR exists.
 Then end with one message naming the files you wrote.`
 
+export const INTELLIGENT_REVIEW_PROMPT = `Stage: Intelligent review. You work on your own, and you don't change code.
+
+Write notes that tell whoever reviews this ticket's pull requests where to spend their attention. In each repo this ticket changes, branch {{branch}} holds the work: compare it with git diff {{base.ref}}...HEAD. Treat every repo as read-only. Don't edit, format, commit or stash anything. You may run tests and other read-only commands.
+
+The approved plan:
+{{outputs.plan}}
+
+The builder's notes:
+{{outputs.build_notes}}
+{{#if outputs.review}}
+
+The last review:
+{{outputs.review}}
+{{/if}}
+
+How to work:
+1. Read the whole diff, then sort the changes by how much they matter to how the ticket works. High impact: new or changed logic, conditions and branches, data and state changes, queries and migrations, authorisation, API and interface shapes, error handling, and anything other code relies on. Low impact: renames, comments and docblocks, formatting, imports, generated files, and tests that only follow the code.
+2. Find the crux: the few places where the ticket's behaviour is actually decided. Read the code around them, not just the diff, so you can say how the pieces fit together.
+3. Check that the logic in each holds up against the plan, its edge cases and the code that calls it. Where you're not sure it does, say so and why. These notes never send the ticket back, so be direct.
+
+Rules:
+- Start here holds the changes that matter most, most important first: usually three to seven per repo. Name the file and the function, class or lines, say in a sentence or two what the logic now does, and end with the one question the reviewer should answer there.
+- Worth a second look is for logic that may be wrong, fragile or surprising, with your reasoning. Write None if there's nothing; don't invent concerns.
+- Safe to skim sums up the routine changes in a line or two, so the reviewer can move through them quickly.
+- Give each repo this ticket changes a section of its own, under its name. Eregion puts that section near the top of the repo's pull request description.
+- Write for a reviewer who hasn't seen the ticket. Be specific and brief. Don't repeat the PR description or list every file.
+
+Write {{outputs.dir}}/reviewer-notes.md in this format:
+{{format.reviewer_notes}}
+Then end with one message naming the change a reviewer most needs to look at.`
+
 export const CI_FIX_PROMPT = `Stage: Watch CI, fix attempt {{ci.attempt}} of {{ci.max_attempts}}. You work on your own.
 
 A required check failed on {{ci.pr}} ({{ci.repo}}, branch {{branch}}). Eregion re-ran it once and it failed again, so it isn't flaky. Find out why, and fix it if the cause is in this ticket's code.
@@ -279,6 +310,19 @@ Two or three sentences.
 
 ## Linked
 - Linear: {{ticket.url}}`,
+  reviewer_notes: `# Reviewer notes · {{ticket.key}}
+
+## <repo>
+
+### Start here
+1. \`<path>\` (<function, class or lines>): what the logic now does, and why it matters to how this works.
+   Check: <the question the reviewer should answer here>
+
+### Worth a second look
+- \`<path>\`: <where the logic may not hold, and why>  (or: None)
+
+### Safe to skim
+- <the routine changes: renames, comments, docblocks, formatting, generated files>  (or: None)`,
   ci_fix: `{
   "pr": "api #321",
   "check": "lint",

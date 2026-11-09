@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { defaultPipeline, stageFromTemplate } from '@shared/pipeline'
 import type { Ticket } from '@shared/tickets'
 import { createBackend, type Backend } from '../api'
 import { openDatabase } from '../db'
@@ -286,6 +287,53 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
     expect(pushed[1]).toBe('Lint')
     await backend.shutdown()
   }, 120_000)
+})
+
+describe.skipIf(process.platform === 'win32')('Intelligent review', () => {
+  it('writes reviewer notes after Review and puts them near the top of the PR description', async () => {
+    const reviewerNotes = `# Reviewer notes · WM-1\n\n## app\n\n### Start here\n1. \`hint.txt\` (whole file): picks the letter shown after two misses.\n   Check: is it the first letter, not the last?\n\n### Worth a second look\n- None\n\n### Safe to skim\n- None\n`
+    const script = join(await mkdtemp(join(tmpdir(), 'eregion-script-')), 'script.json')
+    await writeFile(
+      script,
+      JSON.stringify([
+        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan, '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
+        { when: 'Stage: Build', write: { '{cwd}/app/hint.txt': 'h\n', '{outputs}/build-notes.md': notes }, reply: 'Built.' },
+        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [], spec: HINT_SPEC_MET }) }, reply: 'Pass.' },
+        { when: 'Stage: Intelligent review', write: { '{outputs}/reviewer-notes.md': reviewerNotes }, reply: 'Look at hint.txt first.' },
+        { when: 'Stage: PR', write: { '{outputs}/pr-app.md': pr }, reply: 'Wrote pr-app.md.' }
+      ])
+    )
+    process.env.EREGION_FAKE_SCRIPT = script
+    const github = new FakeGitHub()
+    const backend = createBackend(
+      openDatabase(':memory:'),
+      { appVersion: '0.1.0', databasePath: ':memory:', pickFolder: async () => null, pickSaveFile: async () => null, pickOpenFile: async () => null, openExternal: async () => undefined, emit: () => undefined },
+      { agentCommand: () => FAKE, workspaceRoot: await mkdtemp(join(tmpdir(), 'eregion-ship-')), github }
+    )
+    const { api } = backend
+    await api.checkTools()
+    const repo = await makeRepo({ 'README.md': 'app' })
+    const project = await api.createProject('Word Magic')
+    await api.addRepo(project.id, { name: 'app', path: repo.clone, runtime: 'native', defaultBranch: 'main' })
+    await api.updateProject(project.id, { github: { draft: false } })
+    const [planStage, build, review, prStage] = defaultPipeline()
+    await api.savePipeline(project.id, [planStage, build, review, stageFromTemplate('intelligent-review', [planStage, build, review, prStage], 3), prStage])
+    const ticket = await api.createTicket(project.id, 'Hints', '')
+
+    await api.startTicket(ticket.id)
+    await until(backend, ticket.id, (item) => item.waitingFor === 'approval')
+    await api.approvePlan(ticket.id)
+    await until(backend, ticket.id, (item) => item.waitingFor === 'manual-review')
+    await api.approveReview(ticket.id)
+    await until(backend, ticket.id, (item) => item.status === 'done' || item.stopReason !== null)
+
+    const body = github.prs[0].body
+    expect(body).toContain('## Reviewer notes')
+    expect(body).toContain('Check: is it the first letter, not the last?')
+    expect(body.indexOf('## Summary')).toBeLessThan(body.indexOf('## Reviewer notes'))
+    expect(body.indexOf('## Reviewer notes')).toBeLessThan(body.indexOf('## Changes'))
+    expect((await api.getTicketOutputs(ticket.id)).reviewerNotes).toBe(reviewerNotes)
+  }, 60_000)
 })
 
 describe('checkChanges', () => {

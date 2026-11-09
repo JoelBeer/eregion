@@ -20,6 +20,8 @@ export interface TicketOutputs {
   buildNotes: { markdown: string; parsed: ParsedBuildNotes } | null
   review: { text: string; review: Review | null; problems: string[] } | null
   fixes: { text: string; fixes: Fix[] | null; problems: string[] } | null
+  /** reviewer-notes.md, from Intelligent review. */
+  reviewerNotes: string | null
   /** build-log.md, written once the PRs are open. */
   buildLog: string | null
   /** Each changed repo's PR description (pr-<repo>.md), by repo name. */

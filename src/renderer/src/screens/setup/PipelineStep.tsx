@@ -2,13 +2,13 @@ import { Fragment, useEffect, useState, type DragEvent, type ReactElement } from
 import {
   canFail,
   DEFAULT_CI,
-  defaultPipeline,
   isGenericStage,
   isPinnedStage,
   moveStage,
   readsVerdict,
   stageAccess,
   stageFromTemplate,
+  templateStage,
   validatePipeline,
   verdictFile,
   type CiSettings,
@@ -30,6 +30,7 @@ const KIND_LABELS: Record<StageConfig['kind'], string> = {
   plan: 'Plan',
   build: 'Build',
   review: 'Review',
+  'intelligent-review': 'Intelligent review',
   pr: 'Pull requests',
   ci: 'Watch CI',
   custom: 'Custom'
@@ -51,6 +52,7 @@ const STAGE_COLOURS: Record<StageConfig['kind'], string> = {
   plan: '#FFB27A',
   build: '#5FC4B8',
   review: '#9DB4F2',
+  'intelligent-review': '#B3D98C',
   pr: '#F2D06B',
   ci: '#76E1EF',
   custom: '#C9B8F0'
@@ -174,7 +176,7 @@ function CiEditor({ ci, onChange }: { ci: CiSettings; onChange: (ci: CiSettings)
 }
 
 function StageEditor({ stage, stages, crew, onChange, onMove, onRemove }: { stage: StageConfig; stages: StageConfig[]; crew: CrewMember[]; onChange: (stage: StageConfig) => void; onMove: (by: -1 | 1) => void; onRemove: () => void }): ReactElement {
-  const defaults = defaultPipeline().find((item) => item.kind === stage.kind)
+  const defaults = templateStage(stage.kind)
   const generic = isGenericStage(stage)
   const doneOptions: DoneWhen[] = generic ? GENERIC_DONE : stage.kind === 'ci' ? ['prs-merged', 'prs-green'] : [stage.doneWhen]
   const index = stages.indexOf(stage)
@@ -362,6 +364,7 @@ function StageEditor({ stage, stages, crew, onChange, onMove, onRemove }: { stag
 /** The templates + offers between two stages. */
 function AddStageMenu({ stages, onPick, onCancel }: { stages: StageConfig[]; onPick: (template: StageTemplate) => void; onCancel: () => void }): ReactElement {
   const hasPr = stages.some((stage) => stage.kind === 'pr')
+  const hasNotes = stages.some((stage) => stage.kind === 'intelligent-review')
   return (
     <div role="group" aria-label="Add a stage" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <span className="muted" style={{ fontSize: 13 }}>
@@ -372,6 +375,15 @@ function AddStageMenu({ stages, onPick, onCancel }: { stages: StageConfig[]; onP
       </button>
       <button type="button" className="er-btn er-btn-sm" onClick={() => onPick('review')}>
         Review
+      </button>
+      <button
+        type="button"
+        className="er-btn er-btn-sm"
+        disabled={hasNotes}
+        title={hasNotes ? 'There can only be one Intelligent review stage' : 'Notes for the PR reviewer on the changes that matter most, put in each PR description'}
+        onClick={() => onPick('intelligent-review')}
+      >
+        Intelligent review
       </button>
       <button type="button" className="er-btn er-btn-sm" disabled={hasPr} title={hasPr ? 'There can only be one Pull requests stage' : undefined} onClick={() => onPick('pr')}>
         Pull requests

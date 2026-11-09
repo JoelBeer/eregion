@@ -1,11 +1,11 @@
-import { BUILD_PROMPT, CI_FIX_PROMPT, PLAN_PROMPT, PR_PROMPT, REVIEW_PROMPT } from './prompts'
+import { BUILD_PROMPT, CI_FIX_PROMPT, INTELLIGENT_REVIEW_PROMPT, PLAN_PROMPT, PR_PROMPT, REVIEW_PROMPT } from './prompts'
 import type { CrewMember } from './runs'
 
 /**
  * Plan, PR and Watch CI have their own behaviour. Every other stage runs the same way, set up by its
- * fields; 'build', 'review' and 'custom' only say which template it started from.
+ * fields; 'build', 'review', 'intelligent-review' and 'custom' only say which template it started from.
  */
-export type StageKind = 'plan' | 'build' | 'review' | 'pr' | 'ci' | 'custom'
+export type StageKind = 'plan' | 'build' | 'review' | 'intelligent-review' | 'pr' | 'ci' | 'custom'
 
 /**
  * How a stage finishes. 'verdict' and 'review-pass' read pass or fail from the stage's verdict file
@@ -173,6 +173,44 @@ export function defaultPipeline(): StageConfig[] {
   ]
 }
 
+/** The notes Intelligent review writes; the PR stage puts each repo's section in its description. */
+export const REVIEWER_NOTES = 'reviewer-notes.md'
+
+/**
+ * Intelligent review: not in the default pipeline, only added from its template. It reads the ticket's changes and
+ * writes notes on where a reviewer should focus. It never fails, so it never sends the ticket back.
+ */
+export function intelligentReviewStage(): StageConfig {
+  return {
+    id: 'intelligent-review',
+    name: 'Intelligent review',
+    kind: 'intelligent-review',
+    enabled: true,
+    crewRole: 'Reviewer',
+    crewId: null,
+    mode: 'autonomous',
+    workspace: 'ticket-worktrees',
+    goal: INTELLIGENT_REVIEW_PROMPT,
+    outputs: [REVIEWER_NOTES],
+    doneWhen: 'agent-finishes',
+    access: 'read-only',
+    before: [],
+    after: [],
+    linearState: null
+  }
+}
+
+/** The stage a template starts from, with its default prompt; none for a blank stage. */
+export function templateStage(kind: StageKind): StageConfig | undefined {
+  return [...defaultPipeline(), intelligentReviewStage()].find((stage) => stage.kind === kind)
+}
+
+/** Whether the PR stage gets reviewer notes: a stage before it writes them. */
+export function writesReviewerNotes(stages: StageConfig[], prStageId: string): boolean {
+  const pr = stages.findIndex((stage) => stage.id === prStageId)
+  return stages.slice(0, Math.max(pr, 0)).some((stage) => stage.enabled && stage.outputs.includes(REVIEWER_NOTES))
+}
+
 /** Whether the pipeline's Plan stage writes a spec beside the plan. Pipelines from before the setting do. */
 export function writesSpec(stages: StageConfig[]): boolean {
   const plan = stages.find((stage) => stage.kind === 'plan')
@@ -236,17 +274,17 @@ export function sendBackTarget(stages: StageConfig[], stageId: string): StageCon
   )
 }
 
-export type StageTemplate = 'build' | 'review' | 'pr' | 'custom'
+export type StageTemplate = 'build' | 'review' | 'intelligent-review' | 'pr' | 'custom'
 
 /**
- * A new stage from a template (Build, Review, Pull requests, or a blank one) to go in at `at`, with an id no
+ * A new stage from a template (Build, Review, Intelligent review, Pull requests, or a blank one) to go in at `at`, with an id no
  * other stage has. A Review goes back to the nearest earlier stage that changes files.
  */
 export function stageFromTemplate(template: StageTemplate, stages: StageConfig[], at: number): StageConfig {
   const taken = (id: string): boolean => stages.some((stage) => stage.id === id)
   let id = template === 'custom' ? 'custom-1' : template
   for (let n = 2; taken(id); n++) id = `${template}-${n}`
-  const base = template === 'custom' ? null : defaultPipeline().find((stage) => stage.kind === template)
+  const base = template === 'custom' ? null : templateStage(template)
   if (base) {
     const returnTo = stages
       .slice(0, at)
@@ -293,6 +331,8 @@ export function validatePipeline(stages: StageConfig[]): string[] {
   const kinds = stages.map((stage) => stage.kind)
   if (kinds.filter((kind) => kind === 'plan').length !== 1 || kinds[0] !== 'plan') problems.push('The pipeline must start with exactly one Plan stage')
   if (kinds.filter((kind) => kind === 'pr').length > 1) problems.push('There can only be one Pull requests stage')
+  if (kinds.filter((kind) => kind === 'intelligent-review').length > 1) problems.push('There can only be one Intelligent review stage')
+  if (kinds.includes('pr') && kinds.lastIndexOf('intelligent-review') > kinds.indexOf('pr')) problems.push('Intelligent review must come before Pull requests, so its notes go in the descriptions')
   if (kinds.filter((kind) => kind === 'ci').length > 1) problems.push('There can only be one Watch CI stage')
   if (kinds.includes('ci') && kinds.at(-1) !== 'ci') problems.push('Watch CI must be the last stage')
   return problems

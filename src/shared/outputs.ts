@@ -367,6 +367,34 @@ export function parsePrDescription(markdown: string, ticketKey: string, titlePro
   return { description: problems.length === 0 ? { title, body: lines.slice(1).join('\n').trim() } : null, problems }
 }
 
+const NOTES_HEADINGS = ['Start here', 'Worth a second look', 'Safe to skim']
+
+/** Reads reviewer-notes.md: each repo's section (everything under "## <repo>"), by repo name. */
+export function parseReviewerNotes(markdown: string, repoNames: string[]): { repos: Record<string, string> | null; problems: string[] } {
+  const problems: string[] = []
+  const repos: Record<string, string> = {}
+  for (const [heading, lines] of sections(markdown)) {
+    if (heading === '') continue
+    if (!repoNames.includes(heading)) {
+      problems.push(`"## ${heading}" isn't one of this project's repos (${repoNames.join(', ')})`)
+      continue
+    }
+    const text = lines.join('\n').trim()
+    const parts = new Map<string, string[]>()
+    let current = ''
+    for (const line of lines) {
+      const sub = line.match(/^###\s+(.+?)\s*$/)
+      if (sub) parts.set((current = sub[1]), [])
+      else parts.get(current)?.push(line)
+    }
+    for (const sub of NOTES_HEADINGS) if (!parts.has(sub)) problems.push(`${heading}: missing the "### ${sub}" heading`)
+    if (parts.has('Start here') && bullets(parts.get('Start here')).length === 0) problems.push(`${heading}: Start here has no changes in it`)
+    repos[heading] = text
+  }
+  if (Object.keys(repos).length === 0 && problems.length === 0) problems.push('No repo has a "## <repo>" section')
+  return { repos: problems.length === 0 ? repos : null, problems }
+}
+
 export interface CiFix {
   pr: string
   check: string
