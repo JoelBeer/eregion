@@ -189,9 +189,9 @@ export class AgentSession extends EventEmitter {
   private spawn(argv: string[]): void {
     const { runner, cwd } = this.options
     const posix = !(runner.runtime.kind === 'native' && process.platform === 'win32')
-    // On POSIX runtimes a login shell loads the user's PATH and reports the real pid, which from
-    // Windows is otherwise hidden behind wsl.exe.
-    const command = posix ? ['bash', '-lc', `echo ${PID_MARKER}$$; exec "$@"`, 'bash', ...argv] : argv
+    // On POSIX runtimes bash reports the real pid, which from Windows is otherwise hidden behind wsl.exe. It logs
+    // in only where that's what loads the user's PATH, so Herd's php isn't pushed behind Homebrew's (see needsLoginShell).
+    const command = posix ? ['bash', runner.loginShell ? '-lc' : '-c', `echo ${PID_MARKER}$$; exec "$@"`, 'bash', ...argv] : argv
     const child = runner.spawn(command, { cwd })
     this.child = child
     this.innerPid = posix ? undefined : child.pid

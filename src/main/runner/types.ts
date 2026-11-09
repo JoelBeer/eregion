@@ -33,7 +33,9 @@ export interface Runner {
   exec(argv: string[], options?: ExecOptions): Promise<ExecResult>
   /** Starts a long-running process (agents, services) and streams its output. */
   spawn(argv: string[], options?: ExecOptions): ChildProcess
-  /** Wraps a recipe's shell command line so it runs in a login shell, which loads the user's PATH. */
+  /** Whether bash needs to log in to load the user's PATH: inside WSL yes, natively only if Eregion couldn't read it. */
+  readonly loginShell: boolean
+  /** Wraps a recipe's shell command line in bash (a login shell where that's what loads the user's PATH). */
   shell(commandLine: string): string[]
   readFile(path: string): Promise<string | null>
   writeFile(path: string, content: string): Promise<void>

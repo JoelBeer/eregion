@@ -61,6 +61,9 @@ export class WslRunner implements Runner {
     return start('wsl.exe', wslArgs(this.distro, argv, options))
   }
 
+  /** Inside WSL, a login shell is what loads the user's PATH. */
+  readonly loginShell = true
+
   shell(commandLine: string): string[] {
     return ['bash', '-lc', commandLine]
   }

@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { commandEnvironment, defaultShell, parseEnvironment, readLoginEnvironment, withoutAppOnly } from './environment'
+import { commandEnvironment, defaultShell, needsLoginShell, parseEnvironment, readLoginEnvironment, useLoginEnvironment, withoutAppOnly } from './environment'
 import { NativeRunner } from './native'
 
 describe('parseEnvironment', () => {
@@ -101,5 +101,44 @@ describe.skipIf(process.platform === 'win32')('NativeRunner environment', () => 
     const runner = new NativeRunner()
     const result = await runner.exec(runner.shell('echo "NODE_ENV=${NODE_ENV-unset}"'))
     expect(result.stdout).toBe('NODE_ENV=unset\n')
+  })
+})
+
+describe.skipIf(process.platform === 'win32')('the shell commands run in', () => {
+  afterEach(async () => {
+    // A shell that can't start leaves no environment read, as before these tests.
+    await useLoginEnvironment('darwin', '/nonexistent/shell')
+  })
+
+  async function executable(path: string, text: string): Promise<void> {
+    await writeFile(path, text)
+    await chmod(path, 0o755)
+  }
+
+  it("keeps the terminal's PATH order, so a login bash can't put another php first", async () => {
+    // Herd's php is first in the terminal; a login bash would put Homebrew's in front (here through
+    // ~/.bash_profile; on macOS also /etc/profile's path_helper, which moves /usr/local/bin forward).
+    const dir = await mkdtemp(join(tmpdir(), 'eregion-shell-'))
+    const [herd, brew, home] = [join(dir, 'herd'), join(dir, 'brew'), join(dir, 'home')]
+    for (const folder of [herd, brew, home]) await mkdir(folder)
+    await executable(join(herd, 'php'), '#!/bin/sh\necho herd\n')
+    await executable(join(brew, 'php'), '#!/bin/sh\necho brew\n')
+    await writeFile(join(home, '.bash_profile'), `export PATH="${brew}:$PATH"\n`)
+    const shell = join(dir, 'zsh')
+    await executable(shell, `#!/bin/sh\nexport HOME="${home}"\nexport PATH="${herd}:/usr/bin:/bin"\neval "$2"\n`)
+
+    await useLoginEnvironment('darwin', shell)
+    const runner = new NativeRunner('linux')
+    expect(needsLoginShell()).toBe(false)
+    expect(runner.loginShell).toBe(false)
+    expect((await runner.exec(runner.shell('php'))).stdout.trim()).toBe('herd')
+    // What a login shell would have done, which is how Homebrew's php won.
+    expect((await runner.exec(['bash', '-lc', 'php'])).stdout.trim()).toBe('brew')
+  })
+
+  it("logs in when the terminal's environment couldn't be read, so PATH still loads", async () => {
+    await useLoginEnvironment('darwin', '/nonexistent/shell')
+    expect(needsLoginShell()).toBe(true)
+    expect(new NativeRunner('linux').shell('php')).toEqual(['bash', '-lc', 'php'])
   })
 })

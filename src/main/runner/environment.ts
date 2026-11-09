@@ -63,9 +63,19 @@ export function defaultShell(platform: NodeJS.Platform = process.platform): stri
 }
 
 /** Reads the login shell's environment once, at startup, for every command the native runner starts. */
-export async function useLoginEnvironment(platform: NodeJS.Platform = process.platform): Promise<void> {
+export async function useLoginEnvironment(platform: NodeJS.Platform = process.platform, shell = process.env.SHELL || defaultShell(platform)): Promise<void> {
   if (platform === 'win32') return
-  loginEnvironment = await readLoginEnvironment(process.env.SHELL || defaultShell(platform))
+  loginEnvironment = await readLoginEnvironment(shell)
+}
+
+/**
+ * Whether a shell Eregion starts should be a login shell. Not once the user's environment has been read: on macOS
+ * a login bash runs /etc/profile, whose path_helper moves /usr/local/bin and the other system folders back in
+ * front of what ~/.zshrc put first, so Homebrew's php beat Herd's. Only when the read failed does a login shell
+ * have to find PATH itself.
+ */
+export function needsLoginShell(): boolean {
+  return !loginEnvironment.PATH
 }
 
 /** What a command starts with: Eregion's environment, the user's login shell on top, then the command's own variables. */

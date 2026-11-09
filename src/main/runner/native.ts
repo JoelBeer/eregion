@@ -2,7 +2,7 @@ import type { ChildProcess } from 'node:child_process'
 import { access, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, posix, win32 } from 'node:path'
 import type { Runtime } from '@shared/types'
-import { commandEnvironment } from './environment'
+import { commandEnvironment, needsLoginShell } from './environment'
 import { collect, start } from './process'
 import { posixKillTree, type ExecOptions, type ExecResult, type Runner } from './types'
 
@@ -22,8 +22,13 @@ export class NativeRunner implements Runner {
     return start(file, args, { cwd: options.cwd, env: commandEnvironment(options.env) })
   }
 
+  /** Commands already start with the user's terminal environment, so bash only logs in when that couldn't be read. */
+  get loginShell(): boolean {
+    return needsLoginShell()
+  }
+
   shell(commandLine: string): string[] {
-    return this.platform === 'win32' ? ['cmd.exe', '/d', '/s', '/c', commandLine] : ['bash', '-lc', commandLine]
+    return this.platform === 'win32' ? ['cmd.exe', '/d', '/s', '/c', commandLine] : ['bash', this.loginShell ? '-lc' : '-c', commandLine]
   }
 
   async readFile(path: string): Promise<string | null> {
