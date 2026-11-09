@@ -1,11 +1,12 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { API_METHODS, type EregionEvent } from '@shared/api'
 import { createApi, createBackend, type Host } from './api'
 import { git, makeRepo } from './testing/git'
-import { openDatabase } from './db'
+import { getSetting, openDatabase, setSetting } from './db'
 
 function fakeHost(overrides: Partial<Host> = {}): Host & { events: EregionEvent[] } {
   const events: EregionEvent[] = []
@@ -127,6 +128,43 @@ describe('createApi', () => {
     expect(second.repos[0].path).toBe(first.repos[0].path)
     expect(git(after.clone, 'worktree', 'list')).toContain(first.repos[0].path.split('/').slice(-2).join('/'))
     expect(git(before.clone, 'worktree', 'list')).not.toContain(first.repos[0].path.split('/').slice(-2).join('/'))
+  })
+
+  it("deletes a project: tears down its live environments, removes Eregion's folder for it, and keeps the repo and its branches", async () => {
+    const db = openDatabase(':memory:')
+    const root = await mkdtemp(join(tmpdir(), 'eregion-delete-'))
+    const backend = createBackend(db, fakeHost(), { workspaceRoot: root })
+    const { api } = backend
+    const repo = await makeRepo({ 'README.md': 'app' })
+    const project = await api.createProject('Word Magic')
+    await api.addRepo(project.id, { name: 'app', path: repo.clone, runtime: 'native', defaultBranch: 'main' })
+    const full = await api.getProject(project.id)
+    await backend.workspaces.refreshPlanCheckout(full)
+    const ticket = await api.createTicket(project.id, 'Hints', '')
+    await backend.workspaces.create(`ticket:${ticket.id}`, full, { key: ticket.key, title: 'Hints', slot: 1, branch: 'wm-1-hints', affectedRepoIds: [full.repos[0].id] })
+    backend.tickets.update(ticket.id, { slot: 1, branch: 'wm-1-hints' })
+    setSetting(db, `rules.project.${project.id}`, 'Use British English.')
+    expect(existsSync(join(root, 'word-magic', 'work', ticket.key, 'app'))).toBe(true)
+
+    await api.deleteProject(project.id)
+    expect((await api.listProjects()).map((item) => item.id)).not.toContain(project.id)
+    expect(existsSync(join(root, 'word-magic'))).toBe(false)
+    expect(git(repo.clone, 'worktree', 'list').split('\n')).toHaveLength(1)
+    expect(git(repo.clone, 'branch', '--list', 'wm-1-hints')).toContain('wm-1-hints')
+    expect(getSetting(db, `rules.project.${project.id}`, 'gone')).toBe('gone')
+    expect(existsSync(join(repo.clone, 'README.md'))).toBe(true)
+  })
+
+  it("leaves Eregion's folder alone when another project shares its name", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'eregion-delete-'))
+    const backend = createBackend(openDatabase(':memory:'), fakeHost(), { workspaceRoot: root })
+    const { api } = backend
+    const repo = await makeRepo({ 'README.md': 'app' })
+    const [one, two] = [await api.createProject('Twin'), await api.createProject('Twin!')]
+    for (const project of [one, two]) await api.addRepo(project.id, { name: 'app', path: repo.clone, runtime: 'native', defaultBranch: 'main' })
+    await backend.workspaces.refreshPlanCheckout(await api.getProject(two.id))
+    await api.deleteProject(one.id)
+    expect(existsSync(join(root, 'twin', 'plan', 'app'))).toBe(true)
   })
 
   it('returns null when the user cancels a file dialog', async () => {

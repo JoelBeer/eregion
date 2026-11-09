@@ -22,6 +22,9 @@ function ProjectCard({ project, current }: { project: ProjectSummary; current: b
   const step = SETUP_STEPS[Math.min(project.setupStep, 7) - 1]
   const [saved, setSaved] = useState<string | null>(null)
   const exporter = useAction(async () => setSaved(await window.eregion.exportProject(project.id)))
+  const [deleting, setDeleting] = useState(false)
+  const [typed, setTyped] = useState('')
+  const remove = useAction(() => window.eregion.deleteProject(project.id))
   return (
     <article
       style={{
@@ -84,7 +87,42 @@ function ProjectCard({ project, current }: { project: ProjectSummary; current: b
         <button type="button" className="er-btn" disabled={exporter.pending} onClick={() => void exporter.run()} title="Save this project's setup and pipeline to share with another developer">
           Export
         </button>
+        {!deleting && (
+          <button type="button" className="er-btn er-btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setDeleting(true)}>
+            Delete
+          </button>
+        )}
       </div>
+      {deleting && (
+        <section aria-label={`Delete ${project.name}`} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, borderRadius: 12, border: '2px solid var(--red-700, #B42318)', background: 'var(--red-100, #FDECEC)' }}>
+          <strong>Delete {project.name}?</strong>
+          <span style={{ fontSize: 14 }}>
+            {project.ticketsInProgress > 0 ? `Its ${project.ticketsInProgress} tickets in progress stop, and their environments are torn down. ` : ''}
+            Its tickets, their history and costs, its Forge chats and pipeline are deleted, with Eregion's folder for it (worktrees, plans and other outputs). Your repos and their branches stay as they are. This can't be undone.
+          </span>
+          <label className="muted" htmlFor={`delete-${project.id}`} style={{ fontSize: 13 }}>
+            Type {project.name} to confirm
+          </label>
+          <input id={`delete-${project.id}`} className="input" style={{ maxWidth: 320 }} value={typed} autoFocus onChange={(event) => setTyped(event.target.value)} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="er-btn er-btn-primary" style={{ background: 'var(--red-700, #B42318)', borderColor: 'var(--red-700, #B42318)' }} disabled={typed.trim() !== project.name || remove.pending} onClick={() => void remove.run()}>
+              {remove.pending ? 'Deleting…' : 'Delete project'}
+            </button>
+            <button
+              type="button"
+              className="er-btn"
+              disabled={remove.pending}
+              onClick={() => {
+                setDeleting(false)
+                setTyped('')
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          {remove.error && <span className="error-text">Couldn't delete: {errorMessage(remove.error)}</span>}
+        </section>
+      )}
       {saved && (
         <span className="muted" style={{ fontSize: 13, wordBreak: 'break-all' }}>
           Saved to {saved}. Whoever imports it adds their own repo folders and GitHub account.

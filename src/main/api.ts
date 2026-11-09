@@ -304,6 +304,19 @@ export function createBackend(db: Db, host: Host, options: BackendOptions = {}):
       return project
     },
     deleteProject: async (id) => {
+      const project = projects.get(id)
+      // Stop what's running for it: ticket runs and Forge chats.
+      for (const ticket of tickets.list(id)) if (ticket.currentRunId !== null && agents.liveState(ticket.currentRunId)) await agents.stop(ticket.currentRunId)
+      for (const chat of forge.list(id)) for (const runId of chat.runIds) if (agents.liveState(runId)) await agents.stop(runId)
+      // Live environments are torn down, so services stop and teardown steps run (a ticket's database is dropped, say).
+      for (const ticket of tickets.list(id).filter((item) => item.slot !== null)) await engine.teardown(ticket)
+      const test = workspaces.get(testRunKey(id))
+      if (test && test.phase !== 'torn-down') await workspaces.teardown(testRunKey(id), project, testTicket(id, test.slot), { deleteBranch: true })
+      // Eregion's own folder for it goes (worktrees, outputs, the plan checkout); the repos and their branches stay.
+      const others = projects.list().map((summary) => projects.get(summary.id))
+      for (const folder of await workspaces.projectFolders(project, others)) await folder.runner.exec(['rm', '-rf', folder.path])
+      for (const repo of project.repos) await runnerForRuntimeId(repo.runtime).exec(['git', 'worktree', 'prune'], { cwd: repo.path })
+      db.prepare('DELETE FROM settings WHERE key = ?').run(`rules.project.${id}`)
       projects.delete(id)
       host.emit({ type: 'projects-changed' })
     },

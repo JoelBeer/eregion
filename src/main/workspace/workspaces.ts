@@ -79,6 +79,22 @@ export class Workspaces {
     return FILTERS.slug(project.name) || `project-${project.id}`
   }
 
+  /**
+   * Eregion's own folder for a project, in each runtime its repos use: ticket worktrees, outputs, the plan checkout
+   * and Forge chats. Left out when another project shares the folder name, so deleting one can't take the other's.
+   */
+  async projectFolders(project: Project, others: Project[]): Promise<{ runner: Runner; path: string }[]> {
+    const name = this.projectFolder(project)
+    if (others.some((other) => other.id !== project.id && this.projectFolder(other) === name)) return []
+    const folders = new Map<string, { runner: Runner; path: string }>()
+    for (const repo of project.repos) {
+      const runner = this.runnerFor(repo.runtime)
+      const path = runner.join(await this.root(runner, repo.runtime), name)
+      folders.set(`${repo.runtime}:${path}`, { runner, path })
+    }
+    return [...folders.values()]
+  }
+
   async ticketFolder(project: Project, repo: Repo, ticketKey: string): Promise<string> {
     const runner = this.runnerFor(repo.runtime)
     return runner.join(await this.root(runner, repo.runtime), this.projectFolder(project), 'work', ticketKey)

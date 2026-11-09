@@ -102,6 +102,10 @@ export interface EregionApi {
   getProject(id: number): Promise<Project>
   createProject(name: string): Promise<Project>
   updateProject(id: number, patch: ProjectPatch): Promise<Project>
+  /**
+   * Deletes a project: stops its runs, tears down its live environments (running their teardown steps), and
+   * removes its tickets, chats, pipeline and Eregion's folder for it. Its repos and their branches stay.
+   */
   deleteProject(id: number): Promise<void>
   exportProject(id: number): Promise<string | null>
   importProject(): Promise<Project | null>
