@@ -281,6 +281,8 @@ export interface EregionApi {
   setAutofix(ticketId: number, on: boolean): Promise<void>
   /** Checks CI now; on a ticket that stopped with CI needs you, carries on watching first. */
   checkCiNow(ticketId: number): Promise<void>
+  /** Finishes a ticket in Watch CI now: frees its environment and slot, and moves it to done in the tracker. PRs are left as they are. */
+  completeTicket(ticketId: number): Promise<void>
   /** Carries on watching CI after it stopped with CI needs you. */
   watchCiAgain(ticketId: number): Promise<void>
   /** Ignores a check for the ticket, or counts it again. */
@@ -423,6 +425,7 @@ export const API_METHODS = [
   'updatePrDescription',
   'setAutofix',
   'checkCiNow',
+  'completeTicket',
   'watchCiAgain',
   'ignoreCheck',
   'fixCiNow'

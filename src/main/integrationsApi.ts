@@ -34,6 +34,7 @@ export type IntegrationsApi = Pick<
   | 'updatePrDescription'
   | 'setAutofix'
   | 'checkCiNow'
+  | 'completeTicket'
   | 'watchCiAgain'
   | 'ignoreCheck'
   | 'fixCiNow'
@@ -147,6 +148,7 @@ export function createIntegrationsApi(deps: IntegrationsApiDeps): IntegrationsAp
     },
     // Check now on a ticket that stopped with CI needs you means carry on watching.
     checkCiNow: (ticketId) => deps.ci.watchAgain(ticketId),
+    completeTicket: (ticketId) => deps.ci.complete(ticketId),
     watchCiAgain: (ticketId) => deps.ci.watchAgain(ticketId),
     fixCiNow: (ticketId, note) => deps.ci.fixNow(ticketId, note),
     ignoreCheck: async (ticketId, check, ignore) => {

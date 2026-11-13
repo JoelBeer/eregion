@@ -342,6 +342,25 @@ export class CiWatcher {
     return this.check(ticketId)
   }
 
+  /**
+   * Finishes a ticket in Watch CI without waiting for Eregion to see every PR merge: stops any fix that's running,
+   * tears down the environment (freeing its slot) and marks the ticket done, which moves it to done in the tracker.
+   * The PRs and the ticket branch are left as they are.
+   */
+  complete(ticketId: number): Promise<void> {
+    return this.engine.serial(ticketId, async () => {
+      let ticket = this.deps.tickets.get(ticketId)
+      if (this.engine.stage(ticket)?.kind !== 'ci') throw new Error(`${ticket.key} isn't in Watch CI`)
+      if (ticket.currentRunId !== null) {
+        const runId = ticket.currentRunId
+        ticket = this.deps.tickets.update(ticketId, { currentRunId: null })
+        await this.deps.agents.stop(runId)
+      }
+      this.deps.tickets.log(ticketId, 'pipeline', 'You marked it complete')
+      await this.engine.finish(ticket)
+    })
+  }
+
   /** Ignores a check for this ticket (or counts it again): Watch CI neither fixes it nor waits for it. */
   ignoreCheck(ticketId: number, name: string, ignore: boolean): void {
     const ticket = this.deps.tickets.get(ticketId)

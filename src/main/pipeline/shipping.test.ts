@@ -289,6 +289,53 @@ describe.skipIf(process.platform === 'win32')('PR and Watch CI', () => {
   }, 120_000)
 })
 
+describe.skipIf(process.platform === 'win32')('Completing from Watch CI', () => {
+  it('finishes the ticket without waiting for a merge: frees the slot, leaves the PRs, and only works in Watch CI', async () => {
+    const script = join(await mkdtemp(join(tmpdir(), 'eregion-script-')), 'script.json')
+    await writeFile(
+      script,
+      JSON.stringify([
+        { when: 'Stage: Plan', write: { '{outputs}/plan.md': plan, '{outputs}/spec.md': HINT_SPEC }, reply: 'Ready.' },
+        { when: 'Stage: Build', write: { '{cwd}/app/hint.txt': 'h\n', '{outputs}/build-notes.md': notes }, reply: 'Built.' },
+        { when: 'Stage: Review', write: { '{outputs}/review.json': JSON.stringify({ loop: 1, verdict: 'pass', summary: 'Good.', issues: [], spec: HINT_SPEC_MET }) }, reply: 'Pass.' },
+        { when: 'Stage: PR', write: { '{outputs}/pr-app.md': pr }, reply: 'Wrote pr-app.md.' }
+      ])
+    )
+    process.env.EREGION_FAKE_SCRIPT = script
+    const github = new FakeGitHub()
+    github.checkResult = () => [{ name: 'tests', workflow: 'CI', bucket: 'pending', link: 'https://github.com/me/app/actions/runs/7/job/9' }]
+    const backend = createBackend(
+      openDatabase(':memory:'),
+      { appVersion: '0.1.0', databasePath: ':memory:', pickFolder: async () => null, pickSaveFile: async () => null, pickOpenFile: async () => null, openExternal: async () => undefined, emit: () => undefined },
+      { agentCommand: () => FAKE, workspaceRoot: await mkdtemp(join(tmpdir(), 'eregion-ship-')), github }
+    )
+    const { api } = backend
+    await api.checkTools()
+    const repo = await makeRepo({ 'README.md': 'app' })
+    const project = await api.createProject('Word Magic')
+    await api.addRepo(project.id, { name: 'app', path: repo.clone, runtime: 'native', defaultBranch: 'main' })
+    await api.updateProject(project.id, { github: { draft: false } })
+    const ticket = await api.createTicket(project.id, 'Hints', '')
+
+    await api.startTicket(ticket.id)
+    await until(backend, ticket.id, (item) => item.waitingFor === 'approval')
+    await expect(api.completeTicket(ticket.id)).rejects.toThrow("WM-1 isn't in Watch CI")
+    await api.approvePlan(ticket.id)
+    await until(backend, ticket.id, (item) => item.waitingFor === 'manual-review')
+    await api.approveReview(ticket.id)
+    const watching = await until(backend, ticket.id, (item) => item.stage === 'ci' && item.status === 'idle')
+    expect(watching.slot).not.toBeNull()
+
+    await api.completeTicket(ticket.id)
+    expect(backend.tickets.get(ticket.id)).toMatchObject({ stage: 'done', status: 'done', slot: null, stopReason: null })
+    expect(backend.tickets.logEntries(ticket.id).map((entry) => entry.message)).toEqual(expect.arrayContaining(['You marked it complete', 'Environment torn down', 'Done']))
+    expect((await api.getTicketPrs(ticket.id)).map((item) => item.state)).toEqual(['open'])
+    // Done, so Watch CI leaves it alone.
+    await backend.ci.check(ticket.id)
+    expect(backend.tickets.get(ticket.id).stage).toBe('done')
+  }, 60_000)
+})
+
 describe.skipIf(process.platform === 'win32')('Intelligent review', () => {
   it('writes reviewer notes after Review and puts them near the top of the PR description', async () => {
     const reviewerNotes = `# Reviewer notes · WM-1\n\n## app\n\n### Start here\n1. \`hint.txt\` (whole file): picks the letter shown after two misses.\n   Check: is it the first letter, not the last?\n\n### Worth a second look\n- None\n\n### Safe to skim\n- None\n`

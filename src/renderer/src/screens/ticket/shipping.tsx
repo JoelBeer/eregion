@@ -247,6 +247,11 @@ export function CiPanel({ ticket, prs, stage, sendBackTo }: { ticket: Ticket; pr
   const drafts = prs.filter((pr) => pr.state === 'open' && pr.draft)
   const complete = ciState(prs, (item) => checkIgnored(item.name, ticket.ignoredChecks, settings.ignoreChecks ?? [])) === 'complete'
   const ready = useAction(() => window.eregion.markPrsReady(ticket.id))
+  const finish = useAction(async () => {
+    const unmerged = prs.filter((pr) => pr.state !== 'merged').length
+    const warning = unmerged > 0 ? ` Eregion hasn't seen ${unmerged === 1 ? '1 PR' : `${unmerged} PRs`} merge; ${unmerged === 1 ? 'it stays' : 'they stay'} as ${unmerged === 1 ? 'it is' : 'they are'}.` : ''
+    if (window.confirm(`Mark ${ticket.key} complete? Eregion stops watching CI, tears down the worktrees and frees the slot, and moves the ticket to done.${warning}`)) await window.eregion.completeTicket(ticket.id)
+  })
   return (
     <section className="panel" aria-label="Watch CI">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -264,6 +269,9 @@ export function CiPanel({ ticket, prs, stage, sendBackTo }: { ticket: Ticket; pr
             {drafts.length === 1 ? 'Mark ready for review' : drafts.length === 2 ? 'Mark both ready for review' : `Mark all ${drafts.length} ready for review`}
           </button>
         )}
+        <button type="button" className="er-btn er-btn-sm" disabled={finish.pending} onClick={() => void finish.run()} title="Stop watching, free the slot and move the ticket to done">
+          {finish.pending ? 'Completing…' : 'Complete'}
+        </button>
       </div>
       {drafts.length > 0 && (
         <span className="muted">
@@ -292,10 +300,10 @@ export function CiPanel({ ticket, prs, stage, sendBackTo }: { ticket: Ticket; pr
         <Switch label="Fix failing checks automatically" checked={on && !paused} onChange={(value) => void autofix.run(value)} />
         {paused && <span className="muted">Paused: {paused}. Turn it back on to let Eregion fix checks again.</span>}
         <span className="muted" style={{ fontSize: 13 }}>
-          A failed check is re-run once first, in case it's flaky. Eregion never force-pushes. When every PR merges, the environment is torn down and the ticket is done.
+          A failed check is re-run once first, in case it's flaky. Eregion never force-pushes. When every PR merges, the environment is torn down and the ticket is done. Complete does that now, without waiting.
         </span>
       </div>
-      {(autofix.error || check.error || ignore.error || ready.error) && <span className="error-text">{autofix.error ?? check.error ?? ignore.error ?? ready.error}</span>}
+      {(autofix.error || check.error || ignore.error || ready.error || finish.error) && <span className="error-text">{autofix.error ?? check.error ?? ignore.error ?? ready.error ?? finish.error}</span>}
     </section>
   )
 }
